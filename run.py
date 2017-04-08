@@ -145,7 +145,7 @@ class Frame:
         return self
 
     def getAngleDistCombos(self):
-        '''get all combinations of angles and distances between objects'''
+        '''get a set of angles and distances between objects'''
         sys.stdout.write("\tcalculating triplets:"); sys.stdout.flush()
         t5 = startTimer()
         names = []		
@@ -162,17 +162,19 @@ class Frame:
             BA = B - A
             CA = C - A
             OA = O - A
+            # distance AB, AC, AO
+            distAB = np.linalg.norm(A-B)
+            distAC = np.linalg.norm(A-C)
+            distAO = np.linalg.norm(A-O)
+            # angle BAC
+            cosBAC   = np.dot(BA, CA) / (np.linalg.norm(BA) * np.linalg.norm(CA))
+            angleBAC = np.degrees(np.arccos(cosBAC))
             # angle OAB
             cosOAB   = np.dot(OA, BA) / (np.linalg.norm(OA) * np.linalg.norm(BA))
             angleOAB = np.degrees(np.arccos(cosOAB))
             # angle OAC
             cosOAC   = np.dot(OA, CA) / (np.linalg.norm(OA) * np.linalg.norm(CA))
             angleOAC = np.degrees(np.arccos(cosOAC))
-            # angle BAC
-            cosBAC   = np.dot(BA, CA) / (np.linalg.norm(BA) * np.linalg.norm(CA))
-            angleBAC = np.degrees(np.arccos(cosBAC))
-            # distance AB   
-            distAB = np.linalg.norm(A-B)
             # add to self.combos and format label names
             nameA = combo[0].lstrip("[").rstrip("]").replace("'","").split(",")
             nameA = "_".join([nameA[0].replace(" ","_"),nameA[1].replace(" ","")])
@@ -180,8 +182,8 @@ class Frame:
             nameB = "_".join([nameB[0].replace(" ","_"),nameB[1].replace(" ","")])
             nameC = combo[2].lstrip("[").rstrip("]").replace("'","").split(",")
             nameC = "_".join([nameC[0].replace(" ","_"),nameC[1].replace(" ","")])
-            self.combos.append([nameA,nameB,nameC,str(angleOAB),\
-                                str(angleOAC),str(angleBAC),str(distAB)])
+            self.combos.append([nameA,nameB,nameC,str(distAB),str(distAC),str(distAO),\
+                                str(angleBAC),str(angleOAB),str(angleOAC)])
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t5))); sys.stdout.flush()
         return self
 
@@ -291,7 +293,9 @@ class Frame:
         centroidFile.close()
 	# export csv file
 	csvFile = open(join(filePath,name+'.csv'),'w')
-	csvFile.write('objectA, objectB, objectC, angleOAB, angleOAC, angleBAC, distanceAB\n')
+	csvFile.write('objectA, objectB, objectC,'+\
+                      'distanceAB, distanceAC,distanceAO,'+\
+                      ' angleOAB, angleOAC, angleBAC\n')
 	for combo in self.combos:
 	    csvFile.write(','.join(combo)+'\n')
         csvFile.close()
