@@ -45,27 +45,34 @@ if __name__=="__main__":
             objB = values[1].rsplit('_',1)[0]
             objC = values[2].rsplit('_',1)[0]
             triplet = ','.join([objA,objB,objC])
-            angOAB = float(values[3])
-            angOAC = float(values[4])
-            angBAC = float(values[5])
-            distAB = float(values[6])
+            distAB = float(values[3])
+            distAC = float(values[4])
+            distAO = float(values[5])
+            angBAC = float(values[6])
+            angOAB = float(values[7])
+            angOAC = float(values[8])
             if triplet not in averages:
-                averages[triplet] = [[angOAB],[angOAC],[angBAC],[distAB],1]
+                averages[triplet] = [[distAB],[distAC],[distAO],[angBAC],[angOAB],[angOAC],1]
                 continue
-            averages[triplet][0].append(angOAB)
-            averages[triplet][1].append(angOAC)
-            averages[triplet][2].append(angBAC)
-            averages[triplet][3].append(distAB)
-            averages[triplet][4]+=1
+            averages[triplet][0].append(distAB)
+            averages[triplet][1].append(distAC)
+            averages[triplet][2].append(distAO)
+            averages[triplet][3].append(angBAC)
+            averages[triplet][4].append(angOAB)
+            averages[triplet][5].append(angOAC)
+            averages[triplet][6]+=1
 
     triplets = {}
     tripletsFile = open('output/triplets.csv','w')
-    tripletsFile.write("objectA,objectB,objectC,angleOAB,angleOAC,angleBAC,distanceAB,count\n")
+    tripletsFile.write("objectA,objectB,objectC,distanceAB,distanceAC,"+\
+                       "distanceAO,angleBAC,angleOAB,angleOAC,count\n")
     for triplet, values in averages.iteritems():
-        triplets[triplet] = [sum(values[0])/values[4],\
-                             sum(values[1])/values[4],\
-                             sum(values[2])/values[4],\
-                             sum(values[3])/values[4],values[4]]
+        triplets[triplet] = [sum(values[0])/values[6],\
+                             sum(values[1])/values[6],\
+                             sum(values[2])/values[6],\
+                             sum(values[3])/values[6],\
+                             sum(values[4])/values[6],\
+                             sum(values[5])/values[6],values[6]]
         text = ','.join([str(t) for t in triplets[triplet]])
         tripletsFile.write(triplet+','+text+'\n')
     tripletsFile.close()
