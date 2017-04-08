@@ -119,6 +119,7 @@ class Frame:
         # Get 3D centroids
         for name, allCoords in polygons.iteritems():
             coords = [c for c in allCoords if c[0]<640 and c[1]<480 and c[0]>=0 and c[1]>=0]
+            if not coords: continue
             vertices = path.Path(coords,closed=True)
             objectPts = vertices.contains_points(\
                 [(y,x) for y in range(0,640) for x in range(0,480)])
