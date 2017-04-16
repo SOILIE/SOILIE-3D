@@ -9,5 +9,7 @@ Required packages:
 2) numpy & scipy
 3) PIL
 
-Run with command 'python run.py'
-Then, run 'python parse.py' to parse CSVs
+Instructions:
+1) Run with command 'python run.py'
+2) Run command 'python parse.py' to parse CSVs
+3) Run the 'visualize.py' script in Blender
