@@ -20,8 +20,8 @@
    `blender --background suggested_setup.blend --python run.py`
 
 ##### Output
-The data folder will include output from scripts 1 and 2:
+###### The data folder will include output from scripts 1 and 2:
     1. SUN3D folder structure with .3d, .cen, .csv, ,jpg for each frame
     2. triplets.csv, triplets.pickle, object-sizes.csv
-The images folder will include output from script 3:
+###### The images folder will include output from script 3:
     3. 3d scene image(s) in the images folder
