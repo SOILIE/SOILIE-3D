@@ -10,12 +10,12 @@ from itertools import permutations
 def loadObjectSizes():
     # load object sizes into list
     sFile = open(os.path.join(os.getcwd(),"data/object_sizes.csv"),'r')
-    sFile.close()
     sizes = {}
     lines = sFile.readlines()
-    for line in lines:
+    sFile.close()
+    for line in lines[1:]:
         item = line.split(',')
-        sizes[item[0]] = item[1]
+        sizes[item[0]] = float(item[1])
     return sizes
 
 def look_at(objA, locB, away=False):
@@ -33,10 +33,7 @@ def calculateCoords(objects):
     output: a dictionary of final object locations'''
 
     # load dictionary of all triplets
-    dictionary = open("data/triplets.csv",'r')
-    # uncomment to load from pickle file
-    # TODO: won't work on python2 pickle file
-    # dictionary = pickle.load(open("data/triplets.pickle"))
+    dictionary = pickle.load(open("data/triplets.pickle",'rb'))
     print ("INFO: Loaded triplet dictionary.")
 
     # generate every permutation of the given objects and try to find a set
@@ -116,7 +113,7 @@ def calculateCoords(objects):
     # to solve for a transformation matrix that can be used to determine where objCX ends
     # up in the base coordinate space.
     pts = [triplets[0][3],triplets[0][4],triplets[0][6]]
-    z = zip(pts[0],pts[1],pts[2]) # [[x0,x1,x2],[y0,y1,y2],[z0,z1,z2]]
+    z = list(zip(pts[0],pts[1],pts[2])) # [[x0,x1,x2],[y0,y1,y2],[z0,z1,z2]]
     d = [sum(z[0])/3,sum(z[1])/3,sum(z[2])/3] # trivially generated 4th point
     pts.append(d)
     baseCoords = np.array(pts,np.float32)   # use first triplet as base
@@ -128,7 +125,7 @@ def calculateCoords(objects):
     finalCoords['SCALE'] = triplets[0][7] # add scale
     for triplet in triplets[1:]:
         pts = [triplet[3],triplet[4],triplet[6]]
-        z = zip(pts[0],pts[1],pts[2])
+        z = list(zip(pts[0],pts[1],pts[2]))
         d = [sum(z[0])/3,sum(z[1])/3,sum(z[2])/3]
         pts.append(d)
         coords = np.array(pts,np.float32)
@@ -175,7 +172,8 @@ def visualize(coords):
     camera.delta_location = c_loc
     look_at(camera,mathutils.Vector((0,0,0)))
 
-    maxSize = max([sizes[obj] for obj in triplet[0:3]])
+    maxSize = max([sizes[obj] for obj,_ in coords.items() \
+                  if obj!='CAMERA' and obj!='SCALE'])
     lc = 0 # location counter
     filepath = ''
     for obj,xyz in coords.items():
@@ -200,21 +198,22 @@ def visualize(coords):
         mat = bpy.data.materials.new(name=obj+"-mat")
         ob.data.materials.append(mat)
         text.data.materials.append(mat)
-        mat.diffuse_color = color
-        look_at(camera,mathutils.Vector((0,0,0)))
+        mat.diffuse_color = color    
 
-        # render/save image
-        filepath = 'data/images/'+filepath.rstrip('-')+'.png'
-        bpy.data.scenes['Scene'].render.filepath = filepath
-        bpy.ops.render.render(write_still=True)
+    look_at(camera,mathutils.Vector((0,0,0)))
 
-        # remove all objects from scene
-        bpy.ops.object.select_all(action='DESELECT')
-        for ob in scene.objects:
-            ob.select = ob.type == 'MESH' or ob.name.startswith('Text')
-        bpy.ops.object.delete()
-        for item in bpy.data.meshes:
-            bpy.data.meshes.remove(item)
+    # render/save image
+    filepath = 'images/'+filepath.rstrip('-')+'.png'
+    bpy.data.scenes['Scene'].render.filepath = filepath
+    bpy.ops.render.render(write_still=True)
+
+    # remove all objects from scene
+    bpy.ops.object.select_all(action='DESELECT')
+    for ob in scene.objects:
+        ob.select = ob.type == 'MESH' or ob.name.startswith('Text')
+    bpy.ops.object.delete()
+    for item in bpy.data.meshes:
+        bpy.data.meshes.remove(item)
     
 if __name__=="__main__":
 
