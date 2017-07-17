@@ -1,11 +1,11 @@
-''' JSON 2 CSV 3D
-    v.17.03.09
-    A package for Visuo3D
+''' VISUO 3D
+    v.17.07.17
     Written by Mike Cichonski
     for the Science of Imagination Laboratory
     Carleton University
 
-    File: menu.py''' 
+    File: menu.py
+    This module provides a menu interface for collect_data.py''' 
 
 import os, sys
 from os.path import dirname, abspath

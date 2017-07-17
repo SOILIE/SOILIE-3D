@@ -6,9 +6,11 @@ import random
 import numpy as np
 import pickle
 from itertools import permutations
+sys.path.append("modules")
+import working_combos
 
 def loadObjectSizes():
-    # load object sizes into list
+    '''load object sizes into list'''
     sFile = open(os.path.join(os.getcwd(),"data/object_sizes.csv"),'r')
     sizes = {}
     lines = sFile.readlines()
@@ -19,6 +21,7 @@ def loadObjectSizes():
     return sizes
 
 def look_at(objA, locB, away=False):
+    '''point objA towards objB'''
     locA = objA.matrix_world.to_translation()
     if away: direction = -locB - locA
     else:    direction = locB - locA
@@ -28,13 +31,15 @@ def look_at(objA, locB, away=False):
     objA.rotation_euler = rot_quat.to_euler()
 
 def calculateCoords(objects):
-    '''Calculate the final coordinates of a list of objects
+    '''Calculate the coordinates of a list of objects
+    based on angles and distances between triplets
     objects: a list of the object names
+    dictionary: a dictionary of all object triplet data
     output: a dictionary of final object locations'''
 
     # load dictionary of all triplets
     dictionary = pickle.load(open("data/triplets.pickle",'rb'))
-    print ("INFO: Loaded triplet dictionary.")
+    print ("INFO: Loaded pickled triplet dictionary.")
 
     # generate every permutation of the given objects and try to find a set
     # of triplets that will contain enough data to calculate all object locations
@@ -56,7 +61,7 @@ def calculateCoords(objects):
     
         for obj in objects: # if any of the objects aren't in the final list
             if obj not in [x for sublist in good for x in sublist]:
-                print ("ERROR: Not enough data for " + obj + ". Retrying...")
+                print ("ERROR: Not enough data for "+obj+". Retrying...")
                 enoughData = False
                 break
         if enoughData:
@@ -103,13 +108,14 @@ def calculateCoords(objects):
         triplets.append([objA,objB,objC,A,B,C,O,s]) # objA,objB,objC,camera,scale
 
     # The following process answers the question:
-    # Where would objC2 be located if it were in the coordinate space of objC1?
+    # Where would objC2 be located if it were in the coordinate space of objC1, given
+    # objA and objB remain in place and camera2 translates to the location of camera1?
     #
     # We will use objA, objB, and camera coordinates to trivially generate a 4th point
-    # (midpoint of other 3 points) that will almost certainly be on a different plane 
+    # (midpoint of these 3 points) that will almost certainly be on a different plane 
     # than the other 3 points. We use these points to find an affine transform between
-    # baseCoords and every other triplet. objA and objB should be similar if not the 
-    # same in every triplet. But camera and 4th point will differ which should be enough 
+    # baseCoords and every other triplet. objA and objB should be virtually identical 
+    # in every triplet. But camera and 4th point will differ which should be enough 
     # to solve for a transformation matrix that can be used to determine where objCX ends
     # up in the base coordinate space.
     pts = [triplets[0][3],triplets[0][4],triplets[0][6]]
@@ -160,64 +166,186 @@ def calculateCoords(objects):
 def visualize(coords):
     '''Create 3D renderings of the objects at the given coords
     coords: a dictionary of final object locations
-    output: PNG file(s) in the output folder of the 3D scene'''
+    output: PNG file of the 3D scene in the images folder'''
+
+    def generateFileName(filename):
+        '''recursive function to auto-generate output filename
+        and avoid overwriting'''
+        if os.path.exists(filename):
+            num = str(int(os.path.splitext(filename)[-2][-4:])+1)
+            return generateFileName( \
+                ''.join(os.path.splitext(filename)[:-1])[:-4]+'0'*(4-len(num))+num+'.png')
+        return filename
+
+    def selectObj(objs):
+        '''helper function to select a non-dummy object to be
+        the active object '''
+        index = 0
+        active = objs[index]
+        while active.name[0]=='$':
+            index+=1
+            active = objs[index]
+        return active
 
     # initialize parameters
     scene = bpy.context.scene
     camera = bpy.data.objects['Camera']
     sizes = loadObjectSizes()
+    obj3d = [f for f in os.listdir('3d') if os.path.splitext(f)[1]=='.3DS']
 
     # place camera
     c_loc = mathutils.Vector(coords['CAMERA'])
     camera.delta_location = c_loc
     look_at(camera,mathutils.Vector((0,0,0)))
 
+    lc = 0 # location counter for text
+    filepath = '' # object names will be added to create image filename
     maxSize = max([sizes[obj] for obj,_ in coords.items() \
                   if obj!='CAMERA' and obj!='SCALE'])
-    lc = 0 # location counter
-    filepath = ''
+    
     for obj,xyz in coords.items():
         if obj=='CAMERA' or obj=='SCALE': continue
         filepath+=obj+'-'
-        color = [random.random() for i in range(3)]
-        bpy.ops.object.select_all(action='DESELECT')
-        bpy.ops.object.text_add(radius=0.4,location=\
-                        (xyz[0],xyz[1],xyz[2]+1.3+lc))
-        lc+=0.4
-        text = bpy.context.object
-        text.data.body = obj
-        look_at(text,mathutils.Vector((0,0,0)))
-        #text.rotation_euler[0]+=0.2
-        #text.rotation_euler[1]+=0.2
-        #text.rotation_euler[2]-=0.2
-        bpy.ops.object.select_all(action='DESELECT')
-        bpy.ops.mesh.primitive_uv_sphere_add(segments=32,\
-            size=(sizes[obj]/maxSize)*coords['SCALE']/2,location=xyz)
-        ob = bpy.context.active_object
-        ob.name = obj
-        mat = bpy.data.materials.new(name=obj+"-mat")
-        ob.data.materials.append(mat)
-        text.data.materials.append(mat)
-        mat.diffuse_color = color    
+        
+        # if no 3d data exists for object, use spheres:
+        if obj not in ['_'.join(f.split('_')[:-1]) for f in obj3d]:
+                        
+            # add/setup text to identify the object
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.ops.object.text_add(radius=0.4,location=\
+            (xyz[0],xyz[1],xyz[2]+1.3+lc))
+            lc+=0.4
+            text = bpy.context.object
+            text.data.body = obj
+            look_at(text,mathutils.Vector((0,0,0)))
+            #text.rotation_euler[0]+=0.2
+            #text.rotation_euler[1]+=0.2
+            #text.rotation_euler[2]-=0.2
+
+            # add/setup sphere to represent the object
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.ops.mesh.primitive_uv_sphere_add(segments=32,\
+                size=(sizes[obj]/maxSize)*coords['SCALE']/2,location=xyz)
+            ob = bpy.context.active_object
+            ob.name = obj
+            
+            # create material to color the sphere
+            mat = bpy.data.materials.new(name=obj+"-mat")
+            ob.data.materials.append(mat)
+            text.data.materials.append(mat)
+            color = [random.random() for i in range(3)]
+            mat.diffuse_color = color    
+        
+        else: # if 3d data exists for object, use this data
+
+            # select random 3d file for current object type and import it into scene
+            fname = random.choice( \
+                [f for f in obj3d if '_'.join(f.split('_')[:-1])==obj])
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.ops.import_scene.autodesk_3ds(filepath=os.path.join('3d',fname), \
+                axis_forward='-Y',axis_up='Z',constrain_size=0,use_image_search=False)
+           
+            # set object location and scale
+            print ("SELECTED:",len(bpy.context.selected_objects))
+            for o in bpy.context.selected_objects:
+                print ("Name:",o.name)
+            bpy.context.scene.objects.active = selectObj(bpy.context.selected_objects)
+            bpy.ops.object.location_clear()
+            bpy.ops.object.scale_clear()
+            bpy.ops.object.rotation_clear()
+            bpy.ops.object.join()
+            print ("SELECTED:",len(bpy.context.selected_objects))
+            for o in bpy.context.selected_objects:
+                print ("Name:",o.name)
+            # selected_objects should be length 1 unless there is dummy object in index 0
+            ob = bpy.context.selected_objects[-1] # select the non-dummy object
+            ob.name = obj
+            #print ("NAME:",ob.name)
+            ob.location = mathutils.Vector(xyz)
+            #print ("LOC:",ob.location)
+            #orig = list(ob.scale) # original object size
+            #print ("ORIG:",orig)
+            #mid  = np.median(np.array(orig)) # median of x, y, and z values
+            #print ("MID:",mid)
+            #ratio = [o/mid for o in orig] # make middle value 1, other 2 proportional
+            #print ("RATIO:",ratio)
+            #print ("OBJSIZE:",sizes[obj],"/MAXSIZE:",maxSize,"*SCALE",coords['SCALE'])
+            scale = [(sizes[obj]/maxSize)*coords['SCALE']/2 for r in range(0,3)]
+            #print ("SCALE:",scale)
+            ob.scale = mathutils.Vector(scale)
+
 
     look_at(camera,mathutils.Vector((0,0,0)))
 
     # render/save image
-    filepath = 'images/'+filepath.rstrip('-')+'.png'
+    filepath = generateFileName('images/'+filepath.rstrip('-')+'_0001.png')
     bpy.data.scenes['Scene'].render.filepath = filepath
     bpy.ops.render.render(write_still=True)
 
     # remove all objects from scene
-    bpy.ops.object.select_all(action='DESELECT')
-    for ob in scene.objects:
-        ob.select = ob.type == 'MESH' or ob.name.startswith('Text')
-    bpy.ops.object.delete()
-    for item in bpy.data.meshes:
-        bpy.data.meshes.remove(item)
+    #bpy.ops.object.select_all(action='DESELECT')
+    #for ob in scene.objects:
+    #    ob.select = ob.type == 'MESH' or ob.name.startswith('Text')
+    #bpy.ops.object.delete()
+    #for item in bpy.data.meshes:
+    #    bpy.data.meshes.remove(item)
     
 if __name__=="__main__":
 
-    objects = input("Enter some object names: ")
-    visualize(calculateCoords(objects.split(' ')))
+    print ("#=============================#\n" + \
+           "#     VISUO 3D v.17.07.17     #\n" + \
+           "#=============================#\n" + \
+           "#      SELECT AN OPTION       #\n" + \
+           "#-----------------------------#\n" + \
+           "# 1. Imagine a random scene   #\n" + \
+           "# 2. Enter object names       #\n" + \
+           "# 3. Determine working combos #\n" + \
+           "# 4. Exit                     #\n" + \
+           "#=============================#\n")
 
+    def menuLoop():
+        option = ''
+        while option!='1' and option!='2' and option!='3' and \
+              option!='4' and option!='exit' and option!='quit':
+            option = input(">> ")
+        
+        if option=='4' or option=='exit' or option=='quit':
+            sys.exit(0) 
 
+        if option=='1': # generate random collection of objects
+            num = '' # prompt for number of objects
+            while not num.isdigit():
+                num = input("How many objects? ")
+                if num=='exit' or num=='quit':
+                    sys.exit(0)
+                if num=='menu':
+                    return menuLoop()
+                if not num.isdigit() or int(num)<3:
+                    print ("Invalid input: Minimum 3 objects required.")
+            num = int(num)
+            wc = working_combos.load()
+            print ("Loaded.")
+            return random.choice([c for c in wc if len(c)==num]) 
+        
+        if option=='2': # Enter custom list of objects
+            names = ''   # string of object names
+            objects = [] # list of object names
+            while not names:
+                names = input("Enter some object names: ")
+                if names=='exit' or names=='quit':
+                    sys.exit(0)
+                if num=='menu':
+                    return menuLoop()
+                if ',' in names or ';' in names:
+                    print ("Invalid format: Use SPACE as delimiter.")
+                    names = ''
+                else: objects = names.split(' ')
+            return objects    
+
+        if option=='3': # determine working combos
+            working_combos.determine()
+            return menuLoop()
+
+    objects = menuLoop()
+
+    visualize(calculateCoords(objects))

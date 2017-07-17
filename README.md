@@ -1,27 +1,40 @@
 ##  VISUO 3D
-#### v.17.07.18  
-
-#### Written by Mike Cichonski
-#### For the Science of Imagination Laboratory
-#### at Carleton University
+#### v.17.07.17  
+###### Written by Mike Cichonski
+###### For the Science of Imagination Laboratory
+###### at Carleton University
 
 ##### Required packages
-1. MATLAB engine for python
-2. Numpy & Scipy
-3. PIL
-##### Required Blender packages
-1. Numpy
+* MATLAB engine for Python2
+* Numpy & Scipy
+* PIL
+* Blender (tested in 2.78c)
+   * Numpy for Blender
 
-##### Linux Instructions
-1. In terminal, run `python getSUN3Ddata.py` to import SUn3D data 
-2. Run command `python avgSUN3Dobjects.py` to calculate object
+##### Usage Instructions (Ubuntu)
+1. In terminal, run `python collect_data.py` to import SUN3D data 
+2. Run command `python prepare_data.py` to calculate object
    triplets and estimate object sizes
-3. Run the run.py script with Blender in terminal:
+3. Run the run.py script using Blender in the terminal:
    `blender --background suggested_setup.blend --python run.py`
 
-##### Output
-###### The data folder will include output from scripts 1 and 2:
-    1. SUN3D folder structure with .3d, .cen, .csv, ,jpg for each frame
-    2. triplets.csv, triplets.pickle, object-sizes.csv
-###### The images folder will include output from script 3:
-    3. 3d scene image(s) in the images folder
+##### Scripts
+###### collect_data.py
+**INPUT:**
+JSON files from SUN3D database (note: Only a fraction of all the
+data has been manually labelled; this data is in the JSON files)
+**OUTPUT:**
+SUN3D folder structure with .3d, .cen, .csv, ,.jpg for each frame
+###### prepare_data.py
+**INPUT:**
+The output from collect_data.py
+**OUTPUT:** 
+* triplets.csv/triplets.pickle - calculated angles and distances
+between permutations of triplets of objects
+* object-sizes.csv - calculated object sizes
+###### run.py
+**INPUT:**
+3DS files in the 3d folder that match the object names obtained
+from the SUN3D database and the output from prepare_data.py
+**OUTPUT:**
+3d PNG scene image(s) in the images folder
