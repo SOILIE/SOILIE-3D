@@ -246,17 +246,11 @@ def visualize(coords):
                 axis_forward='-Y',axis_up='Z',constrain_size=0,use_image_search=False)
            
             # set object location and scale
-            print ("SELECTED:",len(bpy.context.selected_objects))
-            for o in bpy.context.selected_objects:
-                print ("Name:",o.name)
             bpy.context.scene.objects.active = selectObj(bpy.context.selected_objects)
             bpy.ops.object.location_clear()
             bpy.ops.object.scale_clear()
             bpy.ops.object.rotation_clear()
             bpy.ops.object.join()
-            print ("SELECTED:",len(bpy.context.selected_objects))
-            for o in bpy.context.selected_objects:
-                print ("Name:",o.name)
             # selected_objects should be length 1 unless there is dummy object in index 0
             ob = bpy.context.selected_objects[-1] # select the non-dummy object
             ob.name = obj
@@ -322,10 +316,7 @@ if __name__=="__main__":
                     return menuLoop()
                 if not num.isdigit() or int(num)<3:
                     print ("Invalid input: Minimum 3 objects required.")
-            num = int(num)
-            wc = working_combos.load()
-            print ("Loaded.")
-            return random.choice([c for c in wc if len(c)==num]) 
+            return working_combos.load(int(num))
         
         if option=='2': # Enter custom list of objects
             names = ''   # string of object names
@@ -347,5 +338,6 @@ if __name__=="__main__":
             return menuLoop()
 
     objects = menuLoop()
+    print ("INFO: Imagining '"+','.join(objects)+"'")
 
     visualize(calculateCoords(objects))
