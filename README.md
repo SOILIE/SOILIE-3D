@@ -20,21 +20,29 @@
 
 ##### Scripts
 ###### collect_data.py
+
 **INPUT:**
 JSON files from SUN3D database (note: Only a fraction of all the
 data has been manually labelled; this data is in the JSON files)
+<br>
 **OUTPUT:**
 SUN3D folder structure with .3d, .cen, .csv, ,.jpg for each frame
+
 ###### prepare_data.py
+
 **INPUT:**
 The output from collect_data.py
+<br>
 **OUTPUT:** 
 * triplets.csv/triplets.pickle - calculated angles and distances
 between permutations of triplets of objects
 * object-sizes.csv - calculated object sizes
+
 ###### run.py
+
 **INPUT:**
 3DS files in the 3d folder that match the object names obtained
 from the SUN3D database and the output from prepare_data.py
+<br>
 **OUTPUT:**
 3d PNG scene image(s) in the images folder

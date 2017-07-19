@@ -194,19 +194,32 @@ def visualize(coords):
     obj3d = [f for f in os.listdir('3d') if os.path.splitext(f)[1]=='.3DS']
 
     # place camera
-    c_loc = mathutils.Vector(coords['CAMERA'])
-    camera.delta_location = c_loc
+    c_loc = coords['CAMERA']
+    camera.location = c_loc
     look_at(camera,mathutils.Vector((0,0,0)))
 
     lc = 0 # location counter for text
     filepath = '' # object names will be added to create image filename
     maxSize = max([sizes[obj] for obj,_ in coords.items() \
                   if obj!='CAMERA' and obj!='SCALE'])
-    
+
+    floor = 0 # keeps track of lowest point to place floor    
     for obj,xyz in coords.items():
         if obj=='CAMERA' or obj=='SCALE': continue
         filepath+=obj+'-'
         
+        if obj=='lamp' or obj=='light':
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.data.objects["Lamp"].location = xyz
+            if obj=='light': continue
+
+        if obj=='floor':
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.ops.mesh.primitive_plane_add()
+            ob = bpy.context.selected_objects[0]
+            ob.dimensions[0] = ob.dimensions[1] = \
+                (sizes[obj]/maxSize)*coords['SCALE']/2
+
         # if no 3d data exists for object, use spheres:
         if obj not in ['_'.join(f.split('_')[:-1]) for f in obj3d]:
                         
@@ -235,7 +248,9 @@ def visualize(coords):
             text.data.materials.append(mat)
             color = [random.random() for i in range(3)]
             mat.diffuse_color = color    
-        
+            
+            floor = min(floor,ob.location[2]-(ob.dimensions[2]/2))        
+
         else: # if 3d data exists for object, use this data
 
             # select random 3d file for current object type and import it into scene
@@ -246,30 +261,32 @@ def visualize(coords):
                 axis_forward='-Y',axis_up='Z',constrain_size=0,use_image_search=False)
            
             # set object location and scale
-            bpy.context.scene.objects.active = selectObj(bpy.context.selected_objects)
             bpy.ops.object.location_clear()
             bpy.ops.object.scale_clear()
             bpy.ops.object.rotation_clear()
+            bpy.context.scene.objects.active = selectObj(bpy.context.selected_objects)
             bpy.ops.object.join()
+            
             # selected_objects should be length 1 unless there is dummy object in index 0
             ob = bpy.context.selected_objects[-1] # select the non-dummy object
             ob.name = obj
-            #print ("NAME:",ob.name)
-            ob.location = mathutils.Vector(xyz)
-            #print ("LOC:",ob.location)
-            #orig = list(ob.scale) # original object size
-            #print ("ORIG:",orig)
-            #mid  = np.median(np.array(orig)) # median of x, y, and z values
-            #print ("MID:",mid)
-            #ratio = [o/mid for o in orig] # make middle value 1, other 2 proportional
-            #print ("RATIO:",ratio)
-            #print ("OBJSIZE:",sizes[obj],"/MAXSIZE:",maxSize,"*SCALE",coords['SCALE'])
+            ob.location = xyz
+            maxDim = max(ob.dimensions)
+            ob.dimensions = [x/maxDim for x in ob.dimensions] # normalize to 1
             scale = [(sizes[obj]/maxSize)*coords['SCALE']/2 for r in range(0,3)]
-            #print ("SCALE:",scale)
-            ob.scale = mathutils.Vector(scale)
+            ob.scale = scale
 
+            floor = min(floor,ob.location[2]-(ob.dimensions[2]/2))
 
-    look_at(camera,mathutils.Vector((0,0,0)))
+    if 'floor' in [n.name for n in bpy.context.scene.objects]:
+        bpy.ops.object.select_all(action='DESELECT')
+        bpy.data.objects['floor'].location[2] = floor
+
+    for o in bpy.context.scene.objects:
+        if o.type == 'MESH':
+            o.select
+    bpy.ops.view3d.camera_to_view_selected()
+    #look_at(camera,mathutils.Vector((0,0,0)))
 
     # render/save image
     filepath = generateFileName('images/'+filepath.rstrip('-')+'_0001.png')
