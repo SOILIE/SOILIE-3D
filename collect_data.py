@@ -302,7 +302,7 @@ class Frame:
         # export image file
         image = self.image
         if self.background:
-            image = Image.alpha_composite(self.background,image) 
+            image = Image.alpha_composite(self.background,image).convert('RGB')
         image.save(join(filePath,name+'.jpg'))
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t9))); sys.stdout.flush()
 

@@ -7,6 +7,7 @@
 ##### Required packages
 * MATLAB engine for Python2
 * Numpy & Scipy
+* matplotlib
 * PIL
 * Blender (tested in 2.78c)
    * Numpy for Blender

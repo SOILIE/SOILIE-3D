@@ -32,8 +32,9 @@ def mainMenu():
 
 def optionMenu():
     options = []
+    print 'Is the database on the (w)eb or (l)ocal drive?: '
     while 1:
-        response = raw_input('Is the database on the (w)eb or (l)ocal drive?: ')
+        response = raw_input('>>>')
         if response == 'l' or response == 'local': # local path
             options.append(dirname(abspath(__file__)))
             options.append(True)
@@ -47,8 +48,12 @@ def optionMenu():
         if response == "menu" or response == "back":
             return None
         print ">>> ERROR: Unknown Command."
+    print 'To check if all 3d points are being correctly imported\n' \
+          'from the database, you may choose to generate 3d plots\n' \
+          'of all the data points for each frame to get a visual\n' \
+          'representation. Plot how many graphs per frame? (0-360)'
     while 1:
-        response = raw_input('Plot how many 3d graphs per frame? (0-360): ')
+        response = raw_input('>>>')
         if response.isdigit() and 0 <= int(response) <= 360:
             options.append(int(response))
             return options
