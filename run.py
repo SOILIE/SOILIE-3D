@@ -129,13 +129,14 @@ def calculateCoords(objects):
     finalCoords[triplets[0][2]] = triplets[0][5] # add base objC coords
     finalCoords['CAMERA'] = triplets[0][6] # add camera coords
     finalCoords['SCALE'] = triplets[0][7] # add scale
+    
     for triplet in triplets[1:]:
         pts = [triplet[3],triplet[4],triplet[6]]
         z = list(zip(pts[0],pts[1],pts[2]))
         d = [sum(z[0])/3,sum(z[1])/3,sum(z[2])/3]
         pts.append(d)
         coords = np.array(pts,np.float32)
-        
+
         # pad with ones to make translations possible
         pad = lambda x: np.hstack([x, np.ones((x.shape[0], 1))])
         unpad = lambda x: x[:,:-1]
@@ -151,7 +152,7 @@ def calculateCoords(objects):
         coordsNew = transform(coords) # current triplet lines up with the base triplet
 
         # determine the outlier - these are the coordinates for objC
-        isNear = lambda p1,p2: sum((x1 - x2)**2 for x1, x2 in zip(p1, p2)) < 0.01
+        isNear = lambda p1,p2: sum((x1 - x2)**2 for x1, x2 in zip(p1, p2)) < 0.0001
         corresp = [] # stores all coords from coordsNew which mapped to a baseCoord
         for coord in coordsNew.tolist():
             for baseCoord in baseCoords.tolist():
@@ -174,7 +175,8 @@ def visualize(coords):
         if os.path.exists(filename):
             num = str(int(os.path.splitext(filename)[-2][-4:])+1)
             return generateFileName( \
-                ''.join(os.path.splitext(filename)[:-1])[:-4]+'0'*(4-len(num))+num+'.png')
+                ''.join(os.path.splitext(filename)[:-1])[:-4]+ \
+                '0'*(4-len(num))+num+'.png')
         return filename
 
     def selectObj(objs):
@@ -192,18 +194,21 @@ def visualize(coords):
     camera = bpy.data.objects['Camera']
     sizes = loadObjectSizes()
     obj3d = [f for f in os.listdir('3d') if os.path.splitext(f)[1]=='.3DS']
-
+    
     # place camera
     c_loc = coords['CAMERA']
     camera.location = c_loc
     look_at(camera,mathutils.Vector((0,0,0)))
 
+    # variables used in for loop below
     lc = 0 # location counter for text
     filepath = '' # object names will be added to create image filename
-    maxSize = max([sizes[obj] for obj,_ in coords.items() \
-                  if obj!='CAMERA' and obj!='SCALE'])
-
-    floor = 0 # keeps track of lowest point to place floor    
+    maxSize = max([sizes[obj] for obj,_ in coords.items() if obj!='CAMERA' and obj!='SCALE'])
+    avgLoc  = [sum(l)/len(l) for l in list(zip(*[xyz for obj,xyz in coords.items() \
+                if obj!='CAMERA' and obj!='SCALE' and obj!='floor']))] # x,y of floor
+    floor = 0 # keeps track of lowest point to place floor (z of floor)
+    newDims = {} # will store dims to update after for loop: workaround for Blender bug
+    
     for obj,xyz in coords.items():
         if obj=='CAMERA' or obj=='SCALE': continue
         filepath+=obj+'-'
@@ -213,54 +218,55 @@ def visualize(coords):
             bpy.data.objects["Lamp"].location = xyz
             if obj=='light': continue
 
-        if obj=='floor':
-            bpy.ops.object.select_all(action='DESELECT')
-            bpy.ops.mesh.primitive_plane_add()
-            ob = bpy.context.selected_objects[0]
-            ob.dimensions[0] = ob.dimensions[1] = \
-                (sizes[obj]/maxSize)*coords['SCALE']/2
-
         # if no 3d data exists for object, use spheres:
         if obj not in ['_'.join(f.split('_')[:-1]) for f in obj3d]:
-                        
-            # add/setup text to identify the object
-            bpy.ops.object.select_all(action='DESELECT')
-            bpy.ops.object.text_add(radius=0.4,location=\
-            (xyz[0],xyz[1],xyz[2]+1.3+lc))
-            lc+=0.4
-            text = bpy.context.object
-            text.data.body = obj
-            look_at(text,mathutils.Vector((0,0,0)))
-            #text.rotation_euler[0]+=0.2
-            #text.rotation_euler[1]+=0.2
-            #text.rotation_euler[2]-=0.2
+            if obj=='floor':
+                bpy.ops.object.select_all(action='DESELECT')
+                bpy.ops.mesh.primitive_plane_add()
+                ob = bpy.context.selected_objects[0]
+                ob.name = 'floor'
+                ob.scale[0] = ob.scale[1] = \
+                    sizes[obj]/maxSize*coords['SCALE']/4
 
-            # add/setup sphere to represent the object
-            bpy.ops.object.select_all(action='DESELECT')
-            bpy.ops.mesh.primitive_uv_sphere_add(segments=32,\
-                size=(sizes[obj]/maxSize)*coords['SCALE']/2,location=xyz)
-            ob = bpy.context.active_object
-            ob.name = obj
-            
-            # create material to color the sphere
-            mat = bpy.data.materials.new(name=obj+"-mat")
-            ob.data.materials.append(mat)
-            text.data.materials.append(mat)
-            color = [random.random() for i in range(3)]
-            mat.diffuse_color = color    
-            
-            floor = min(floor,ob.location[2]-(ob.dimensions[2]/2))        
+            else:
+                # add/setup text to identify the object
+                bpy.ops.object.select_all(action='DESELECT')
+                bpy.ops.object.text_add(radius=0.4,location=\
+                (xyz[0],xyz[1],xyz[2]+1.3+lc))
+                lc+=0.4
+                text = bpy.context.object
+                text.data.body = obj
+                look_at(text,mathutils.Vector((0,0,0)))
+                #text.rotation_euler[0]+=0.2
+                #text.rotation_euler[1]+=0.2
+                #text.rotation_euler[2]-=0.2
+
+                # add/setup sphere to represent the object
+                bpy.ops.object.select_all(action='DESELECT')
+                bpy.ops.mesh.primitive_uv_sphere_add(segments=32,\
+                    size=sizes[obj]/maxSize*coords['SCALE']/2,location=xyz)
+                ob = bpy.context.active_object
+                ob.name = obj
+
+                # create material to color the sphere
+                mat = bpy.data.materials.new(name=obj+"-mat")
+                ob.data.materials.append(mat)
+                text.data.materials.append(mat)
+                color = [random.random() for i in range(3)]
+                mat.diffuse_color = color
+
+                floor = min(floor,ob.location[2]-(ob.dimensions[2]/2))        
 
         else: # if 3d data exists for object, use this data
-
+            
             # select random 3d file for current object type and import it into scene
             fname = random.choice( \
                 [f for f in obj3d if '_'.join(f.split('_')[:-1])==obj])
             bpy.ops.object.select_all(action='DESELECT')
             bpy.ops.import_scene.autodesk_3ds(filepath=os.path.join('3d',fname), \
                 axis_forward='-Y',axis_up='Z',constrain_size=0,use_image_search=False)
-           
-            # set object location and scale
+            
+            # clear object location and scale
             bpy.ops.object.location_clear()
             bpy.ops.object.scale_clear()
             bpy.ops.object.rotation_clear()
@@ -268,27 +274,34 @@ def visualize(coords):
             bpy.ops.object.join()
             
             # selected_objects should be length 1 unless there is dummy object in index 0
-            ob = bpy.context.selected_objects[-1] # select the non-dummy object
+            ob = selectObj(bpy.context.selected_objects) # select the non-dummy object
             ob.name = obj
             ob.location = xyz
             maxDim = max(ob.dimensions)
-            ob.dimensions = [x/maxDim for x in ob.dimensions] # normalize to 1
-            scale = [(sizes[obj]/maxSize)*coords['SCALE']/2 for r in range(0,3)]
+            newDims[obj] = [x/maxDim for x in ob.dimensions] # normalize to 1           
+            scale = [sizes[obj]/maxSize*coords['SCALE']/2 for r in range(0,3)]
             ob.scale = scale
-
-            floor = min(floor,ob.location[2]-(ob.dimensions[2]/2))
-
+            floor = min(floor,ob.location[2]-(newDims[obj][2]/2))
+    
     if 'floor' in [n.name for n in bpy.context.scene.objects]:
         bpy.ops.object.select_all(action='DESELECT')
-        bpy.data.objects['floor'].location[2] = floor
+        bpy.data.objects['floor'].location = avgLoc[0],avgLoc[1],floor
+        bpy.context.scene.objects['floor'].dimensions = (6,6,0)
+        bpy.context.scene.update()
 
+    bpy.ops.object.select_all(action='DESELECT')
     for o in bpy.context.scene.objects:
-        if o.type == 'MESH':
-            o.select
-    bpy.ops.view3d.camera_to_view_selected()
-    #look_at(camera,mathutils.Vector((0,0,0)))
+        if (o.type == 'MESH' and \
+            o.name in ['_'.join(f.split('_')[:-1]) for f in obj3d]):
+            o.select = True
+            newDim = newDims[o.name]
+            o.dimensions = newDim
+            bpy.context.scene.update()
 
     # render/save image
+    bpy.data.cameras['Camera'].type = 'ORTHO'
+    bpy.ops.view3d.camera_to_view_selected()
+    # look_at(camera,mathutils.Vector((0,0,0)))
     filepath = generateFileName('images/'+filepath.rstrip('-')+'_0001.png')
     bpy.data.scenes['Scene'].render.filepath = filepath
     bpy.ops.render.render(write_still=True)
@@ -342,7 +355,7 @@ if __name__=="__main__":
                 names = input("Enter some object names: ")
                 if names=='exit' or names=='quit':
                     sys.exit(0)
-                if num=='menu':
+                if names=='menu':
                     return menuLoop()
                 if ',' in names or ';' in names:
                     print ("Invalid format: Use SPACE as delimiter.")
