@@ -34,7 +34,7 @@ def optionMenu():
     options = []
     print 'Is the database on the (w)eb or (l)ocal drive?: '
     while 1:
-        response = raw_input('>>>')
+        response = raw_input('>>> ')
         if response == 'l' or response == 'local': # local path
             options.append(dirname(abspath(__file__)))
             options.append(True)
@@ -53,7 +53,7 @@ def optionMenu():
           'of all the data points for each frame to get a visual\n' \
           'representation. Plot how many graphs per frame? (0-360)'
     while 1:
-        response = raw_input('>>>')
+        response = raw_input('>>> ')
         if response.isdigit() and 0 <= int(response) <= 360:
             options.append(int(response))
             return options
