@@ -7,7 +7,9 @@
 
     File: progress_bar.py
     Provides a simple progress bar for prepare_data.py
-    and working_combos.py.'''
+    and working_combos.py. This code will run with both
+    Python2 and Python3 so it will work for both scripts.'''
+from __future__ import print_function
 
 def update (iteration, total, prefix = '', \
             suffix = '', decimals = 1, \
