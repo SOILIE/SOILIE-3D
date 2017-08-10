@@ -32,15 +32,17 @@ def mainMenu():
 
 def optionMenu():
     options = []
-    print 'Is the database on the (w)eb or (l)ocal drive?: '
+    print 'Is the database on the (w)eb or (l)ocal drive?:'
     while 1:
         response = raw_input('>>> ')
         if response == 'l' or response == 'local': # local path
-            options.append(dirname(abspath(__file__)))
+            print 'Enter the path to the data:'            
+            response = raw_input('>>> ')
+            options.append(response)
             options.append(True)
             break
         if response == 'w' or response == 'web': # web path
-            options.append('http://sun3d.cs.princeton.edu/')
+            options.append('http://sun3d.cs.princeton.edu/data')
             options.append(False)
             break
         if response == "quit" or response == "exit":

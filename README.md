@@ -47,3 +47,18 @@ from the SUN3D database and the output from prepare_data.py
 <br>
 **OUTPUT:**
 3d PNG scene image(s) in the images folder
+
+##### Notes
+* The 'local' option in collect_data.py prompts for the filepath
+to the directory containing the data downloaded from the SUN3D 
+database. This data is expected to be in the same folder structure
+as the online database and must contain the intrinsics, extrinsics,
+and images which correspond with the data in the json folder. 
+Typically, the 'web' option should suffice and will find the 
+correct data automatically.
+* Due to a memory bug in the MATLAB engine, collect_data.py may 
+occasionally crash. If this occurs, remove the json files that
+have already been processed from the json folder (the filenames 
+correspond to the folder structure of the data) and rerun the
+script on the remaining files until they are all processed before
+running prepare_data.py.

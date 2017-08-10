@@ -398,17 +398,17 @@ if __name__ == "__main__":
 
         # get camera intrinsics
         K = eng.reshape(eng.readValuesFromTxt(join \
-                     (currentPath,'data',name,'intrinsics.txt')),3,3);
-
-        # get camera extrinsics
+                       (currentPath,name,'intrinsics.txt')),3,3);
+        # get camera extrinsics        
         if local:
-            exFile = listdir(join('data',name,'extrinsics'))[-1] 
+            exFile = listdir(join(currentPath,name,'extrinsics'))[-1] 
         else:
             exFile = re.compile(r'[0-9]*\.txt') \
-                    .findall(urlopen(join(currentPath,'data',name,'extrinsics')) \
+                    .findall(urlopen(join(currentPath,name,'extrinsics')) \
                     .read().decode('utf-8'))[-1]
+        
         extrinsicsC2W = eng.permute(eng.reshape(eng.readValuesFromTxt(join \
-                        (currentPath,'data',name,'extrinsics',exFile)) \
+                        (currentPath,name,'extrinsics',exFile)) \
                         ,4,3,[]),matlab.int32([2,1,3]));
 
         # print file stats
@@ -433,9 +433,9 @@ if __name__ == "__main__":
             sys.stdout.write(" coordinates...\n")
             sys.stdout.write("\tgathering frame data:"); sys.stdout.flush()
             # get background image and depth data ----------------#
-            imagePath = join(currentPath,"data",name,"image")
-            depthPath = join(currentPath,"data",name,"depth")
-            if local:
+            imagePath = join(currentPath,name,"image")
+            depthPath = join(currentPath,name,"depth")            
+            if local:                
                 imageList = listdir(imagePath)
                 depthList = listdir(depthPath)
             else:
@@ -558,8 +558,7 @@ if __name__ == "__main__":
                     processJSON(data,eng,currentPath,local,plot) # process each json file
                     eng.quit() # shut down matlab engine
                 print "\n** File processed in %s seconds.\n"% str(endTimer(startB))
-                print   "**",len(allObjects),"total objects at",\
-                        sys.getsizeof(allObjects),"bits."
+                print   "**",len(allObjects),"total objects."
             print "** All "+str(len(jsonFiles))+ \
                   " files processed in %s seconds."\
                   % str(endTimer(startA))
