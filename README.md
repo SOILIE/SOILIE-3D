@@ -1,5 +1,5 @@
 ##  VISUO 3D
-#### v.17.07.17  
+#### v.18.02.12  
 ###### Written by Mike Cichonski
 ###### For the Science of Imagination Laboratory
 ###### at Carleton University
