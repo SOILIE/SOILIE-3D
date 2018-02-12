@@ -5,7 +5,6 @@
 ###### at Carleton University
 
 ##### Required packages
-* MATLAB engine for Python2
 * Numpy & Scipy
 * matplotlib
 * PIL

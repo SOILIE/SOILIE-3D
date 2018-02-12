@@ -9,10 +9,11 @@
 	angles and distances between object triplets in each frame.
 	Requires SUN3D JSON label files in the json folder.'''
 
-import matlab.engine
+#import matlab.engine # uncomment if using matlab engine + uncomment all eng lines below
 import json, random, sys, urllib2, cStringIO, re
 from urllib2 import urlopen
 import numpy as np
+np.set_printoptions(threshold=np.nan)
 import scipy as sp
 from scipy.sparse import coo_matrix
 from mpl_toolkits.mplot3d import Axes3D
@@ -27,6 +28,7 @@ from os.path import join, isfile, isdir, dirname, abspath, splitext, exists
 from itertools import permutations
 
 from modules import menu
+from modules import import_tools as imp
 from modules.timer import *
 
 ## declare objects ---------------------------------------------- ##
@@ -80,13 +82,15 @@ class Frame:
             pix[pixel[0]-1,pixel[1]-1] = self.data[i].colour
         # camera coords
         sys.stdout.write("\tretrieving camera coords:"); sys.stdout.flush()
-        t1 = startTimer() #time to retrieve camera coords using MATLAB engine
-        cameraCoords = eng.depth2XYZcamera(self.intrinsics,self.depthMap)       
-        sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
+        t1 = startTimer() #time to retrieve camera coords
+        #cameraCoords = eng.depth2XYZcamera(self.intrinsics,self.depthMap)
+	cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
+	sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
         # world coords
         sys.stdout.write("\tconverting to world coords:"); sys.stdout.flush()
-        t2 = startTimer() #time to change from camera to world coords (MATLAB)
-        worldCoords = eng.camera2XYZworld(cameraCoords,self.extrinsics,nargout=2)
+        t2 = startTimer() #time to change from camera to world coords
+        #worldCoords = eng.camera2XYZworld(cameraCoords,self.extrinsics,nargout=2)
+        worldCoords = imp.camera2XYZworld(cameraCoords,self.extrinsics)
         xyz = worldCoords[0]
         valid = worldCoords[1]
         sys.stdout.write("\t%s sec.\n"%str(endTimer(t2))); sys.stdout.flush()
@@ -367,14 +371,14 @@ if __name__ == "__main__":
     jsonFiles = [f for f in listdir('json') \
                  if isfile(join('json',f))]
    
-    def processJSON (data,eng, currentPath, local, plot):
+    def processJSON (data,currentPath, local, plot,eng=None):
         '''process each json file
         data:   the data contained in the json file
-        eng:    the running matlab engine
         currentPath:    the root path of the database
         local:  True if database is located locally, False if on web
-        plot:   number of different views plotted per frame'''
-         
+        plot:   number of different views plotted per frame
+	eng:    the running matlab engine'''
+ 
         # start json timer
         jsonTimer = startTimer()
 
@@ -397,8 +401,10 @@ if __name__ == "__main__":
                 emptyObjects.append(i)
 
         # get camera intrinsics
-        K = eng.reshape(eng.readValuesFromTxt(join \
-                     (currentPath,'data',name,'intrinsics.txt')),3,3);
+        #K = eng.reshape(eng.readValuesFromTxt(join \
+        #             (currentPath,'data',name,'intrinsics.txt')),3,3)
+	K = np.transpose(np.reshape(imp.readValuesFromTxt(join \
+                     (currentPath,'data',name,'intrinsics.txt'),local),(3,3)))
 
         # get camera extrinsics
         if local:
@@ -407,11 +413,14 @@ if __name__ == "__main__":
             exFile = re.compile(r'[0-9]*\.txt') \
                     .findall(urlopen(join(currentPath,'data',name,'extrinsics')) \
                     .read().decode('utf-8'))[-1]
-        extrinsicsC2W = eng.permute(eng.reshape(eng.readValuesFromTxt(join \
-                        (currentPath,'data',name,'extrinsics',exFile)) \
-                        ,4,3,[]),matlab.int32([2,1,3]));
-
-        # print file stats
+        #extrinsicsC2W = eng.permute(eng.reshape(eng.readValuesFromTxt(join \
+        #                (currentPath,'data',name,'extrinsics',exFile)) \
+        #                ,4,3,[]),matlab.int32([2,1,3]))
+	extrinsicsC2W = np.transpose(np.reshape(imp.readValuesFromTxt(join \
+			(currentPath,'data',name,'extrinsics',exFile),local), \
+			(-1,3,4)),(1,2,0))
+	
+	# print file stats
         print "-- processing data.....", name
         print "  -- DATE:", date
         print "  -- # FRAMES:", len(frames)
@@ -475,8 +484,9 @@ if __name__ == "__main__":
             else:
                 background = Image.open(cStringIO \
                             .StringIO(urlopen(image).read())).convert('RGBA')
-            depthMap = eng.depthRead(depth)
-            # ----------------------------------------------------#
+            #depthMap = eng.depthRead(depth)
+	    depthMap = imp.depthRead(depth,local)
+            # ---------------------------------------------------- #
 
             # create frame and fill with data
             currentFrame = Frame(i)
@@ -484,7 +494,8 @@ if __name__ == "__main__":
             currentFrame.background = background
             currentFrame.depthMap = depthMap
             currentFrame.intrinsics = K
-            currentFrame.extrinsics = eng.getExtrinsics(extrinsicsC2W,i+1)
+            #currentFrame.extrinsics = eng.getExtrinsics(extrinsicsC2W,i+1)
+	    currentFrame.extrinsics = imp.getExtrinsics(extrinsicsC2W,i)
             exceptions   = []
             conflicts    = []
             polygons     = {}
@@ -549,14 +560,15 @@ if __name__ == "__main__":
             for jFile in jsonFiles:
                 startB = startTimer()
                 with open(join("json",jFile)) as jData:
-                    print "Starting MATLAB engine..."
-                    ## start matlab engine ----------- ##
-                    eng = matlab.engine.start_matlab()
-                    eng.addpath('modules/matlab', nargout=0)
+                    #print "Starting MATLAB engine..."
+                    ## start matlab engine ----------- ## Uncomment below if using matlab engine
+                    #eng = matlab.engine.start_matlab() # must also make sure all eng commands are uncommented
+                    #eng.addpath('modules/matlab', nargout=0)
+		    eng = None # comment if using matlab engine
                     ## ------------------------------- ##
                     data = json.load(jData)
-                    processJSON(data,eng,currentPath,local,plot) # process each json file
-                    eng.quit() # shut down matlab engine
+                    processJSON(data,currentPath,local,plot,eng) # process each json file
+                    #eng.quit() # shut down matlab engine
                 print "\n** File processed in %s seconds.\n"% str(endTimer(startB))
                 print   "**",len(allObjects),"total objects at",\
                         sys.getsizeof(allObjects),"bits."
