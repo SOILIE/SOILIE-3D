@@ -1,5 +1,5 @@
 ''' Visuo 3D
-    v.17.03.12
+    v.18.03.14
     Written by Mike Cichonski
     for the Science of Imagination Laboratory
     Carleton University
@@ -9,12 +9,10 @@
 	angles and distances between object triplets in each frame.
 	Requires SUN3D JSON label files in the json folder.'''
 
-import matlab.engine
-import json, random, sys, urllib2, cStringIO, re
+import json, random, sys, urllib2, cStringIO, re, gc
 from urllib2 import urlopen
 import numpy as np
-import scipy as sp
-from scipy.sparse import coo_matrix
+np.set_printoptions(threshold=np.nan)
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib
 matplotlib.use("Agg")
@@ -27,6 +25,7 @@ from os.path import join, isfile, isdir, dirname, abspath, splitext, exists
 from itertools import permutations
 
 from modules import menu
+from modules import import_tools as imp
 from modules.timer import *
 
 ## declare objects ---------------------------------------------- ##
@@ -34,18 +33,14 @@ from modules.timer import *
 class Frame:
     '''represents a single frame'''
 
-    def __init__(self, ID, row=[], col=[], data=[], width=640, height=480):
-        '''creates a new frame
-        ID:     the frame number
-        row:    a list of y values
-        col:    a list of x values
-        data:   a list of data corresponding to x and y location'''
-        self.ID = ID
-        self.row = []
-        self.col = []
-        self.data = []
-        self.width = width
-        self.height = height
+    def __init__(self, ID, width, height):
+        '''creates a new frame'''
+        self.ID = ID           # the frame number
+        self.row = []	       # a list of y values
+        self.col = []          # a list of x values
+        self.data = []         # a list of data corresponding to x and y location
+        self.width = width     # width of frame (y)
+        self.height = height   # height of frame (x)
         self.loc = None        # location of recording
         self.objects = []      # objects in frame
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
@@ -54,11 +49,11 @@ class Frame:
 	self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
         self.intrinsics = []   # camera intrinsics
         self.extrinsics = []   # camera extrinsics
-        self.matrix = None     # 
         self.image = None      # image to export
         self.background = None # original image
         self.depthMap = None   # depth map
         self.xyz = []          # xyz world coords for entire frame
+        self.valid = []        # valid world coords corresponding to each [x,y] location
 
     def addData(self,data,x,y):
         '''add data at specified x,y location'''
@@ -72,38 +67,21 @@ class Frame:
     def update(self):
         '''update matrix and image'''
         dataNames = [x.ID for x in self.data]
-        self.matrix = coo_matrix((dataNames,(self.row,self.col)), \
-                                  shape=(self.height+1,self.width+1))
         self.image = Image.new('RGBA',(self.width,self.height))
         pix = self.image.load()
         for i,pixel in enumerate(zip(self.col, self.row)):
             pix[pixel[0]-1,pixel[1]-1] = self.data[i].colour
         # camera coords
         sys.stdout.write("\tretrieving camera coords:"); sys.stdout.flush()
-        t1 = startTimer() #time to retrieve camera coords using MATLAB engine
-        cameraCoords = eng.depth2XYZcamera(self.intrinsics,self.depthMap)       
-        sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
+        t1 = startTimer() #time to retrieve camera coords
+	cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
+	sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
         # world coords
         sys.stdout.write("\tconverting to world coords:"); sys.stdout.flush()
-        t2 = startTimer() #time to change from camera to world coords (MATLAB)
-        worldCoords = eng.camera2XYZworld(cameraCoords,self.extrinsics,nargout=2)
-        xyz = worldCoords[0]
-        valid = worldCoords[1]
+        t2 = startTimer() #time to change from camera to world coords
+        (xyzWorld,self.valid) = imp.camera2XYZworld(cameraCoords,self.extrinsics)
+        self.xyz = np.transpose(xyzWorld)
         sys.stdout.write("\t%s sec.\n"%str(endTimer(t2))); sys.stdout.flush()
-        # filter coords
-        sys.stdout.write("\tfiltering invalid coords:"); sys.stdout.flush()
-        t3 = startTimer() #time to append valid coordinates to self.xyz
-        count = 0
-        for i, row in enumerate(valid):
-            self.xyz.append([])
-            for col in row:
-                if col == True:
-                    self.xyz[i].append([xyz[0][count],\
-                                        xyz[1][count],\
-                                        xyz[2][count]])
-                    count+=1
-                else: self.xyz[i].append(None)
-        sys.stdout.write("\t%s sec.\n"%str(endTimer(t3))); sys.stdout.flush()
         return self # to enable cascading
 
     def calculateCentroids(self,polygons):
@@ -113,33 +91,39 @@ class Frame:
         t4 = startTimer() #time to calculate the 2D and 3D centroids
         # Get 2D centroids (to place labels in correct place in image)
         for name,coords in polygons.iteritems():
-	    self.labels[name] = [sum(x for (x,y) in coords)/len(coords),\
-				 sum(y for (x,y) in coords)/len(coords)] 
+            centX = sum([x for (x,y) in coords])/len(coords)
+            centY = sum([y for (x,y) in coords])/len(coords)
+	    self.labels[name] = (centX,centY)
         # Get 3D centroids
+        rangeX = range(self.height)
+        rangeY = range(self.width)
+        template = [(y,x) for y in rangeY for x in rangeX]
         for name, allCoords in polygons.iteritems():
-            coords = [c for c in allCoords if c[0]<640 and c[1]<480 and c[0]>=0 and c[1]>=0]
+            coords = [c for c in allCoords if c[0]<self.width \
+		      and c[1]<self.height and c[0]>=0 and c[1]>=0]
             if not coords: continue
             vertices = path.Path(coords,closed=True)
-            objectPts = vertices.contains_points(\
-                [(y,x) for y in range(0,640) for x in range(0,480)])
-            objectPts = np.reshape(objectPts,(640,480))
+            objectPts = vertices.contains_points(template)
+            objectPts = np.reshape(objectPts,(self.width,self.height))
+            count = 0
             pts3d = []
             for y,col in enumerate(objectPts):
                 for x,row in enumerate(col):
-                    if row==True:
-                        xyzCoords = self.xyz[x][y]
-                        if xyzCoords!=None:
-                            pts3d.append((xyzCoords[0],xyzCoords[1],xyzCoords[2]))
-            x = [item[0] for item in pts3d]
-            y = [item[1] for item in pts3d]
-            z = [item[2] for item in pts3d]
-            if len(x) == 0:
+                    if row and self.valid[x][y]:
+                        xyzCoords = self.xyz[count]
+                        pts3d.append(xyzCoords)
+                    if self.valid[x][y]:
+                        count+=1
+            X = [item[0] for item in pts3d]
+            Y = [item[1] for item in pts3d]
+            Z = [item[2] for item in pts3d]
+            if len(X) == 0:
                 continue
-            x = sum(x)/len(x)
-            y = sum(y)/len(y)
-            z = sum(z)/len(z)
+            X = sum(X)/len(X)
+            Y = sum(Y)/len(Y)
+            Z = sum(Z)/len(Z)
             self.objects3d[name] = pts3d
-            self.centroids[name] = (x,y,z)
+            self.centroids[name] = (X,Y,Z)
 
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t4))); sys.stdout.flush()
         return self
@@ -235,11 +219,13 @@ class Frame:
             fig = plt.figure()
             ax = fig.add_subplot(111,projection='3d')
             ax.scatter([0],[0],[0],c='r',marker='o')
+            fig.clf()
         #-----------------------------------------------#
         for name, coords in self.objects3d.iteritems():
-            plotFile.write(str(name)+"\n")
+            plotFile.write(str(name))
             for coord in coords:
-                plotFile.write(str(coord)+"\n")
+                coord = "\n"+str(tuple(coord))
+                plotFile.write(coord)
             #---------------------------------------------------------------#
             if not plot: continue
             # get colour
@@ -273,8 +259,8 @@ class Frame:
                 curFig.savefig(saveLoc+'/'+str(self.ID)+\
                                '-'+'0'*(1/len(str(count)))+\
                                str(count)+'.png', dpi=100)
-            plt.close()
             sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t8))); sys.stdout.flush()
+        plt.close()
         #------------------------------------------------------------------#
         return self
         
@@ -304,7 +290,9 @@ class Frame:
         if self.background:
             image = Image.alpha_composite(self.background,image).convert('RGB')
         image.save(join(filePath,name+'.jpg'))
+        image.close()
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t9))); sys.stdout.flush()
+        return self
 
 class Object1:
     '''represents an object in the scene'''
@@ -358,23 +346,19 @@ class Object1:
 
 if __name__ == "__main__":
     
-    maxX = 640
-    maxY = 480
-    
     allObjects  = [] # list to store all objects from all files
     
     # load json files
     jsonFiles = [f for f in listdir('json') \
                  if isfile(join('json',f))]
-   
-    def processJSON (data,eng, currentPath, local, plot):
+ 
+    def processJSON (data,currentPath, local, plot):
         '''process each json file
         data:   the data contained in the json file
-        eng:    the running matlab engine
         currentPath:    the root path of the database
         local:  True if database is located locally, False if on web
         plot:   number of different views plotted per frame'''
-         
+ 
         # start json timer
         jsonTimer = startTimer()
 
@@ -397,8 +381,8 @@ if __name__ == "__main__":
                 emptyObjects.append(i)
 
         # get camera intrinsics
-        K = eng.reshape(eng.readValuesFromTxt(join \
-                     (currentPath,'data',name,'intrinsics.txt')),3,3);
+	K = np.transpose(np.reshape(imp.readValuesFromTxt(join \
+                     (currentPath,'data',name,'intrinsics.txt'),local),(3,3)))
 
         # get camera extrinsics
         if local:
@@ -407,11 +391,11 @@ if __name__ == "__main__":
             exFile = re.compile(r'[0-9]*\.txt') \
                     .findall(urlopen(join(currentPath,'data',name,'extrinsics')) \
                     .read().decode('utf-8'))[-1]
-        extrinsicsC2W = eng.permute(eng.reshape(eng.readValuesFromTxt(join \
-                        (currentPath,'data',name,'extrinsics',exFile)) \
-                        ,4,3,[]),matlab.int32([2,1,3]));
-
-        # print file stats
+	extrinsicsC2W = np.transpose(np.reshape(imp.readValuesFromTxt(join \
+			(currentPath,'data',name,'extrinsics',exFile),local), \
+			(-1,3,4)),(1,2,0))
+	
+	# print file stats
         print "-- processing data.....", name
         print "  -- DATE:", date
         print "  -- # FRAMES:", len(frames)
@@ -421,10 +405,6 @@ if __name__ == "__main__":
         print "    -- actual:", len(objects)-len(emptyObjects)
         print "    -- undefined:", len(emptyObjects)
 
-        currentObject = None
-        currentFile = None
-        background = None
-        depthMap = None
         for i, f in enumerate(frames):
             if i in emptyFrames:
                 continue
@@ -475,16 +455,17 @@ if __name__ == "__main__":
             else:
                 background = Image.open(cStringIO \
                             .StringIO(urlopen(image).read())).convert('RGBA')
-            depthMap = eng.depthRead(depth)
-            # ----------------------------------------------------#
 
+            (width,height) = background.size
+
+            # ---------------------------------------------------- #
             # create frame and fill with data
-            currentFrame = Frame(i)
+            currentFrame = Frame(i,width,height)
             currentFrame.loc = name
             currentFrame.background = background
-            currentFrame.depthMap = depthMap
+            currentFrame.depthMap = imp.depthRead(depth,local)
             currentFrame.intrinsics = K
-            currentFrame.extrinsics = eng.getExtrinsics(extrinsicsC2W,i+1)
+	    currentFrame.extrinsics = imp.getExtrinsics(extrinsicsC2W,i)
             exceptions   = []
             conflicts    = []
             polygons     = {}
@@ -506,7 +487,7 @@ if __name__ == "__main__":
                     x = int(round(x))
                     y = int(round(polygon['y'][j]))
                     polygons[str(currentObject.getName())].append((x,y))
-                    if 0 < x <= maxX and 0 < y <= maxY:
+                    if 0 < x <= width and 0 < y <= height:
                         if (y,x) in zip(currentFrame.row,currentFrame.col):
                             conflicts.append(str([(x,y),currentObject.getName()]))
                         else:
@@ -523,24 +504,26 @@ if __name__ == "__main__":
                     raise
             sys.stdout.write("\t\t%s sec.\n"%str(endTimer(frameTimer)));
             sys.stdout.flush()
-            (currentFrame.update()
-                        .calculateCentroids(polygons)
-                        .getAngleDistCombos() 
-                        .drawPolygons(polygons)
-                        .process3dPoints(polygons,filePath,plot)
-                        .export(filePath,str(i)))
+            currentFrame = (currentFrame.update()
+                           .calculateCentroids(polygons)
+                           .getAngleDistCombos() 
+                           .drawPolygons(polygons)
+                           .process3dPoints(polygons,filePath,plot)
+                           .export(filePath,str(i)))
 
             # uncomment to save exceptions and conflicts to files
             #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
             #np.savetxt(join(filePath,str(i)+'.co'),conflicts,fmt="%s")
             sys.stdout.write("\ttotal time for frame %s:"%str(currentFrame.ID))
+            currentFrame = None
             sys.stdout.write(" \t%s sec."%str(endTimer(frameTimer))); sys.stdout.flush()
     # END OF processJSON()
 
     while 1:
         response = menu.mainMenu()
         if response == '1': # process each json file
-            options = menu.optionMenu() 
+            response = None
+            options = menu.optionMenu()
             if options == "menu": continue # back to main menu
             currentPath = options[0]
             local =       options[1]
@@ -549,17 +532,10 @@ if __name__ == "__main__":
             for jFile in jsonFiles:
                 startB = startTimer()
                 with open(join("json",jFile)) as jData:
-                    print "Starting MATLAB engine..."
-                    ## start matlab engine ----------- ##
-                    eng = matlab.engine.start_matlab()
-                    eng.addpath('modules/matlab', nargout=0)
-                    ## ------------------------------- ##
                     data = json.load(jData)
-                    processJSON(data,eng,currentPath,local,plot) # process each json file
-                    eng.quit() # shut down matlab engine
+                    processJSON(data,currentPath,local,plot) # process each json file
                 print "\n** File processed in %s seconds.\n"% str(endTimer(startB))
-                print   "**",len(allObjects),"total objects at",\
-                        sys.getsizeof(allObjects),"bits."
+		print   "**",len(allObjects),"total objects in %d files." % jNum+1
             print "** All "+str(len(jsonFiles))+ \
                   " files processed in %s seconds."\
                   % str(endTimer(startA))
@@ -574,6 +550,7 @@ if __name__ == "__main__":
                 line = str(i+1)+" - "+str(o.ID)+" - "+str(o.getName())+" - "+ \
                        str(o.colour[:3])+" - "+str(len(o.frames))+" - "+oldIDs+"\n"
                 logFile.write(line)
+            logFile.close()
         elif response == '2':
             print "UNAVAILABLE: Working on it..."
         else:

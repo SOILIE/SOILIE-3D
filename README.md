@@ -1,11 +1,10 @@
 ##  VISUO 3D
-#### v.17.07.17  
+#### v.18.03.14
 ###### Written by Mike Cichonski
 ###### For the Science of Imagination Laboratory
 ###### at Carleton University
 
 ##### Required packages
-* MATLAB engine for Python2
 * Numpy & Scipy
 * matplotlib
 * PIL
