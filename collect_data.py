@@ -529,13 +529,13 @@ if __name__ == "__main__":
             local =       options[1]
             plot  =       options[2]
             startA = startTimer()
-            for jFile in jsonFiles:
+            for jNum,jFile in enumerate(jsonFiles):
                 startB = startTimer()
                 with open(join("json",jFile)) as jData:
                     data = json.load(jData)
                     processJSON(data,currentPath,local,plot) # process each json file
                 print "\n** File processed in %s seconds.\n"% str(endTimer(startB))
-		print   "**",len(allObjects),"total objects in %d files." % jNum+1
+		print   "**",len(allObjects),"total objects in %s JSON files." % str(jNum+1)
             print "** All "+str(len(jsonFiles))+ \
                   " files processed in %s seconds."\
                   % str(endTimer(startA))
