@@ -8,6 +8,8 @@
     File: progress_bar.py
     Provides a simple progress bar for prepare_data.py
     and working_combos.py.'''
+#from __future__ import print_function
+
 
 def update (iteration, total, prefix = '', \
             suffix = '', decimals = 1, \
@@ -19,3 +21,6 @@ def update (iteration, total, prefix = '', \
     print ('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix),end='\r',)
     if iteration == total:
         print ('')
+        
+#f'\r{prefix} |{bar}| {percent}\% {suffix}\r' or try %%
+# or get rid of the end= at the end

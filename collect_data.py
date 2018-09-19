@@ -22,7 +22,7 @@ import matplotlib.path as path
 from PIL import Image, ImageDraw
 from os import makedirs, listdir
 from os.path import join, isfile, isdir, dirname, abspath, splitext, exists
-from itertools import permutations
+from itertools import combinations
 
 from modules import menu
 from modules import import_tools as imp
@@ -46,7 +46,7 @@ class Frame:
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
         self.centroids = {}    # {objectName : (x,y,z) centroids in meters} (3D)
         self.objects3d = {}    # {objectName : [(x,y,z)...(x,y,z)] } all 3d points
-	self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
+	    self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
         self.intrinsics = []   # camera intrinsics
         self.extrinsics = []   # camera extrinsics
         self.image = None      # image to export
@@ -136,9 +136,16 @@ class Frame:
         for name, _ in self.centroids.iteritems():
             names.append(name)
         combos = []
-        for combo in permutations(names,3):
-            combos.append('---'.join(combo).split('---'))
-        for combo in combos:
+        for combo in combinations(names,3):
+            combo_name = re.search('[a-zA-Z]+(?=:|\s|\Z)', combo).group(0) # for multiword labels: '[a-zA-Z\s]+(?=:|\d|\Z)'
+            combo_number = re.search('\d+', combo)
+            try:
+                combo_number.group(0)
+            except AttributeError:
+                pass
+            else:
+                combo_name = '_'.join([combo_name, combo_number])
+            combos.append(combo_name)
             A = np.array(self.centroids[combo[0]])
             B = np.array(self.centroids[combo[1]])
             C = np.array(self.centroids[combo[2]])

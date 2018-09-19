@@ -11,6 +11,7 @@
 	largest measured diameter (unable to find true volume due 
 	to incomplete 3d data). Requires output from collect_data.py.'''
 
+#from __future__ import print_function
 import fnmatch
 import os
 import sys
@@ -90,7 +91,7 @@ if __name__=="__main__":
     count = 0
     for root, dirnames, filenames in os.walk('data'):
         for filename in fnmatch.filter(filenames,'*.3d'):
-            files3D.append(os.path.join(root,filename))
+           files3D.append(os.path.join(root,filename))
         for filename in fnmatch.filter(filenames,'*.cen'):
             cenFiles.append(os.path.join(root,filename)) 
 
@@ -111,6 +112,7 @@ if __name__=="__main__":
         lines = theFile.readlines()
         distances = {} # of each object's 3d points from centroid
         name = lines[0].rstrip('\n')
+        #print (lines)
         for line in lines:
             elem = ast.literal_eval(line)
             if len(elem)!=3:
