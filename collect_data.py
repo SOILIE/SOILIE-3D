@@ -29,7 +29,8 @@ from modules import import_tools as imp
 from modules.timer import *
 
 ## declare objects ---------------------------------------------- ##
- 
+
+#class with a bidirectional reference to Object1 class
 class Frame:
     '''represents a single frame'''
 
@@ -46,7 +47,7 @@ class Frame:
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
         self.centroids = {}    # {objectName : (x,y,z) centroids in meters} (3D)
         self.objects3d = {}    # {objectName : [(x,y,z)...(x,y,z)] } all 3d points
-	    self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
+	self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
         self.intrinsics = []   # camera intrinsics
         self.extrinsics = []   # camera extrinsics
         self.image = None      # image to export
@@ -128,23 +129,25 @@ class Frame:
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t4))); sys.stdout.flush()
         return self
 
-    def getAngleDistCombos(self):
+    def getAngleDistCombos(self,passed,dropped):
         '''get a set of angles and distances between objects'''
         sys.stdout.write("\tcalculating triplets:"); sys.stdout.flush()
         t5 = startTimer()
-        names = []		
+        names = []
         for name, _ in self.centroids.iteritems():
-            names.append(name)
-        combos = []
-        for combo in combinations(names,3):
-            combo_name = re.search('[a-zA-Z]+(?=:|\s|\Z)', combo).group(0) # for multiword labels: '[a-zA-Z\s]+(?=:|\d|\Z)'
-            combo_number = re.search('\d+', combo)
             try:
-                combo_number.group(0)
+                combo_name = re.search('[a-zA-Z]+(?=:|\s|\Z)', name).group(0) # for multiword labels: '[a-zA-Z\s]+(?=:|\d|\Z)'
+                number = re.search('\d+', combo_name)
+                number.group(0)
             except AttributeError:
+                dropped.write(name + '\n')
                 pass
             else:
-                combo_name = '_'.join([combo_name, combo_number])
+                combo_name = '_'.join([combo_name, number])
+                passed.write(combo_name + '\n')
+                names.append(combo_name)
+        combos = []
+        for combo in combinations(names,3):
             combos.append(combo_name)
             A = np.array(self.centroids[combo[0]])
             B = np.array(self.centroids[combo[1]])
@@ -301,6 +304,8 @@ class Frame:
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t9))); sys.stdout.flush()
         return self
 
+
+#class with a bidirectional reference to Object1 class
 class Object1:
     '''represents an object in the scene'''
 
@@ -511,12 +516,25 @@ if __name__ == "__main__":
                     raise
             sys.stdout.write("\t\t%s sec.\n"%str(endTimer(frameTimer)));
             sys.stdout.flush()
+            
+            try:
+                makedirs(join(filePath,str(i)))
+            except OSError:
+                if not isdir(join(filePath,str(i))):
+                    raise
+
+            passed  = open(join(filePath,str(i),'passed.txt'),'w')
+            dropped = open(join(filePath,str(i),'dropped.txt'),'w')
+
             currentFrame = (currentFrame.update()
                            .calculateCentroids(polygons)
-                           .getAngleDistCombos() 
+                           .getAngleDistCombos(passed,dropped) 
                            .drawPolygons(polygons)
                            .process3dPoints(polygons,filePath,plot)
                            .export(filePath,str(i)))
+
+            passed.close()
+            dropped.close()
 
             # uncomment to save exceptions and conflicts to files
             #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
