@@ -1,6 +1,7 @@
 ''' Visuo 3D
     v.18.03.14
     Written by Mike Cichonski
+    With contributions from Tae Burque
     for the Science of Imagination Laboratory
     Carleton University
 
@@ -9,10 +10,11 @@
 	angles and distances between object triplets in each frame.
 	Requires SUN3D JSON label files in the json folder.'''
 
-import json, random, sys, urllib2, cStringIO, re, gc
-from urllib2 import urlopen
+import json, random, sys, urllib.request, re, gc
+
+from io import BytesIO
 import numpy as np
-np.set_printoptions(threshold=np.nan)
+np.set_printoptions(threshold=sys.maxsize)
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib
 matplotlib.use("Agg")
@@ -46,7 +48,7 @@ class Frame:
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
         self.centroids = {}    # {objectName : (x,y,z) centroids in meters} (3D)
         self.objects3d = {}    # {objectName : [(x,y,z)...(x,y,z)] } all 3d points
-	self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
+        self.combos = []       # list of[labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
         self.intrinsics = []   # camera intrinsics
         self.extrinsics = []   # camera extrinsics
         self.image = None      # image to export
@@ -74,8 +76,8 @@ class Frame:
         # camera coords
         sys.stdout.write("\tretrieving camera coords:"); sys.stdout.flush()
         t1 = startTimer() #time to retrieve camera coords
-	cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
-	sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
+        cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
+        sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
         # world coords
         sys.stdout.write("\tconverting to world coords:"); sys.stdout.flush()
         t2 = startTimer() #time to change from camera to world coords
@@ -90,15 +92,15 @@ class Frame:
         sys.stdout.write("\tcalculating centroids:"); sys.stdout.flush()
         t4 = startTimer() #time to calculate the 2D and 3D centroids
         # Get 2D centroids (to place labels in correct place in image)
-        for name,coords in polygons.iteritems():
+        for name,coords in polygons.items():
             centX = sum([x for (x,y) in coords])/len(coords)
             centY = sum([y for (x,y) in coords])/len(coords)
-	    self.labels[name] = (centX,centY)
+            self.labels[name] = (centX,centY)
         # Get 3D centroids
         rangeX = range(self.height)
         rangeY = range(self.width)
         template = [(y,x) for y in rangeY for x in rangeX]
-        for name, allCoords in polygons.iteritems():
+        for name, allCoords in polygons.items():
             coords = [c for c in allCoords if c[0]<self.width \
 		      and c[1]<self.height and c[0]>=0 and c[1]>=0]
             if not coords: continue
@@ -133,7 +135,7 @@ class Frame:
         sys.stdout.write("\tcalculating triplets:"); sys.stdout.flush()
         t5 = startTimer()
         names = []		
-        for name, _ in self.centroids.iteritems():
+        for name, _ in self.centroids.items():
             names.append(name)
         combos = []
         for combo in permutations(names,3):
@@ -177,16 +179,16 @@ class Frame:
         sys.stdout.write("\tdrawing polygons:"); sys.stdout.flush()
         t6 = startTimer() #time to draw polygons
         if self.image == None:
-            print "ERROR: Can't draw to empty image! (update first)"
+            print("ERROR: Can't draw to empty image! (update first)")
         else:
             draw = ImageDraw.Draw(self.image)
-            for name,coord in polygons.iteritems():
+            for name,coord in polygons.items():
                 colour = (255,255,255,140)
                 for o in self.objects:
                     if str(o.getName()) == name:
                         colour = o.colour
                 draw.polygon(coord,fill=colour)
-            for name,coord in self.labels.iteritems():
+            for name,coord in self.labels.items():
                 if name not in self.centroids:
                     errLog = open (join('data',self.loc,'error.log'),'a')
                     errLog.write(str(self.ID)+". "+name+"\tat "+self.loc+'\n')
@@ -221,7 +223,7 @@ class Frame:
             ax.scatter([0],[0],[0],c='r',marker='o')
             fig.clf()
         #-----------------------------------------------#
-        for name, coords in self.objects3d.iteritems():
+        for name, coords in self.objects3d.items():
             plotFile.write(str(name))
             for coord in coords:
                 coord = "\n"+str(tuple(coord))
@@ -272,25 +274,25 @@ class Frame:
         t9 = startTimer() #time to draw polygons
 	# export centroid file
         centroidFile = open (join(filePath,name+'.cen'),'w')
-        for objName,coords in self.centroids.iteritems():
+        for objName,coords in self.centroids.items():
             item = objName+' ['+str(coords[0])+','+str(coords[1])+ \
                         ','+str(coords[2])+']\n'
             centroidFile.write(item)
         centroidFile.close()
 	# export csv file
-	csvFile = open(join(filePath,name+'.csv'),'w')
-	csvFile.write('objectA, objectB, objectC,'+\
-                      'distanceAB, distanceAC,distanceAO,'+\
-                      ' angleOAB, angleOAC, angleBAC\n')
-	for combo in self.combos:
-	    csvFile.write(','.join(combo)+'\n')
+        csvFile = open(join(filePath,name+'.csv'),'w')
+        csvFile.write('objectA, objectB, objectC, distanceAB, distanceAC,distanceAO, angleOAB, angleOAC, angleBAC\n')
+	
+        for combo in self.combos:
+	        csvFile.write(','.join(combo)+'\n')
         csvFile.close()
-        # export image file
+            
+    # export image file
         image = self.image
         if self.background:
             image = Image.alpha_composite(self.background,image).convert('RGB')
-        image.save(join(filePath,name+'.jpg'))
-        image.close()
+            image.save(join(filePath,name+'.jpg'))
+            image.close()
         sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t9))); sys.stdout.flush()
         return self
 
@@ -298,29 +300,29 @@ class Object1:
     '''represents an object in the scene'''
 
     def __init__(self, ID, name):
-	self.ID = ID
-	self.name = name
-	self.colour = self.setRandomColour()
-	self.frames = {}
+        self.ID = ID
+        self.name = name
+        self.colour = self.setRandomColour()
+        self.frames = {}
         self.oldIDs = []
-
     def updateID(self, ID):
         if ID != self.ID:
             self.oldIDs.append(self.ID)
         self.ID = ID
 
     def setRandomColour(self):
-	R = int(random.random() * 255)
+        R = int(random.random() * 255)
         G = int(random.random() * 255)
         B = int(random.random() * 255)
+        
         if R < 100 and G < 100 and B < 100:
-	    col = random.randrange(0,3)
-            if col == 0:      
-		R+=100
-            if col == 1: 
-		G+=100
-            else:             
-		B+=100
+            col = random.randrange(0,3)
+            if col == 0:
+                R+=100
+            elif col == 1:
+                G+=100
+            else:
+                B+=100
         return (R,G,B,140) # return in RGBA format (transparency hard-coded at 140)
 
     # get object name in format: [object,identifier]
@@ -381,29 +383,24 @@ if __name__ == "__main__":
                 emptyObjects.append(i)
 
         # get camera intrinsics
-	K = np.transpose(np.reshape(imp.readValuesFromTxt(join \
-                     (currentPath,'data',name,'intrinsics.txt'),local),(3,3)))
-
+        K = np.transpose(np.reshape(imp.readValuesFromTxt(join(currentPath,'data',name,'intrinsics.txt'),local),(3,3)))
+        
         # get camera extrinsics
         if local:
-            exFile = listdir(join('data',name,'extrinsics'))[-1] 
+            exFile = listdir(join('data',name,'extrinsics'))[-1]
         else:
-            exFile = re.compile(r'[0-9]*\.txt') \
-                    .findall(urlopen(join(currentPath,'data',name,'extrinsics')) \
-                    .read().decode('utf-8'))[-1]
-	extrinsicsC2W = np.transpose(np.reshape(imp.readValuesFromTxt(join \
-			(currentPath,'data',name,'extrinsics',exFile),local), \
-			(-1,3,4)),(1,2,0))
-	
-	# print file stats
-        print "-- processing data.....", name
-        print "  -- DATE:", date
-        print "  -- # FRAMES:", len(frames)
-        print "    -- actual:", len(frames)-len(emptyFrames)
-        print "    -- undefined:", len(emptyFrames)
-        print "  -- # OBJECTS:", len(objects)
-        print "    -- actual:", len(objects)-len(emptyObjects)
-        print "    -- undefined:", len(emptyObjects)
+            exFile = re.compile(r'[0-9]*\.txt').findall(urllib.request.urlopen(join(currentPath,'data',name,'extrinsics')).read().decode('utf-8'))[-1]
+            extrinsicsC2W = np.transpose(np.reshape(imp.readValuesFromTxt(join(currentPath,'data',name,'extrinsics',exFile),local),(-1,3,4)),(1,2,0))       
+
+	    # print file stats
+        print("-- processing data.....", name)
+        print("  -- DATE:", date)
+        print("  -- # FRAMES:", len(frames))
+        print("    -- actual:", len(frames)-len(emptyFrames))
+        print("    -- undefined:", len(emptyFrames))
+        print("  -- # OBJECTS:", len(objects))
+        print("    -- actual:", len(objects)-len(emptyObjects))
+        print("    -- undefined:", len(emptyObjects))
 
         for i, f in enumerate(frames):
             if i in emptyFrames:
@@ -420,18 +417,14 @@ if __name__ == "__main__":
                 depthList = listdir(depthPath)
             else:
                 # ---------------------------------------------#
-                imageList = re.compile(r'[0-9]*\-[0-9]*\.jpg') \
-                              .findall(urlopen(imagePath) \
-                                      .read().decode('utf-8'))
+                imageList = re.compile(r'[0-9]*\-[0-9]*\.jpg').findall(urllib.request.urlopen(imagePath).read().decode('utf-8'))
                 newList = []
                 for x in imageList: # remove duplicates
                     if x not in newList:
                         newList.append(x)
                 imageList = newList
                 # ---------------------------------------------#
-                depthList = re.compile(r'[0-9]*\-[0-9]*\.png') \
-                              .findall(urlopen(depthPath) \
-                                      .read().decode('utf-8'))
+                depthList = re.compile(r'[0-9]*\-[0-9]*\.png').findall(urllib.request.urlopen(depthPath).read().decode('utf-8'))
                 newList = []
                 for x in depthList: # remove duplicates
                     if x not in newList:
@@ -439,85 +432,84 @@ if __name__ == "__main__":
                 depthList = newList
                 # ---------------------------------------------#
 
-            for img in imageList:
-                fileNum = "0"*(7-len(str(1+i*5)))+str(1+i*5)+"-"
-                if fileNum in img:
-                    image = join(imagePath,img)
-                    break
-            for img in depthList:
-                fileNum = "0"*(7-len(str(1+i*5)))+str(1+i*5)+"-"
-                if fileNum in img:
-                    depth = join(depthPath,img)
-                    break
-
-            if local:
-                background = Image.open(image,'r').convert('RGBA') 
-            else:
-                background = Image.open(cStringIO \
-                            .StringIO(urlopen(image).read())).convert('RGBA')
-
-            (width,height) = background.size
-
-            # ---------------------------------------------------- #
-            # create frame and fill with data
-            currentFrame = Frame(i,width,height)
-            currentFrame.loc = name
-            currentFrame.background = background
-            currentFrame.depthMap = imp.depthRead(depth,local)
-            currentFrame.intrinsics = K
-	    currentFrame.extrinsics = imp.getExtrinsics(extrinsicsC2W,i)
-            exceptions   = []
-            conflicts    = []
-            polygons     = {}
-            for polygon in f['polygon']:
-                ID = polygon['object']
-                exists = False
-                for o in allObjects:
-                    if objects[ID]['name'] == o.name:
-                        currentObject = o
-                        currentObject.updateID(ID)
-                        exists = True
+                for img in imageList:
+                    fileNum = "0"*(7-len(str(1+i*5)))+str(1+i*5)+"-"
+                    if fileNum in img:
+                        image = join(imagePath,img)
                         break
-                if not exists: # new object
-                    currentObject = Object1(ID,objects[ID]['name'])
-                    allObjects.append(currentObject)
-                polygons[str(currentObject.getName())] = []
-                currentObject.addFrame(name,currentFrame)
-                for j, x in enumerate(polygon['x']):
-                    x = int(round(x))
-                    y = int(round(polygon['y'][j]))
-                    polygons[str(currentObject.getName())].append((x,y))
-                    if 0 < x <= width and 0 < y <= height:
-                        if (y,x) in zip(currentFrame.row,currentFrame.col):
-                            conflicts.append(str([(x,y),currentObject.getName()]))
+                for img in depthList:
+                    fileNum = "0"*(7-len(str(1+i*5)))+str(1+i*5)+"-"
+                    if fileNum in img:
+                        depth = join(depthPath,img)
+                        break
+
+                if local:
+                    background = Image.open(image,'r').convert('RGBA') 
+                else:
+                    background = Image.open(BytesIO(urllib.request.urlopen(image).read())).convert('RGBA')
+
+                (width,height) = background.size
+
+                # ---------------------------------------------------- #
+                # create frame and fill with data
+                currentFrame = Frame(i,width,height)
+                currentFrame.loc = name
+                currentFrame.background = background
+                currentFrame.depthMap = imp.depthRead(depth,local)
+                currentFrame.intrinsics = K
+                currentFrame.extrinsics = imp.getExtrinsics(extrinsicsC2W,i)
+                exceptions   = []
+                conflicts    = []
+                polygons     = {}
+                for polygon in f['polygon']:
+                    ID = polygon['object']
+                    exists = False
+                    for o in allObjects:
+                        if objects[ID]['name'] == o.name:
+                            currentObject = o
+                            currentObject.updateID(ID)
+                            exists = True
+                            break
+                    if not exists: # new object
+                        currentObject = Object1(ID,objects[ID]['name'])
+                        allObjects.append(currentObject)
+                    polygons[str(currentObject.getName())] = []
+                    currentObject.addFrame(name,currentFrame)
+                    for j, x in enumerate(polygon['x']):
+                        x = int(round(x))
+                        y = int(round(polygon['y'][j]))
+                        polygons[str(currentObject.getName())].append((x,y))
+                        if 0 < x <= width and 0 < y <= height:
+                            if (y,x) in zip(currentFrame.row,currentFrame.col):
+                                conflicts.append(str([(x,y),currentObject.getName()]))
+                            else:
+                                currentFrame.addData(currentObject,x,y)
                         else:
-                            currentFrame.addData(currentObject,x,y)
-                    else:
-                        exceptions.append(str([(x,y),currentObject.getName()]))
-                currentFrame.addObject(currentObject)
+                            exceptions.append(str([(x,y),currentObject.getName()]))
+                    currentFrame.addObject(currentObject)
 
-            filePath = join('data',name)
-            try:
-                makedirs(filePath)
-            except OSError:
-                if not isdir(filePath):
-                    raise
-            sys.stdout.write("\t\t%s sec.\n"%str(endTimer(frameTimer)));
-            sys.stdout.flush()
-            currentFrame = (currentFrame.update()
-                           .calculateCentroids(polygons)
-                           .getAngleDistCombos() 
-                           .drawPolygons(polygons)
-                           .process3dPoints(polygons,filePath,plot)
-                           .export(filePath,str(i)))
+                filePath = join('data',name)
+                try:
+                    makedirs(filePath)
+                except OSError:
+                    if not isdir(filePath):
+                        raise
+                sys.stdout.write("\t\t%s sec.\n"%str(endTimer(frameTimer)));
+                sys.stdout.flush()
+                currentFrame = (currentFrame.update()
+                               .calculateCentroids(polygons)
+                               .getAngleDistCombos() 
+                               .drawPolygons(polygons)
+                               .process3dPoints(polygons,filePath,plot)
+                               .export(filePath,str(i)))
 
-            # uncomment to save exceptions and conflicts to files
-            #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
-            #np.savetxt(join(filePath,str(i)+'.co'),conflicts,fmt="%s")
-            sys.stdout.write("\ttotal time for frame %s:"%str(currentFrame.ID))
-            currentFrame = None
-            sys.stdout.write(" \t%s sec."%str(endTimer(frameTimer))); sys.stdout.flush()
-    # END OF processJSON()
+                # uncomment to save exceptions and conflicts to files
+                #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
+                #np.savetxt(join(filePath,str(i)+'.co'),conflicts,fmt="%s")
+                sys.stdout.write("\ttotal time for frame %s:"%str(currentFrame.ID))
+                currentFrame = None
+                sys.stdout.write(" \t%s sec."%str(endTimer(frameTimer))); sys.stdout.flush()
+        # END OF processJSON()
 
     while 1:
         response = menu.mainMenu()
@@ -534,11 +526,9 @@ if __name__ == "__main__":
                 with open(join("json",jFile)) as jData:
                     data = json.load(jData)
                     processJSON(data,currentPath,local,plot) # process each json file
-                print "\n** File processed in %s seconds.\n"% str(endTimer(startB))
-		print   "**",len(allObjects),"total objects in %s JSON files." % str(jNum+1)
-            print "** All "+str(len(jsonFiles))+ \
-                  " files processed in %s seconds."\
-                  % str(endTimer(startA))
+                print("\n** File processed in %s seconds."% str(endTimer(startB)))
+                print("** Total: "+str(jNum+1)+ " files processed in %s seconds." % str(endTimer(startA)))
+                print("**",len(allObjects),"total objects in %s JSON files.\n" % str(jNum+1))
             # create log file for all the objects in all frames in all locations
             logFile = open(join("data","objects.log"),"w")
             logFile.write("---- All Objects ----\n")
@@ -552,6 +542,6 @@ if __name__ == "__main__":
                 logFile.write(line)
             logFile.close()
         elif response == '2':
-            print "UNAVAILABLE: Working on it..."
+            print("UNAVAILABLE: Working on it...")
         else:
             sys.exit(0)

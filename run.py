@@ -208,7 +208,8 @@ def visualize(coords):
                 if obj!='CAMERA' and obj!='SCALE' and obj!='floor']))] # x,y of floor
     floor = 0 # keeps track of lowest point to place floor (z of floor)
     newDims = {} # will store dims to update after for loop: workaround for Blender bug
-    
+   
+    obj_sizes = {}
     for obj,xyz in coords.items():
         if obj=='CAMERA' or obj=='SCALE': continue
         filepath+=obj+'-'
@@ -227,6 +228,7 @@ def visualize(coords):
                 ob.name = 'floor'
                 ob.scale[0] = ob.scale[1] = \
                     sizes[obj]/maxSize*coords['SCALE']/4
+                obj_sizes['floor'] = ob.scale[0]
 
             else:
                 # add/setup text to identify the object
@@ -280,6 +282,7 @@ def visualize(coords):
             maxDim = max(ob.dimensions)
             newDims[obj] = [x/maxDim for x in ob.dimensions] # normalize to 1           
             scale = [sizes[obj]/maxSize*coords['SCALE']/2 for r in range(0,3)]
+            obj_sizes[obj] = scale
             ob.scale = scale
             floor = min(floor,ob.location[2]-(newDims[obj][2]/2))
     
@@ -306,13 +309,34 @@ def visualize(coords):
     bpy.data.scenes['Scene'].render.filepath = filepath
     bpy.ops.render.render(write_still=True)
 
+    # save coordinates to file
+    with open(os.path.splitext(filepath)[0]+'.csv','w') as f:
+        f.write('object,x,y,z,size,scale\n')
+        f.write('CAMERA,'+str(coords['CAMERA'][0])+','+
+                          str(coords['CAMERA'][1])+','+
+                          str(coords['CAMERA'][2])+',0,0\n')
+        for obj,xyz in coords.items():
+            if obj != 'CAMERA' and obj != 'SCALE':
+                if obj=='floor':
+                    f.write(obj+','+str(xyz[0])+','+
+                                    str(xyz[1])+','+
+                                    str(xyz[2])+','+
+                                    str(obj_sizes[obj])+','+
+                                    str(coords['SCALE'])+'\n')
+                else:
+                    f.write(obj+','+str(xyz[0])+','+
+                                    str(xyz[1])+','+
+                                    str(xyz[2])+','+
+                                    str(obj_sizes[obj][0])+','+
+                                    str(coords['SCALE'])+'\n')
+                
     # remove all objects from scene
-    #bpy.ops.object.select_all(action='DESELECT')
-    #for ob in scene.objects:
-    #    ob.select = ob.type == 'MESH' or ob.name.startswith('Text')
-    #bpy.ops.object.delete()
-    #for item in bpy.data.meshes:
-    #    bpy.data.meshes.remove(item)
+    bpy.ops.object.select_all(action='DESELECT')
+    for ob in scene.objects:
+        ob.select = ob.type == 'MESH' or ob.name.startswith('Text')
+    bpy.ops.object.delete()
+    for item in bpy.data.meshes:
+        bpy.data.meshes.remove(item)
     
 if __name__=="__main__":
 
@@ -370,4 +394,5 @@ if __name__=="__main__":
     objects = menuLoop()
     print ("INFO: Imagining '"+','.join(objects)+"'")
 
-    visualize(calculateCoords(objects))
+    for i in range(50):
+        visualize(calculateCoords(objects))

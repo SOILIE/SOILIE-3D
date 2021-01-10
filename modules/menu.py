@@ -1,6 +1,7 @@
 ''' VISUO 3D
     v.17.07.17
     Written by Mike Cichonski
+    With contributions from Tae Burque
     for the Science of Imagination Laboratory
     Carleton University
 
@@ -17,24 +18,24 @@ def mainMenu():
     (1) process JSON file(s)
     (2) view data
     (3) quit\n'''
-    print theMenu
+    print(theMenu)
     while 1:
-        response = raw_input('>>> ')
+        response = input('>>> ')
         if response in ['%s'%x for x in range (1,4)]:
             break
         if response == "quit":
             sys.exit(0)
         if response == "menu":
-            print theMenu
+            print(theMenu)
             continue
-        print ">>> ERROR: Unknown Command."
+        print(">>> ERROR: Unknown Command.")
     return response
 
 def optionMenu():
     options = []
-    print 'Is the database on the (w)eb or (l)ocal drive?: '
+    print('Is the database on the (w)eb or (l)ocal drive?: ')
     while 1:
-        response = raw_input('>>> ')
+        response = input('>>> ')
         if response == 'l' or response == 'local': # local path
             options.append(dirname(abspath(__file__)))
             options.append(True)
@@ -47,13 +48,13 @@ def optionMenu():
             sys.exit(0)
         if response == "menu" or response == "back":
             return None
-        print ">>> ERROR: Unknown Command."
-    print 'To check if all 3d points are being correctly imported\n' \
+        print(">>> ERROR: Unknown Command.")
+    print('To check if all 3d points are being correctly imported\n' \
           'from the database, you may choose to generate 3d plots\n' \
           'of all the data points for each frame to get a visual\n' \
-          'representation. Plot how many graphs per frame? (0-360)'
+          'representation. Plot how many graphs per frame? (0-360)')
     while 1:
-        response = raw_input('>>> ')
+        response = input('>>> ')
         if response.isdigit() and 0 <= int(response) <= 360:
             options.append(int(response))
             return options
@@ -61,4 +62,4 @@ def optionMenu():
             sys.exit(0)
         if response == "menu" or response == "back":
             return None
-        print ">>> ERROR: Unknown Command."
+        print(">>> ERROR: Unknown Command.")

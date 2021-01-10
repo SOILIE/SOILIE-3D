@@ -1,7 +1,8 @@
 ##  VISUO 3D
-#### v.18.03.14
-#### THIS IS NOW CONSIDERED THE LEGACY VERSION. THE PROJECT HAS BEEN MIGRATED [HERE](https://github.com/MichaelOVertolli/smart-storage/tree/master) IN A CONTAINERIZED DOCKER FORMAT.
+#### v.21.01.09
+#### CONTAINERIZED DOCKER FORMAT IN PROGRESS [HERE](https://github.com/MichaelOVertolli/smart-storage/tree/master)
 ###### Written by Mike Cichonski
+###### With contributions from Tae Burque
 ###### For the Science of Imagination Laboratory
 ###### at Carleton University
 

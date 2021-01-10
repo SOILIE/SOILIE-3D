@@ -65,7 +65,7 @@ if __name__=="__main__":
     tripletsFile = open('data/triplets.csv','w')
     tripletsFile.write("objectA,objectB,objectC,distanceAB,distanceAC,"+\
                        "distanceAO,angleBAC,angleOAB,angleOAC,count\n")
-    for triplet, values in averages.iteritems():
+    for triplet, values in averages.items():
         triplets[triplet] = [sum(values[0])/values[6],\
                              sum(values[1])/values[6],\
                              sum(values[2])/values[6],\
@@ -112,6 +112,8 @@ if __name__=="__main__":
         distances = {} # of each object's 3d points from centroid
         name = lines[0].rstrip('\n')
         for line in lines:
+            if line=='':
+                continue
             elem = ast.literal_eval(line)
             if len(elem)!=3:
                 name = repr(elem).rstrip('\n')
@@ -126,10 +128,10 @@ if __name__=="__main__":
                 distances[name].append(sqrt((x2-x1)**2 + (y2-y1)**2 +\
                                             (z2-z1)**2))
 
-        for obj,dist in distances.iteritems():
+        for obj,dist in distances.items():
             distances[obj] = max(dist)
         
-        for obj,dist in distances.iteritems():
+        for obj,dist in distances.items():
             newName = ast.literal_eval(obj)[0].replace(' ','_')
             if newName not in sizes:
                 sizes[newName] = [dist]
@@ -142,14 +144,14 @@ if __name__=="__main__":
     progress_bar.update(len(cenFiles),len(cenFiles),\
                          prefix='Progress:',suffix=str(len(cenFiles))+'/'+str(len(cenFiles)))
 
-    for obj,dist in sizes.iteritems():
+    for obj,dist in sizes.items():
         numObjects = len(dist)
         #multiply by 2 below to change radius to diameter
         sizes[obj] = str(max(dist)*2)+','+str(numObjects)
     
     outFile = open("data/object_sizes.csv",'w')
     outFile.write("object,diameter,count\n")
-    for obj,dist in sizes.iteritems():
+    for obj,dist in sizes.items():
         outFile.write(obj+','+str(dist)+'\n')
     outFile.close()
     sys.stdout.write("Processed in %s sec.\n"%str(endTimer(timer)));

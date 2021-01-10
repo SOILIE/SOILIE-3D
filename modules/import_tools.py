@@ -1,9 +1,9 @@
 import numpy as np
 import gc
 import re
-from urllib2 import urlopen
+import urllib.request
+from io import BytesIO
 from PIL import Image
-import cStringIO
 
 def readValuesFromTxt(filename,local):
     if local: 
@@ -12,9 +12,9 @@ def readValuesFromTxt(filename,local):
 		 ''.join(fid.read().decode('utf-8')).split('\n') if x!='']
         fid.close()
     else:
-        fid = urlopen(filename)
+        fid = urllib.request.urlopen(filename)
         file_utf = fid.read().decode('utf-8')
-	values = [map(lambda y: float(y), x.split(' ')) for x in \
+        values = [list(map(lambda y: float(y), x.split(' '))) for x in \
 		 ''.join(file_utf).split('\n') if x!='']
         fid.close()
     return values
@@ -32,7 +32,7 @@ def depthRead(filename,local):
     if local:
         depth = Image.open(filename,'r')
     else:
-        depth = Image.open(cStringIO.StringIO(urlopen(filename).read()))
+        depth = Image.open(BytesIO(urllib.request.urlopen(filename).read()))
     depthmap = np.array(depth)
     depth.close()
     bitshift = [[(d >> 3) or (d << 16-3) for d in row] for row in depthmap]
