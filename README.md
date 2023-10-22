@@ -1,50 +1,49 @@
-##  VISUO 3D
-#### v.21.01.09
+##  SOILIE 3D
+#### v.23.10.31
 #### CONTAINERIZED DOCKER FORMAT IN PROGRESS [HERE](https://github.com/MichaelOVertolli/smart-storage/tree/master)
 ###### Written by Mike Cichonski
-###### With contributions from Tae Burque
+###### With contributions from Tae Burque & Isil Sanusoglu
 ###### For the Science of Imagination Laboratory
-###### at Carleton University
+###### CARLETON UNIVERSITY
 
 ##### Required packages
-* Numpy & Scipy
+* numpy
+* pandas
+* scipy
 * matplotlib
 * PIL
-* Blender (tested in 2.78c)
-   * Numpy for Blender
+* open3d
+* blender
 
-##### Usage Instructions (Ubuntu)
-1. In terminal, run `python collect_data.py` to import SUN3D data 
-2. Run command `python prepare_data.py` to calculate object
-   triplets and estimate object sizes
-3. Run the run.py script using Blender in the terminal:
-   `blender --background suggested_setup.blend --python run.py`
+##### Usage Instructions
+1. Drop JSON files containing per-frame object annotations in the `json` folder.
+2. If annotations are related to the 3D point clouds instead of the 2D frames, they will be automatically generated from the <b>.label</b>, <b>.ply</b>, and <b>.pose</b> files in `data/{datasetName}/pc/` combined with the extrinsics file in `data/{datasetName}/{sceneName}/extrinsics/extrinsics.txt`.
+3. In a bash terminal, run `python imagine.py`.
+4. Follow the instructions through the menus to generate any number of novel indoor 3D scenes.
+  * <b>Note:</b> Select the option to process input data before selecting the option to imagine a scene
 
-##### Scripts
-###### collect_data.py
+##### Key Scripts
+###### modules/collect_data.py
 
 **INPUT:**
-JSON files from SUN3D database (note: Only a fraction of all the
-data has been manually labelled; this data is in the JSON files)
+JSON files from SUN3D database (note: Only a fraction of all the data has been manually labelled; this data is in the JSON files)
 <br>
 **OUTPUT:**
 SUN3D folder structure with .3d, .cen, .csv, ,.jpg for each frame
 
-###### prepare_data.py
+###### modules/prepare_data.py
 
 **INPUT:**
-The output from collect_data.py
-<br>
-**OUTPUT:** 
-* triplets.csv/triplets.pickle - calculated angles and distances
-between permutations of triplets of objects
-* object-sizes.csv - calculated object sizes
-
-###### run.py
-
-**INPUT:**
-3DS files in the 3d folder that match the object names obtained
-from the SUN3D database and the output from prepare_data.py
+The output from `collect_data.py`
 <br>
 **OUTPUT:**
-3d PNG scene image(s) in the images folder
+* `triplets.csv/triplets.pickle` - averaged angles and distances between permutations of triplets of objects
+* `object-sizes.csv` - approximated object sizes
+
+###### modules/render.py
+
+**INPUT:**
+3DS files in the 3d folder that match the object names obtained from the selected database and the output from `collect_data.py` and `prepare_data.py`
+<br>
+**OUTPUT:**
+3d PNG scene image(s) in the output folder

@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
-''' VISUO 3D
-    v.17.03.12
+''' SOILIE 3D
+    v.23.10.31
     Written by Mike Cichonski
     for the Science of Imagination Laboratory
     Carleton University
 
     File: progress_bar.py
-    Provides a simple progress bar for prepare_data.py
-    and working_combos.py.'''
+    Provides a simple progress bar for any iterative operation.'''
 
 def update (iteration, total, prefix = '', \
             suffix = '', decimals = 1, \
