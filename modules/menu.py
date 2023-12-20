@@ -8,8 +8,10 @@
     File: menu.py
     This module provides a menu interface for collect_data.py'''
 
+import json
 import os, sys
-from os.path import dirname, abspath
+from os import listdir
+from os.path import dirname, abspath, join
 
 def mainMenu():
     theMenu = '''
@@ -70,18 +72,23 @@ def princetonLoop():
 def washingtonLoop():
     print('\n| Washington Dataset Options |')
     options = ['/'.join(dirname(abspath(__file__)).split('/')[:-1]),True,0,None]
-    print('Sample how many frames from each scene? (Cannot \n' \
-          'exceed number of frames in shortest scene)')
-    while 1:
-        response = input('>>> ')
-        if str(response).isdigit():
-            options[3] = int(response)
-            break
-        if response=='quit' or response=='exit':
-            sys.exit(0)
-        if response == "menu" or response == "back":
-            return response
-        print(">>> ERROR: Unknown Command.")
+
+    scenes = sorted([f for f in os.listdir('./data/washington') if f!='pc' and '.' not in f])
+    all_json_files = [f for f in listdir('./json/washington') if f.endswith('.json')]
+    all_json_names = [json.load(open(join('./json/washington',jFile),'rb'))['name'] for jFile in all_json_files]
+    if len(set(scenes)-set(all_json_names))>0:
+        print('Sample how many frames from each scene? (Cannot \n' \
+              'exceed number of frames in shortest scene)')
+        while 1:
+            response = input('>>> ')
+            if str(response).isdigit():
+                options[3] = int(response)
+                break
+            if response=='quit' or response=='exit':
+                sys.exit(0)
+            if response == "menu" or response == "back":
+                return response
+            print(">>> ERROR: Unknown Command.")
 
     print('To check if all 3d points are being correctly imported\n' \
           'from the database, you may choose to generate 3d plots\n' \

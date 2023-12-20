@@ -52,7 +52,7 @@ class Frame:
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
         self.centroids = {}    # {objectName : (x,y,z) centroids in meters} (3D)
         self.objects3d = {}    # {objectName : [(x,y,z)...(x,y,z)] } all 3d points
-        self.combos = []       # list of[labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
+        self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
         self.intrinsics = []   # camera intrinsics
         self.extrinsics = []   # camera extrinsics
         self.image = None      # image to export
@@ -100,7 +100,7 @@ class Frame:
             centX = sum([x for (x,y) in coords])/len(coords)
             centY = sum([y for (x,y) in coords])/len(coords)
             self.labels[name] = (centX,centY)
-        # Get 3D centroids
+        # Get 3D centroids (using only the points visible in current frame)
         rangeX = range(self.height)
         rangeY = range(self.width)
         template = [(y,x) for y in rangeY for x in rangeX]
@@ -189,8 +189,7 @@ class Frame:
             for i, coord in enumerate(coords):
                 coord = "\n"+str(tuple(coord))
                 plotFile.write(coord)
-                if i+1 == len(coords):
-                    plotFile.write("\n")
+            plotFile.write("\n")
             #---------------------------------------------------------------#
             if not plot: continue
             # get colour
@@ -280,20 +279,19 @@ class Frame:
         return self
 
 
-    def export(self,filePath,name):
+    def export(self,filePath):
         '''export matrix and image files
-        filePath:   the path to the file
-        name:       the filename'''
+        filePath:   the path to the file'''
         #sys.stdout.write("\texporting files:")
         t9 = startTimer() #time to draw polygons
-	    # export per-frame centroid file
-        # centroidFile = open (join(filePath,name+'.cen'),'w')
+	    #export per-frame centroid file
+        # centroidFile = open (join(filePath,str(self.ID)+'.cen'),'w')
         # for objName,coords in self.centroids.items():
         #     item = objName+' ['+str(coords[0])+','+str(coords[1])+ \
         #                 ','+str(coords[2])+']\n'
         #     centroidFile.write(item)
         # centroidFile.close()
-	    # export csv file
+	    #export csv file
         comboDict = {'objectA':[],'objectB':[],'objectC':[],'distanceAB':[],'distanceAC':[],
                      'distanceAO':[],'angleOAB':[],'angleOAC':[],'angleBAC':[]}
         for combo in self.combos:
@@ -307,19 +305,19 @@ class Frame:
             comboDict['angleOAC'].append(combo[7])
             comboDict['angleBAC'].append(combo[8])
         df = pd.DataFrame.from_dict(comboDict)
-        df.to_csv(join(filePath,name+'.csv'), index=False)
+        df.to_csv(join(filePath,str(self.ID)+'.csv'), index=False)
 
         # export image file
         image = self.image
         if self.background:
             image = Image.alpha_composite(self.background,image).convert('RGB')
-            image.save(join(filePath,name+'.jpg'))
+            image.save(join(filePath,str(self.ID)+'.jpg'))
             image.close()
         #sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t9))); sys.stdout.flush()
         return self
 
 
-class Object1:
+class SceneObject:
     '''represents an object in the scene'''
 
     def __init__(self, ID, name):
@@ -328,6 +326,7 @@ class Object1:
         self.colour = self.setRandomColour()
         self.frames = {}
         self.oldIDs = []
+
     def updateID(self, ID):
         if ID != self.ID:
             self.oldIDs.append(self.ID)
@@ -457,6 +456,7 @@ def calculateCentroidsForScene(pathTo3dFiles,allObjects):
             pts = np.array(pts3d[obj])
             centroid = centroids[obj]
             x,y,z = centroid[0],centroid[1],centroid[2]
+            colour = patches[i].get_facecolor()[:3]
             ax.scatter(pts[:,0],pts[:,1],pts[:,2],color=colour,marker='o',alpha=0.003) # add xyz points to scatter plot with all objects
             ax.scatter(x,y,z,color=[0,0,0],marker='x') # add centroid to scatter plot with all objects
             ### per-object plot
@@ -478,12 +478,12 @@ def calculateCentroidsForScene(pathTo3dFiles,allObjects):
         ax.azim+=int(360/plot)
         progress_so_far += 1
     #plt.show()
-    plt.close(currFig)
+    plt.close(curFig)
     #################
     progress_bar.update(100,100,suffix=' '*(30+maxNameLength))
 
 
-def processJSON(data,allObjects,currentPath, datasetName, local, plot):
+def processJSON(data, allObjects, currentPath, datasetName, local, plot):
     '''process each json file
     data:           the data contained in the json file
     currentPath:    the root path of the dataset
@@ -500,6 +500,14 @@ def processJSON(data,allObjects,currentPath, datasetName, local, plot):
     date = data['date']
     frames = data['frames']
     objects = data['objects']
+
+    # create data folder for current scene if it does not exist
+    prev_folder='./'
+    for folder in [x for x in join('data',datasetName,data['name']).split('/') if x!='' and x!='.']:
+        new_folder = join(prev_folder,folder)
+        if not os.path.exists(new_folder):
+            os.mkdir(new_folder)
+        prev_folder = new_folder
 
     # store indices of the empty frames & objects
     emptyFrames = []
@@ -522,7 +530,8 @@ def processJSON(data,allObjects,currentPath, datasetName, local, plot):
     else:
         exFile = re.compile(r'[0-9]*\.txt').findall(urllib.request.urlopen(join(currentPath,'data',name,'extrinsics')).read().decode('utf-8'))[-1]
 
-    extrinsicsC2W = np.transpose(np.reshape(imp.readValuesFromTxt(join(currentPath,'data',name,'extrinsics',exFile),local),(-1,3,4)),(1,2,0))
+    extrinsicsC2W = np.reshape(imp.readValuesFromTxt(join(currentPath,'data',name,'extrinsics',exFile),local),(-1,3,4))
+    extrinsics_incl_cur_frames_only = extrinsicsC2W.shape[0]==len(frames)
 
     # print file stats
     print("-- processing data.....", name)
@@ -538,41 +547,32 @@ def processJSON(data,allObjects,currentPath, datasetName, local, plot):
     imagePath = join(currentPath,"data",name,"image")
     depthPath = join(currentPath,"data",name,"depth")
 
+    imageList = data['fileList']
+    prefixes = [im.split('-')[0] for im in imageList]
+
     if local:
-        imageList = [join(imagePath,f) for f in data['fileList']] if 'fileList' in data else listdir(imagePath)
         depthList = listdir(depthPath)
     else:
-        # ---------------------------------------------#
-        imageList = re.compile(r'[0-9]*\-[0-9]*\.jpg').findall(urllib.request.urlopen(imagePath).read().decode('utf-8'))
-        newList = []
-        for x in imageList: # remove duplicates
-            if x not in newList:
-                newList.append(x)
-        imageList = newList
-        if 'fileList' in data:
-            imageList = sorted([im for im in imageList if im in data['fileList']])
-        imageList = [join(imagePath,f) for f in imageList]
-        # ---------------------------------------------#
-        depthList = re.compile(r'[0-9]*\-[0-9]*\.png').findall(urllib.request.urlopen(depthPath).read().decode('utf-8'))
-        newList = []
-        for x in depthList: # remove duplicates
-            if x not in newList:
-                newList.append(x)
-        depthList = newList
-        # ---------------------------------------------#
+        depthList = sorted(list(set(re.compile(r'[0-9]*\-[0-9]*\.png').findall(urllib.request.urlopen(depthPath).read().decode('utf-8')))))
+
+    depthList = [d for d in depthList if d.split('-')[0] in prefixes]
+
+    if len(imageList)!=len(depthList)!=len(frames):
+        print('ERROR: Cannot process JSON. Frame or depth image files missing.')
+        return allObjects
 
     allFrames = []
+    #for i, f in enumerate(frames[:14]):
     for i, f in enumerate(frames):
         if i in emptyFrames:
             continue
         frameTimer = startTimer()
 
-        image = imageList[i]
-        depth = [join(depthPath,d) for d in depthList if d.startswith(image.split('/')[-1].split('-')[0])][0]
+        image = join(imagePath,imageList[i])
+        depth = join(depthPath,depthList[i])
         frameNum = str(int(image.split('/')[-1].split('-')[0]))
 
-        sys.stdout.write("\nCalculating Frame "+frameNum)
-        sys.stdout.write(" coordinates...\n")
+        sys.stdout.write("\nCalculating Frame "+frameNum+" coordinates...\n")
         sys.stdout.write("\tgathering frame data:"); sys.stdout.flush()
 
         if local:
@@ -590,7 +590,7 @@ def processJSON(data,allObjects,currentPath, datasetName, local, plot):
         currentFrame.background = background
         currentFrame.depthMap = imp.depthRead(depth,local)
         currentFrame.intrinsics = K
-        currentFrame.extrinsics = imp.getExtrinsics(extrinsicsC2W,i)
+        currentFrame.extrinsics = extrinsicsC2W[i] if extrinsics_incl_cur_frames_only else extrinsicsC2W[int(frameNum)-1]
         exceptions   = []
         conflicts    = []
         polygons     = {}
@@ -604,7 +604,7 @@ def processJSON(data,allObjects,currentPath, datasetName, local, plot):
                     exists = True
                     break
             if not exists: # new object
-                currentObject = Object1(ID,objects[ID]['name'])
+                currentObject = SceneObject(ID,objects[ID]['name'])
                 allObjects.append(currentObject)
             polygons[str(currentObject.getName())] = []
             currentObject.addFrame(name,currentFrame)
@@ -651,7 +651,7 @@ def processJSON(data,allObjects,currentPath, datasetName, local, plot):
     for i, currentFrame in enumerate(allFrames):
         progress_bar.update(i+1,len(allFrames))
         centroidFile = join(pathTo3dFiles,'centroids.csv')
-        currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(filePath,str(currentFrame.ID))
+        currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(filePath)
         currentFrame = None
 
     return allObjects
@@ -676,7 +676,8 @@ def main():
         jsonFiles = sorted([f for f in listdir(jsonDir) if isfile(join(jsonDir,f)) and f.lower().endswith('json')])
         startA = startTimer()
         allObjects  = [] # list to store all objects from all json files in this db
-        for jNum,jFile in enumerate(jsonFiles):
+        #for jNum,jFile in enumerate(jsonFiles):
+        for jNum,jFile in enumerate(jsonFiles[0:1]):
             startB = startTimer()
             with open(join(jsonDir,jFile)) as jData:
                 data = json.load(jData)

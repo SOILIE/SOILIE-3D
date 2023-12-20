@@ -11,13 +11,13 @@ from io import BytesIO
 import matplotlib.pyplot as plt
 import numpy as np
 from plyfile import PlyData, PlyElement
-import open3d as o3d
-from scipy.spatial.transform import Rotation as R
+#from scipy.spatial.transform import Rotation as R
 
 from PIL import Image
 
 from modules.utils import *
 
+#filename = './extrinsics_test.txt'
 def readValuesFromTxt(filename,local):
     if local:
         fid = open(filename,'rb')
@@ -33,88 +33,63 @@ def readValuesFromTxt(filename,local):
     return values
 
 
-def getExtrinsics(extrinsicsC2W,frame):
-    extrinsics = [[extrinsicsC2W[0][0][frame],extrinsicsC2W[0][1][frame], \
-                   extrinsicsC2W[0][2][frame],extrinsicsC2W[0][3][frame]],\
-                  [extrinsicsC2W[1][0][frame],extrinsicsC2W[1][1][frame], \
-                   extrinsicsC2W[1][2][frame],extrinsicsC2W[1][3][frame]],\
-                  [extrinsicsC2W[2][0][frame],extrinsicsC2W[2][1][frame], \
-                   extrinsicsC2W[2][2][frame],extrinsicsC2W[2][3][frame]]]
-    return extrinsics
-
-
+#filename = '00000-depth.png'
 def depthRead(filename,local):
     if local:
-        depth = Image.open(filename,'r')
+        depthfile = Image.open(filename,'r')
     else:
-        depth = Image.open(BytesIO(urllib.request.urlopen(filename).read()))
-    depthmap = np.array(depth)
-    depth.close()
+        depthfile = Image.open(BytesIO(urllib.request.urlopen(filename).read()))
+    depthmap = np.array(depthfile)
+    depthfile.close()
+    # bitshift values from 16-bit to 13-bit
     bitshift = [[(d >> 3) or (d << 16-3) for d in row] for row in depthmap]
-    depthmap = [[float(d)/1000 for d in row] for row in bitshift]
+     # divide values by 1000 to go from millimeters to meters
+    depthmap = np.array([[float(d)/1000 for d in row] for row in bitshift])
     gc.collect()
-    #operation = lambda d: (d >> 3) or (d << 16-3)
-    #bitshift = np.vectorize(operation,otypes=[np.float])
-    #depthmap = bitshift(depthmap)
-    #operation = lambda d: float(d)/1000.0
-    #div = np.vectorize(operation,otypes=[np.float])
-    #depthmap = div(depthmap)
-    #gc.collect()
     return depthmap
 
-
+#K=np.array([[525,0,320],[0,525,240],[0,0,1]])
 def depth2XYZcamera(K,depth):
-    [x,y] = np.meshgrid(range(1,641),range(1,481))
+    [x,y] = np.meshgrid(range(0,depth.shape[1]),range(0,depth.shape[0]))
     XYZcamera = []
-    #operation = lambda op,n1,n2: eval(str(n1)+str(op)+str(n2))
-    #op_apply = np.vectorize(operation)
-    l = np.multiply([[d - K[0][2] for d in row] for row in x], \
-                    [[d / K[0][0] for d in row] for row in depth])
-    #x = None
-    #l = np.multiply(op_apply('-',x,K[0][2]), \
-    #                op_apply('/',depth,K[0][0]))
-    XYZcamera.append(l)
-    l = np.multiply([[d - K[1][2] for d in row] for row in y], \
-                    [[d / K[1][1] for d in row] for row in depth])
-    #l = np.multiply(op_apply('-',y,K[1][2]), \
-    #                op_apply('/',depth,K[1][1]))
-    XYZcamera.append(l)
-    #l = y = x = None
-    #gc.collect()
-    XYZcamera.append(depth)
-    #operation = lambda(n): int(bool(n))
-    #op_apply = np.vectorize(operation)
-    #depth = op_apply(depth)
-    depth = [[int(bool(n)) for n in row] for row in depth]
-    #operation = None
-    #op_apply = None
-    XYZcamera.append(depth)
-    #depth = None
-    #XYZcamera = np.swapaxes(XYZcamera,0,2)
-    #XYZcamera = np.swapaxes(XYZcamera,0,1)
-    #gc.collect()
+
+    # XYZcamera[0]: x-coords of corresponding point in 3d camera coordinate space for each pixel location
+    x_coords = (x - K[0, 2]) * depth / K[0, 0]
+    XYZcamera.append(x_coords) # units of x_coords is meters
+
+    # XYZcamera[1]: y-coords of corresponding point in 3d camera coordinate space for each pixel location
+    y_coords = (y - K[1, 2]) * depth / K[1, 1]
+    XYZcamera.append(y_coords) # units of y_coords is meters
+
+    # XYZcamera[2]: z-coords of corresponding point in 3d camera coordinate space for each pixel location
+    XYZcamera.append(depth) # units of z_coords is meters
+
+    # XYZcamera[3]: valid points for each pixel location
+    valid = [[int(bool(n)) for n in row] for row in depth]
+    XYZcamera.append(valid)
+
     return XYZcamera
 
 
 def camera2XYZworld(XYZcamera,extrinsics):
     XYZ = []
-    #print "XYZcamera:",len(XYZcamera),len(XYZcamera[0]),len(XYZcamera[0][0])
     for j in range(0,len(XYZcamera[0][0])):
         for i in range(0,len(XYZcamera[0])):
             if XYZcamera[3][i][j]:
-                data = (XYZcamera[0][i][j],\
-                        XYZcamera[1][i][j],\
+                data = (XYZcamera[0][i][j],
+                        XYZcamera[1][i][j],
                         XYZcamera[2][i][j])
                 XYZ.append(data)
-    #print "XYZ:",len(XYZ),len(XYZ[0])
+    XYZ = np.array(XYZ)
     XYZworld = transformPointCloud(XYZ,extrinsics)
     vals = (XYZworld,XYZcamera[3])
     return vals
 
 
 def transformPointCloud(XYZ,Rt):
-    Rt = [(float(t[0]),float(t[1]),float(t[2])) for t in Rt]
-    return np.matmul(Rt,np.transpose(XYZ))
+    rotation = [(float(r[0]),float(r[1]),float(r[2])) for r in Rt]
+    translation = np.array(Rt)[:3,3]
+    return np.matmul(rotation,np.transpose(XYZ)) + np.repeat(np.reshape(translation,(3,1)),XYZ.shape[0],axis=1)
 
 #main_folder = './data/washington/scene_01'
 #fname='scene_01'
@@ -128,8 +103,9 @@ def project_annotations_3D_to_2D(main_folder, fname ,jsonDir, annot_files, nFram
         else:
             exit('Error in annotation file names')
 
-    pcd = o3d.io.read_point_cloud(pcloudfile)
-    point_cloud = np.asarray(pcd.points)
+    pcd = PlyData.read(pcloudfile)
+    pcd_data = pcd.elements[0].data
+    point_cloud = np.asarray([pcd_data['x'],pcd_data['y'],pcd_data['z']],dtype='float64').T
     camera_poses = np.loadtxt(posfile)
     lbls = np.loadtxt(lblfile)[1:]
 
@@ -166,17 +142,42 @@ def project_annotations_3D_to_2D(main_folder, fname ,jsonDir, annot_files, nFram
     flst = np.array(flst)[index]
 
     extrinsics = []
+    frames = [] # list to store object boolean arrays for each frame
+    all_imgs_lbls = [] # list to store unique object IDs for each frame
     for i, frame_pos in enumerate(camera_poses):
-
+        print(f'frame {i+1}/{len(camera_poses)}',end='\r',flush=True)
         oimage = Image.open(join(main_folder, 'image', flst[i]))
         # Map 3D points to 2D.
         uv, uvw, extrinsic = project_3d_2d(point_cloud, frame_pos, T_global_origin, K)
         extrinsics.append(extrinsic[:3, :])
-
         # Construct mask, xy and xyz frames.
         im_frame, xyz_frame, xy_frame, test_frame = construct_frames(uv, point_cloud, lbls, oimage)
 
-        imgs, imgs_lbls = clean_mask(im_frame, oimage)
+        prev_objs = frames[i - 1] if i>0 else None
+        prev_lbls = all_imgs_lbls[i - 1] if i>0 else None
+        imgs, imgs_lbls = clean_label_mask(im_frame, oimage, prev_objs, prev_lbls)
+        frames.append(imgs)
+
+        ## Some issues initially encountered with all_imgs_lbls (useful for viewing the progression of the labels
+        ## through the frames - before final cleanup).
+        # 1. Remove objects that appear for a single frame - we can assume these are a glitch (RESOLVED)
+        # 2. Remove objects that take up too few pixels in a frame - we can assume these are a glitch (RESOLVED)
+        # 3. For objects that are matched multiple times to an object in the previous frame,
+        #    match only most similar, and use og label for other one (e.g. 9th frame from bottom) (RESOLVED)
+        # 4. Objects that pop out of frame and back in get labeled as a new object.
+        #    In these cases, re-evaluate if its object category matches any previous
+        #    by finding the closest frame of each version of the object and comparing to
+        #    only those boolean arrays (e.g. 8_3 should actually be 8_1). (UNRESOLVED: This can happen in theory,
+        #    but does not occur in the washington dataset, so did not implement this).
+        # 5. For objects that have duplicates somewhere in a scene but in the current and previous frame they are the
+        #    only object of its type, they will default to being numbered as 1 even if they were actually 2 in the
+        #    previous frame. This means that even for non-dupe objects within a frame, we
+        #    still need to compare to objects of the same type in the previous frame to make sure they aren't
+        #    a continuation of an object from the previous frame that is numbered higher than 1.
+        #    This required doing away with the concept of "dupes", as we need to run the algorithm on all cases
+        #    regardless. We are still comparing between only objects of the same type, so if there is only 1
+        #    object, the match becomes trivial but we still propagate the label to the next frame. (DONE)
+        all_imgs_lbls.append(imgs_lbls)
 
         object_polygon_arr = []
         for imidx, im in enumerate(imgs):
@@ -199,23 +200,19 @@ def project_annotations_3D_to_2D(main_folder, fname ,jsonDir, annot_files, nFram
             if 0 in XYZ:
                 XYZ = replace_zeroRow_previousRow(XYZ)
 
-            cur_obj_name = object_categories[int(imgs_lbls[imidx])]
+            #cur_obj_name = object_categories[int(imgs_lbls[imidx])]
+            obj_idx = int(imgs_lbls[imidx].split('_')[0])
+            cur_obj_name = object_categories[obj_idx]
+            cur_obj_dict = {'name': imgs_lbls[imidx].replace(f'{obj_idx}_',f'{cur_obj_name}: ')}
 
-            matching_dicts = {}
-            for cur_objDict in mainObjects:
-                if cur_obj_name in cur_objDict['name']:
-                    matching_dicts = cur_objDict
-
-            if not matching_dicts:
-                mainObjects.append({'name': f'{cur_obj_name}: 1'})
-            else:
-                mainObjects.append({'name': f'{cur_obj_name}: {int(matching_dicts["name"][-1])+1}'})
+            if cur_obj_dict not in mainObjects:
+                mainObjects.append(cur_obj_dict)
 
             object_polygon = {}
             object_polygon["x"] = xs.tolist()
             object_polygon["y"] = ys.tolist()
             object_polygon["XYZ"] = XYZ.tolist()
-            object_polygon["object"] = len(mainObjects)-1 #int(imgs_lbls[imidx])
+            object_polygon["object"] = mainObjects.index(cur_obj_dict)
             object_polygon_arr.append(object_polygon)
 
         frame_polygons = {}
@@ -231,6 +228,17 @@ def project_annotations_3D_to_2D(main_folder, fname ,jsonDir, annot_files, nFram
         # plt.show()
         # exit()
 
+    for i, imgs_lbls in enumerate(all_imgs_lbls):
+        prev_lbls = all_imgs_lbls[i-1]
+        imgs_lbls
+        next_lbls = all_imgs_lbls[i+1] if i+1<len(all_imgs_lbls) else {}
+
+        # Remove objects that appear for a single frame - we can assume these are a glitch
+        single_frame_objs = list(set(imgs_lbls) - (set(prev_lbls) or set(next_lbls)))
+        for del_count, o in enumerate(single_frame_objs):
+            j = imgs_lbls.index(o) - del_count # index shifts each time we delete, so we subtract del_count
+            del frame_polygons_arr[i]['polygon'][j]
+
     data["date"] = ""
     data["name"] = fname
     data["frames"] = frame_polygons_arr
@@ -238,6 +246,19 @@ def project_annotations_3D_to_2D(main_folder, fname ,jsonDir, annot_files, nFram
     data['extrinsics'] = "extrinsics.txt"
     data['conflictList'] = []
     data['fileList'] = flst.tolist()
+
+    # Final cleanup of "glitch" objects that were included in the list but ended up getting dropped
+    # from all frames during processing. When we drop an object from data['objects'], we must also shift
+    # all object IDs above it down by one in data['frames'][f]['polygon']['object'] for all frames f
+    objs_present = set(sorted([y for x in [sorted([o['object'] for o in data['frames'][f]['polygon']]) for f in range(len(camera_poses))] for y in x]))
+    objs_not_present = sorted(list(set(range(len(data['objects'])))-objs_present),reverse=True)
+    for idx in objs_not_present:
+        for f in range(len(camera_poses)):
+            for id_o in range(len(data['frames'][f]['polygon'])):
+                o = data['frames'][f]['polygon'][id_o]
+                if o['object']>idx:
+                    o['object'] = o['object']-1
+        del data['objects'][idx]
 
     extrinsics = np.asarray(extrinsics)
     extrinsics = extrinsics.reshape(extrinsics.shape[0], -1)
@@ -277,9 +298,8 @@ def pre_process_input_files(dataDir='./data/washington',pcDir='./data/washington
                 shutil.move(join(main_folder, f), join(main_folder, 'depth', f))
 
         if subDir not in all_json_names:
-            annot_files = [join(pcDir, s) for s in sorted(os.listdir(pcDir)) if subDir[-2:] in s]
+            annot_files = [join(pcDir, s) for s in sorted(os.listdir(pcDir)) if subDir[-2:] in s and not s.endswith('.png')]
             project_annotations_3D_to_2D(join(dataDir, subDir), subDir, jsonDir, annot_files, nFrame_samples)
             print(f"JSON file saved in '{jsonDir}'")
         else:
             print(f"JSON file already exists in '{jsonDir}'")
-from sys import platform

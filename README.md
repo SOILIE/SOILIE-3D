@@ -12,7 +12,7 @@ CARLETON UNIVERSITY <br>
 * scipy
 * matplotlib
 * PIL
-* open3d
+* plyfile
 * blender
 
 ### Usage Instructions
