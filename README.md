@@ -15,6 +15,12 @@ CARLETON UNIVERSITY <br>
 * plyfile
 * blender
 
+### Installation Instructions
+
+You can install all required packages using pip. Simply type the following into your terminal or console window, and select yes (y) when prompted:
+<br><br>
+`pip install numpy pandas scipy matplotlib pillow plyfile blender`
+
 ### Usage Instructions
 1. Drop JSON files containing per-frame object annotations in the `json` folder.
 2. If annotations are related to the 3D point clouds instead of the 2D frames, they will be automatically generated from the <b>.label</b>, <b>.ply</b>, and <b>.pose</b> files in `data/{datasetName}/pc/` combined with the extrinsics file in `data/{datasetName}/{sceneName}/extrinsics/extrinsics.txt`. This operation will only run if the corresponding json file does not already exist in the `json` folder.
