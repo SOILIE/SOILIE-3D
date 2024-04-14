@@ -165,6 +165,10 @@ def generate_per_frame_point_clouds(dataset='washington',scene='scene_01',cumula
             diag_dir = join(scene_dir,'diagnostics')
             if not exists(diag_dir):
                 mkdir(diag_dir)
+            if cumulative:
+                diag_dir = join(diag_dir,'cumulative')
+                if not exists(diag_dir):
+                    mkdir(diag_dir)
             output_file = join(diag_dir,f"{ax.azim if ax.azim!=0 else '000'}_{frame_num}.png")
             plt.savefig(output_file, format='png', bbox_inches='tight', dpi=100)
         if not cumulative or progress==total:

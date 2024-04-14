@@ -71,6 +71,19 @@ def depth2XYZcamera(K,depth):
     return XYZcamera
 
 
+def getCameraCoords(XYZcamera):
+    XYZ = []
+    for j in range(0,len(XYZcamera[0][0])):
+        for i in range(0,len(XYZcamera[0])):
+            if XYZcamera[3][i][j]:
+                data = (XYZcamera[0][i][j],
+                        XYZcamera[1][i][j],
+                        XYZcamera[2][i][j])
+                XYZ.append(data)
+    XYZ = np.array(XYZ)
+    return XYZ
+
+
 def camera2XYZworld(XYZcamera,extrinsics):
     XYZ = []
     for j in range(0,len(XYZcamera[0][0])):

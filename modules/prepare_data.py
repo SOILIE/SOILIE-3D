@@ -1,5 +1,5 @@
 ''' SOILIE 3D
-    v.23.10.31
+    v.24.04.14
     Written by Mike Cichonski
     With contributions from Tae Bourque and Isil Sanusoglu
     for the Science of Imagination Laboratory
@@ -206,31 +206,40 @@ def approximateObjectSizes():
     progress_bar.update(len(files3D),len(files3D),\
                          prefix='Progress:',suffix=str(len(files3D))+'/'+str(len(files3D)))
 
-
     # For testing:
-    # import matplotlib.pyplot as plt
-    # vals = pd.Series(sizes['coffee_machine']).sort_values().reset_index(drop=True)
+    #import matplotlib.pyplot as plt
+    # vals = pd.Series(sizes['plant']).sort_values().reset_index(drop=True)
+    # vals = vals[:len(vals)-int(len(vals)/5)]
     # len(vals)
     # vals.mean()
     # vals.median()
+    # vals.mode()[round(len(vals.mode())/2)]
     # vals.plot(kind='bar')
     # plt.show()
 
-    mean_sizes = {}
+    #mean_sizes = {}
+    median_sizes = {}
+    #mode_sizes = {}
     for obj,dist in sizes.items():
         numObjects = len(dist)
-        vals = pd.Series(dist)
+        vals = pd.Series(dist).sort_values().reset_index(drop=True)
+        vals = vals[:len(vals)-int(len(vals)/5)] # trim 20% off the larger end to exclude outliers
         #multiply by 2 below to change radius to diameter
-        mean_sizes[obj] = str(vals.mean()*2)+','+str(numObjects)
+        #mean_sizes[obj] = str(vals.mean()*2)+','+str(numObjects)
+        median_sizes[obj] = str(vals.median())+','+str(numObjects) # removed the x2 to make values more reasonable
+        #mode = vals.mode()
+        #mode = mode if isinstance(mode,int) else mode[int(len(mode)/2)]
+        #mode_sizes[obj] = str(mode*2)+','+str(numObjects)
 
-    maxCount = max([int(x.split(',')[-1]) for x in mean_sizes.values()])
-    maxDiameter = max([float(x.split(',')[0]) for x in mean_sizes.values()])
-    meanDiameter = np.mean([float(x.split(',')[0]) for x in mean_sizes.values()])
+    maxCount = max([int(x.split(',')[-1]) for x in median_sizes.values()])
+    maxDiameter = max([float(x.split(',')[0]) for x in median_sizes.values()])
+    #meanDiameter = np.mean([float(x.split(',')[0]) for x in mean_sizes.values()])
+    medianDiameter = np.median([float(x.split(',')[0]) for x in median_sizes.values()])
 
     outFile = open("data/object_sizes.csv",'w')
     outFile.write("object,diameter,count,confidence\n")
-    for obj,dist in mean_sizes.items():
-        diameter = float(dist.split(',')[0]) if float(dist.split(',')[0])>0 else meanDiameter
+    for obj,dist in median_sizes.items():
+        diameter = float(dist.split(',')[0]) if float(dist.split(',')[0])>0 else medianDiameter
         confidence = (int(dist.split(',')[-1])/maxCount) * (maxDiameter/diameter)
         outFile.write(obj+','+str(dist)+','+str(confidence)+'\n')
     outFile.close()
@@ -308,6 +317,13 @@ def calculateCoords(objects,method='sampling'):
     print ("INFO: Found good combo.")
 
     sizes = loadObjectSizes()
+
+    # ensure distance AB is the same for all triplets, so make it equal to max distance AB of all triplets
+    all_ab_dists = []
+    for combo in combos:
+        all_ab_dists.append(float(dictionary[','.join(combo)][0]))
+    d_ab = max(all_ab_dists) # universal distance AB for all triplets
+
     triplets = []
     for combo in combos: # for each combo
         comboStr = ','.join(combo)
@@ -315,7 +331,7 @@ def calculateCoords(objects,method='sampling'):
         print ("INFO: Setting up combo: "+ repr(combo))
         # set up variables
         objA,objB,objC = combo
-        d_ab = float(data[0])   # distance between objA and objB
+        #d_ab = float(data[0])   # distance between objA and objB
         d_ac = float(data[1])   # distance between objA and objC
         d_ao = float(data[2])   # distance between objA and camera
         aBAC = math.radians(float(data[3])) # angle BAC
@@ -382,9 +398,9 @@ def calculateCoords(objects,method='sampling'):
         A, res, rank, s = np.linalg.lstsq(curr, base,rcond=-1)
         transform = lambda x: unpad(np.dot(pad(x), A))
 
-        pts.append(triplet[5]) # now add objC back to the set of points
+        pts.append(triplet[5])            # now add objC back to the set of points
         coords = np.array(pts,np.float32) # and re-apply the transformation so the
-        coordsNew = transform(coords) # current triplet lines up with the base triplet
+        coordsNew = transform(coords)     # current triplet lines up with the base triplet
 
         # determine the outlier - these are the coordinates for objC
         isNear = lambda p1,p2: sum((x1 - x2)**2 for x1, x2 in zip(p1, p2)) < 0.0001

@@ -7,7 +7,7 @@ from modules import working_combos
 
 def menuLoop():
     print ("\n#=============================#\n" + \
-             "#     SOILIE 3D v.23.10.31    #\n" + \
+             "#     SOILIE 3D v.24.04.14    #\n" + \
              "#=============================#\n" + \
              "#      SELECT AN OPTION       #\n" + \
              "#-----------------------------#\n" + \

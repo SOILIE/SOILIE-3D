@@ -1,5 +1,5 @@
 ''' SOILIE 3D
-    v.23.10.31
+    v.24.04.14
     Written by Mike Cichonski
     With contributions from Tae Burque and Isil Sanusoglu
     for the Science of Imagination Laboratory
@@ -34,6 +34,7 @@ from modules import import_tools as imp
 from modules.timer import *
 from modules import progress_bar
 
+
 ## declare objects ---------------------------------------------- ##
 
 class Frame:
@@ -58,6 +59,7 @@ class Frame:
         self.image = None      # image to export
         self.background = None # original image
         self.depthMap = None   # depth map
+        self.xyzCamera = []    # xyz camera coords for entire frame
         self.xyz = []          # xyz world coords for entire frame
         self.valid = []        # valid world coords corresponding to each [x,y] location
 
@@ -81,6 +83,7 @@ class Frame:
         sys.stdout.write("\tretrieving camera coords:"); sys.stdout.flush()
         t1 = startTimer() #time to retrieve camera coords
         cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
+        self.xyzCamera = imp.getCameraCoords(cameraCoords)
         sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
         # world coords
         sys.stdout.write("\tconverting to world coords:"); sys.stdout.flush()
@@ -116,7 +119,8 @@ class Frame:
             for y,col in enumerate(objectPts):
                 for x,row in enumerate(col):
                     if row and self.valid[x][y]:
-                        xyzCoords = self.xyz[count]
+                        #xyzCoords = self.xyz[count] # Uses xyz world coords
+                        xyzCoords = self.xyzCamera[count] # Uses xyz camera coords
                         pts3d.append(xyzCoords)
                     if self.valid[x][y]:
                         count+=1
@@ -237,7 +241,7 @@ class Frame:
         for i,row in df_c.iterrows():
             obj = row['object']
             if obj in frameObjects:
-                self.centroids[obj] = [row['X'],row['Y'],row['Z']] # update with full scene centroid (instead of per-frame centroid)
+                self.centroids[obj] = [row['X'],row['Y'],row['Z']]
 
         names = []
         for name, _ in self.centroids.items():
@@ -677,7 +681,7 @@ def main():
         startA = startTimer()
         allObjects  = [] # list to store all objects from all json files in this db
         #for jNum,jFile in enumerate(jsonFiles):
-        for jNum,jFile in enumerate(jsonFiles[0:1]):
+        for jNum,jFile in enumerate(jsonFiles):#[0:1]):
             startB = startTimer()
             with open(join(jsonDir,jFile)) as jData:
                 data = json.load(jData)
