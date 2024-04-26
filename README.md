@@ -10,6 +10,7 @@ CARLETON UNIVERSITY <br>
 * numpy
 * pandas
 * scipy
+* skimage
 * matplotlib
 * PIL
 * plyfile
@@ -19,7 +20,7 @@ CARLETON UNIVERSITY <br>
 
 You can install all required packages using pip. Simply type the following into your terminal or console window, and select yes (y) when prompted:
 <br><br>
-`pip install numpy pandas scipy matplotlib pillow plyfile blender`
+`pip install numpy pandas scipy scikit-image matplotlib pillow plyfile blender`
 
 ### Usage Instructions
 1. Drop JSON files containing per-frame object annotations in the `json` folder.

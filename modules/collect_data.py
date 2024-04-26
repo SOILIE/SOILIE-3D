@@ -674,8 +674,11 @@ def main():
         nFrame_samples = o[3]
         jsonDir = f'./json/{datasetName}'
         run_pre_process = True if datasetName=='washington' else False
+        datasetFullPath = f'./data/{datasetName}'
+        if not os.path.exists(datasetFullPath):
+            os.makedirs(datasetFullPath)
         if run_pre_process:
-            imp.pre_process_input_files(dataDir=f'./data/{datasetName}',pcDir=f'./data/{datasetName}/pc',jsonDir=jsonDir,nFrame_samples=nFrame_samples)
+            imp.pre_process_input_files(dataDir=datasetFullPath,pcDir=f'./data/{datasetName}/pc',jsonDir=jsonDir,nFrame_samples=nFrame_samples)
         # load json files
         jsonFiles = sorted([f for f in listdir(jsonDir) if isfile(join(jsonDir,f)) and f.lower().endswith('json')])
         startA = startTimer()
