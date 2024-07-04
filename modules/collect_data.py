@@ -1,5 +1,5 @@
 ''' SOILIE 3D
-    v.24.04.14
+    v.24.07.05
     Written by Mike Cichonski
     With contributions from Tae Burque and Isil Sanusoglu
     for the Science of Imagination Laboratory
@@ -72,6 +72,46 @@ class Frame:
     def addObject(self,obj):
         self.objects.append(obj)
 
+    def extract_pixel_colors(self,name,coords):
+        # Create a mask image of the same size as the original image
+        mask_image = Image.new('L', self.background.size, 0)
+        ImageDraw.Draw(mask_image).polygon(coords, outline=1, fill=1)
+        mask = mask_image.load()
+        pixels = self.background.load()
+        # Collect unique RGB values within the polygon and count their occurrences
+        color_counts = {}
+        for y in range(self.background.size[1]):
+            for x in range(self.background.size[0]):
+                if mask[x, y] == 1:
+                    color = pixels[x, y][:3]
+                    # exclude pixels that are close enough to fully black or white
+                    if all(c<20 for c in color) or all(c>235 for c in color):
+                        continue
+                    elif color in color_counts:
+                        color_counts[color] += 1
+                    else:
+                        color_counts[color] = 1
+        # Drop color counts with less than 25 pixels (these are extreme outliers)
+        color_counts = {col:c for col,c in color_counts.items() if c>25}
+        data = {'object_name': [], 'R': [], 'G': [], 'B': [], 'count': []}
+        for color, count in color_counts.items():
+            data['object_name'].append('_'.join(eval(name)[0].split()))
+            data['R'].append(color[0])
+            data['G'].append(color[1])
+            data['B'].append(color[2])
+            data['count'].append(count)
+        df = pd.DataFrame(data)
+        obj_colors_filename = './data/object_colors.csv'
+        if exists(obj_colors_filename):
+            # combine counts from previous runs and re-save csv
+            df_old = pd.read_csv(obj_colors_filename)
+            df_new = pd.concat([df_old,df])
+            df = df_new.groupby(['object_name', 'R', 'G', 'B'], as_index=False)['count'].sum().reset_index()
+        if 'index' in df.columns:
+            df.drop(columns=['index'],inplace=True)
+        df.to_csv(obj_colors_filename,index=False)
+
+
     def update(self):
         '''update matrix and image'''
         dataNames = [x.ID for x in self.data]
@@ -84,13 +124,13 @@ class Frame:
         t1 = startTimer() #time to retrieve camera coords
         cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
         self.xyzCamera = imp.getCameraCoords(cameraCoords)
-        sys.stdout.write("\t%s sec.\n"%str(endTimer(t1))); sys.stdout.flush()
+        sys.stdout.write("\t%s\n"%str(endTimerPretty(t1))); sys.stdout.flush()
         # world coords
         sys.stdout.write("\tconverting to world coords:"); sys.stdout.flush()
         t2 = startTimer() #time to change from camera to world coords
         (xyzWorld,self.valid) = imp.camera2XYZworld(cameraCoords,self.extrinsics)
         self.xyz = np.transpose(xyzWorld)
-        sys.stdout.write("\t%s sec.\n"%str(endTimer(t2))); sys.stdout.flush()
+        sys.stdout.write("\t%s\n"%str(endTimerPretty(t2))); sys.stdout.flush()
         return self # to enable cascading
 
     def calculateCentroids(self,polygons):
@@ -135,7 +175,7 @@ class Frame:
             self.objects3d[name] = pts3d
             self.centroids[name] = (X,Y,Z)
 
-        sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t4))); sys.stdout.flush()
+        sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t4))); sys.stdout.flush()
         return self
 
 
@@ -153,6 +193,9 @@ class Frame:
                 for o in self.objects:
                     if str(o.getName()) == name:
                         colour = o.colour
+                # extract pixel colors and store in memory as csv
+                self.extract_pixel_colors(name,coord)
+                # draw the colored polygon
                 draw.polygon(coord,fill=colour)
             for name,coord in self.labels.items():
                 if name not in self.centroids:
@@ -166,7 +209,7 @@ class Frame:
                 z= "%.1f" %self.centroids[name][2]
                 draw.text(coord,name+'\n('+x+','+y+','+z+')',fill="black")
             del draw
-        sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t6))); sys.stdout.flush()
+        sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t6))); sys.stdout.flush()
         return self
 
     def process3dPoints(self,filePath,plot):
@@ -210,7 +253,7 @@ class Frame:
                 ax.scatter([xyzCen[0]],[xyzCen[1]],[xyzCen[2]],color=[0,0,0],marker='x')
             #---------------------------------------------------------------#
         plotFile.close()
-        sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t7))); sys.stdout.flush()
+        sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t7))); sys.stdout.flush()
         #-------------------------------------------------------------------#
         if plot:
             sys.stdout.write("\tplotting 3d points:"); sys.stdout.flush()
@@ -225,7 +268,7 @@ class Frame:
             for count in range(0,plot):
                 curFig.savefig(saveLoc+'/'+str(self.ID)+'-'+'0'*(3-len(str(int(ax.azim))))+str(int(ax.azim))+'_3d.png', dpi=100)
                 ax.azim+=int(360/plot)
-            sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t8))); sys.stdout.flush()
+            sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t8))); sys.stdout.flush()
         plt.close()
         #------------------------------------------------------------------#
         return self
@@ -279,7 +322,7 @@ class Frame:
             nameC = "_".join([nameC[0].replace(" ","_"),nameC[1].replace(" ","")])
             self.combos.append([nameA,nameB,nameC,str(distAB),str(distAC),str(distAO),\
                                 str(angleBAC),str(angleOAB),str(angleOAC)])
-        #sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t5))); sys.stdout.flush()
+        #sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t5))); sys.stdout.flush()
         return self
 
 
@@ -317,7 +360,7 @@ class Frame:
             image = Image.alpha_composite(self.background,image).convert('RGB')
             image.save(join(filePath,str(self.ID)+'.jpg'))
             image.close()
-        #sys.stdout.write("\t\t%s sec.\n"%str(endTimer(t9))); sys.stdout.flush()
+        #sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t9))); sys.stdout.flush()
         return self
 
 
@@ -491,7 +534,7 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
     '''process each json file
     data:           the data contained in the json file
     currentPath:    the root path of the dataset
-    datasetName:         the name of the database, which should correspond with the
+    datasetName:    the name of the database, which should correspond with the
                     name of the subfolder within the data and json folders
     local:          True if database is located locally, False if on web
     plot:           number of different views plotted per frame'''
@@ -634,7 +677,7 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
         except OSError:
             if not isdir(filePath):
                 raise
-        sys.stdout.write("\t\t%s sec.\n"%str(endTimer(frameTimer)));
+        sys.stdout.write("\t\t%s\n"%str(endTimerPretty(frameTimer)));
         sys.stdout.flush()
         currentFrame = (currentFrame.update()
                                .calculateCentroids(polygons)
@@ -646,17 +689,19 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
         #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
         #np.savetxt(join(filePath,str(i)+'.co'),conflicts,fmt="%s")
         sys.stdout.write("\ttotal time for frame %s:"%str(currentFrame.ID))
-        sys.stdout.write(" \t%s sec."%str(endTimer(frameTimer))); sys.stdout.flush()
+        sys.stdout.write(" \t%s"%str(endTimerPretty(frameTimer))); sys.stdout.flush()
 
-    pathTo3dFiles = join('data',datasetName,data['name'])
-    calculateCentroidsForScene(pathTo3dFiles,allObjects)
+    ## SET TO TRUE TO CALCULATE CENTROIDS ON A SCENE LEVEL (WORLD COORDS)
+    if False:
+        pathTo3dFiles = join('data',datasetName,data['name'])
+        calculateCentroidsForScene(pathTo3dFiles,allObjects)
 
-    print('Calculating angle and distance combinations...')
-    for i, currentFrame in enumerate(allFrames):
-        progress_bar.update(i+1,len(allFrames))
-        centroidFile = join(pathTo3dFiles,'centroids.csv')
-        currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(filePath)
-        currentFrame = None
+        print('Calculating angle and distance combinations...')
+        for i, currentFrame in enumerate(allFrames):
+            progress_bar.update(i+1,len(allFrames))
+            centroidFile = join(pathTo3dFiles,'centroids.csv')
+            currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(filePath)
+            currentFrame = None
 
     return allObjects
 
@@ -674,8 +719,11 @@ def main():
         nFrame_samples = o[3]
         jsonDir = f'./json/{datasetName}'
         run_pre_process = True if datasetName=='washington' else False
+        datasetFullPath = f'./data/{datasetName}'
+        if not os.path.exists(datasetFullPath):
+            os.makedirs(datasetFullPath)
         if run_pre_process:
-            imp.pre_process_input_files(dataDir=f'./data/{datasetName}',pcDir=f'./data/{datasetName}/pc',jsonDir=jsonDir,nFrame_samples=nFrame_samples)
+            imp.pre_process_input_files(dataDir=datasetFullPath,pcDir=f'./data/{datasetName}/pc',jsonDir=jsonDir,nFrame_samples=nFrame_samples)
         # load json files
         jsonFiles = sorted([f for f in listdir(jsonDir) if isfile(join(jsonDir,f)) and f.lower().endswith('json')])
         startA = startTimer()
@@ -686,8 +734,8 @@ def main():
             with open(join(jsonDir,jFile)) as jData:
                 data = json.load(jData)
                 allObjects = processJSON(data,allObjects,currentPath,datasetName,local,plot) # process each json file
-            print("\n** File processed in %s seconds."% str(endTimer(startB)))
-            print("** Total: "+str(jNum+1)+ " files processed in %s seconds." % str(endTimer(startA)))
+            print("\n** File processed in %s."% str(endTimerPretty(startB)))
+            print("** Total: "+str(jNum+1)+ " files processed in %s." % str(endTimerPretty(startA)))
             print("**",len(allObjects),"total objects in %s JSON files.\n" % str(jNum+1))
         # create log file for all the objects in all frames in all locations
         logFile = open(join("data",datasetName,"objects.log"),"w")

@@ -1,5 +1,5 @@
 ''' SOILIE 3D
-    v.24.04.14
+    v.24.07.05
     Written by Mike Cichonski
     With contributions from Tae Bourque and Isil Sanusoglu
     for the Science of Imagination Laboratory
@@ -13,6 +13,7 @@
 	to incomplete 3d data). Requires output from collect_data.py.'''
 
 import fnmatch
+import copy
 import os
 from os.path import join
 import sys
@@ -24,22 +25,11 @@ import math
 from math import sqrt
 import numpy as np
 import pandas as pd
+from collections import Counter
 from itertools import permutations
 
 from modules.timer import *
 from modules import progress_bar
-
-
-def loadObjectSizes():
-    '''load object sizes into list'''
-    sFile = open(os.path.join(os.getcwd(),"data/object_sizes.csv"),'r')
-    sizes = {}
-    lines = sFile.readlines()
-    sFile.close()
-    for line in lines[1:]:
-        item = line.split(',')
-        sizes[item[0]] = float(item[1])
-    return sizes
 
 
 def gatherTriplets():
@@ -51,13 +41,14 @@ def gatherTriplets():
         for filename in fnmatch.filter(filenames, '*.csv'):
             files.append(os.path.join(root, filename))
 
-    files = sorted(f for f in files if not (f=='data/object_sizes.csv' or
+    files = sorted(f for f in files if not ('data/object_' in f or
                    'data/triplets' in f or f=='data/working-combos.csv' or
                    'centroids.csv' in f))
     files.sort(key=len)
 
     master_df = pd.DataFrame()
     for i, filename in enumerate(files):
+        print(filename)
         df = pd.read_csv(filename)
         df['objectA'] = df['objectA'].apply(lambda x: x.rsplit('_',1)[0])
         df['objectB'] = df['objectB'].apply(lambda x: x.rsplit('_',1)[0])
@@ -66,7 +57,7 @@ def gatherTriplets():
         progress_bar.update(i+1,len(files),suffix=filename+'                       ')
 
     master_df.sort_values(by=list(master_df.columns)).to_csv('./data/triplets.csv', index=False)
-    sys.stdout.write("Done! (%s sec.)\n"%str(endTimer(timer))); sys.stdout.flush()
+    sys.stdout.write("Done! (%s)\n"%str(endTimerPretty(timer))); sys.stdout.flush()
 
 
 def averageTriplets():
@@ -82,7 +73,7 @@ def averageTriplets():
 
     averages = {}
     for filename in files:
-        if filename=='data/object_sizes.csv' or 'data/triplets' in filename or filename=='data/working-combos.csv' or 'centroids.csv' in filename:
+        if 'data/object_' in filename or 'data/triplets' in filename or filename=='data/working-combos.csv' or 'centroids.csv' in filename:
             continue # skip these because they are the output of the current script
         df_trip = pd.read_csv(filename)
 
@@ -135,7 +126,7 @@ def averageTriplets():
         pickle.dump(triplets,handle,protocol=pickle.HIGHEST_PROTOCOL)
     handle.close()
 
-    sys.stdout.write("Done! (%s sec.)\n"%str(endTimer(timer))); sys.stdout.flush()
+    sys.stdout.write("Done! (%s)\n"%str(endTimerPretty(timer))); sys.stdout.flush()
 
 
 def approximateObjectSizes():
@@ -243,11 +234,77 @@ def approximateObjectSizes():
         confidence = (int(dist.split(',')[-1])/maxCount) * (maxDiameter/diameter)
         outFile.write(obj+','+str(dist)+','+str(confidence)+'\n')
     outFile.close()
-    sys.stdout.write("Processed in %s sec.\n"%str(endTimer(timer)));
+    sys.stdout.write("Processed in %s\n"%str(endTimerPretty(timer)));
     sys.stdout.flush()
 
+def suffix_duplicates(items,nested=False):
+    result = []
+    if not nested:
+        item_count = {}
+        for item in items:
+            if item not in item_count:
+                item_count[item] = 0
+                result.append(item)
+            else:
+                item_count[item] += 1
+                result.append(f"{item}.{item_count[item]}")
+    else:
+        item_list = items.copy()
+        first_list = item_list.pop(0)
+        result.append(suffix_duplicates(first_list))
+        third_item_count = Counter(first_list)
 
-def calculateCoords(objects,method='sampling'):
+        for sublist in item_list:
+            # Process the third item
+            item_3 = sublist[2]
+            if item_3 not in third_item_count:
+                third_item_count[item_3] = 1
+                modified_item_3 = item_3
+            else:
+                modified_item_3 = f"{item_3}.{third_item_count[item_3]}"
+                third_item_count[item_3] += 1
+
+            # Append the modified sublist to the result
+            result.append(result[0][:2] + [modified_item_3])
+
+    return result
+
+
+def loadObjectSizes(objects):
+    cat_dict = {
+        'sizecat': {0: 'xsmall', 1: 'small', 2: 'medium', 3: 'large', 4: 'xlarge'},
+        'min':     {0: 0.08,     1: 0.2,     2: 0.4,      3: 0.7,     4: 1.3},
+        'max':     {0: 0.30,     1: 0.6,     2: 1.2,      3: 1.7,     4: 3.0}}
+        #'min': {0: 0.08, 1: 0.2, 2: 0.35, 3: 1.0, 4: 2.0},
+        #'max': {0: 0.25, 1: 0.5, 2: 1.2, 3: 3.0, 4: 5.0}}
+    df_cats = pd.DataFrame.from_dict(cat_dict)
+    df_sizes = pd.read_csv('./data/object_sizes_manual.csv')
+    obj_names = suffix_duplicates(objects)
+    sizes = {}
+    for i,obj_name in enumerate(objects):
+        obj_size_cat = df_sizes[df_sizes['object']==obj_name]['sizecat'].values[0]
+        curr_cat = df_cats[df_cats['sizecat']==obj_size_cat]
+        min_val = curr_cat['min'].values[0]
+        max_val = curr_cat['max'].values[0]
+        obj_size = random.triangular(min_val, max_val, (min_val + max_val) / 2)
+        sizes[obj_names[i]] = [obj_size,obj_size_cat]
+    return sizes
+
+
+def retrieve_realistic_object_color(df_obj_cols,obj_name):
+    filtered_df = df_obj_cols[df_obj_cols['object_name'] == obj_name]
+    if filtered_df.empty:
+        # if no color found, use random color of another object
+        filtered_df = df_obj_cols
+        #return (255,255,255)
+    rows = filtered_df.to_dict(orient='records')
+    weights = filtered_df['count'].tolist()
+    sampled_row = random.choices(rows, weights=weights, k=1)[0]
+    color = (sampled_row['R'],sampled_row['G'],sampled_row['B'])
+    return color
+
+
+def calculateCoords(objects,method='sampling',working_combos_precalculated=True,print_debug=False,progbar_prefix='',prev_text_len=[]):
     '''Calculate the coordinates of a list of objects
     based on angles and distances between triplets
     objects: a list of the object names
@@ -255,8 +312,10 @@ def calculateCoords(objects,method='sampling'):
     dictionary: a dictionary of all object triplet data
     output: a dictionary of final object locations'''
 
+    obj_names = suffix_duplicates(objects)
+
     if method == 'averaging':
-        # load dictionary of all triplets
+        ## NOT RECOMMENDED: CODE OUTDATED AND UNTESTED
         pickleData = pickle.load(open("data/triplets_avg.pickle",'rb'))
         dictionary = {}
         for i, objA in enumerate(pickleData['objectA']):
@@ -266,10 +325,12 @@ def calculateCoords(objects,method='sampling'):
                 pickleData['distanceAO'][i],pickleData['angleBAC'][i],
                 pickleData['angleOAB'][i],pickleData['angleOAC'][i],pickleData['count'][i]]
             dictionary[f'{objA},{objB},{objC}'] = comboData
-        print ("INFO: Loaded triplet data.")
+        print_debug and print("INFO: Loaded triplet data.")
 
     elif method == 'sampling':
+
         df = pd.read_csv('./data/triplets.csv')
+
         df = df.sample(frac=1).reset_index(drop=True)
         df = df.drop_duplicates(subset=['objectA','objectB','objectC'],keep='first')
         dictionary = {}
@@ -277,21 +338,23 @@ def calculateCoords(objects,method='sampling'):
             objA = row['objectA']
             objB = row['objectB']
             objC = row['objectC']
+
             comboData = [row['distanceAB'],row['distanceAC'],row['distanceAO'],
                          row['angleBAC'],row['angleOAB'],row['angleOAC'],1]
             dictionary[f'{objA},{objB},{objC}'] = comboData
 
     else:
-        print(f'ERROR: Wrong method selected for calculateCoords: {method}.')
+        print_debug and print(f'ERROR: Wrong method selected for calculateCoords: {method}.')
         return {}
 
     # generate every permutation of the given objects and try to find a set
     # of triplets that will contain enough data to calculate all object locations
     objMix = list(permutations(objects,len(objects)))
     random.shuffle(objMix)
+
     enoughData = True
     for i,objs in enumerate(objMix):
-        print ("INFO: Attempt "+str(i+1)+"...")
+        print_debug and print("INFO: Attempt "+str(i+1)+"...")
         enoughData = True # set to false if any object isn't in final list
         # create list of necessary triplets based on input objects
         combos = [[objs[0],objs[1],x] for x in objs[2:]]
@@ -299,38 +362,43 @@ def calculateCoords(objects,method='sampling'):
         for combo in combos: # for each combo
             comboStr = ','.join(combo)
             if comboStr not in dictionary:
-                print ("WARNING: Triplet not found in dictionary: " + comboStr)
+                print_debug and print("WARNING: Triplet not found in dictionary: " + comboStr)
                 continue
             good.append(combo)
 
         for obj in objects: # if any of the objects aren't in the final list
             if obj not in [x for sublist in good for x in sublist]:
-                print ("ERROR: Not enough data for "+obj+". Retrying...")
+                print_debug and print("ERROR: Not enough data for "+obj+". Retrying...")
                 enoughData = False
                 break
         if enoughData:
             break
 
-    if not enoughData: print ("ERROR: All tries failed. Exiting..."); sys.exit(1)
+    if not enoughData:
+        print_debug and print("ERROR: All tries failed. Exiting...")
+        sys.exit(1)
 
     combos = good
-    print ("INFO: Found good combo.")
+    print_debug and print("INFO: Found good combo.")
 
-    sizes = loadObjectSizes()
+    sizes = loadObjectSizes(objects)
 
-    # ensure distance AB is the same for all triplets, so make it equal to max distance AB of all triplets
+    combos_n = suffix_duplicates(combos,nested=True)
+
+    # ensure distance AB is the same for all triplets, so make it equal to mean distance AB of all triplets
     all_ab_dists = []
     for combo in combos:
         all_ab_dists.append(float(dictionary[','.join(combo)][0]))
-    d_ab = max(all_ab_dists) # universal distance AB for all triplets
+    d_ab = np.mean(all_ab_dists) # universal distance AB for all triplets
 
     triplets = []
-    for combo in combos: # for each combo
+    for i, combo in enumerate(combos): # for each combo
         comboStr = ','.join(combo)
         data = dictionary[comboStr] # find triplet data
-        print ("INFO: Setting up combo: "+ repr(combo))
+        print_debug and print("INFO: Setting up combo: "+ repr(combo))
         # set up variables
-        objA,objB,objC = combo
+        objA,objB,objC = combos_n[i]
+
         #d_ab = float(data[0])   # distance between objA and objB
         d_ac = float(data[1])   # distance between objA and objC
         d_ao = float(data[2])   # distance between objA and camera
@@ -355,8 +423,7 @@ def calculateCoords(objects,method='sampling'):
         d_bc = math.sqrt(sum((B-C)**2 for B,C in zip(B,C)))
         d_bo = math.sqrt(sum((B-O)**2 for B,O in zip(B,O)))
         d_co = math.sqrt(sum((C-O)**2 for C,O in zip(C,O)))
-        s = min([d_ab,d_ac,d_bc,d_ao,d_bo,d_co]) # use smallest distance as scale factor
-        triplets.append([objA,objB,objC,A,B,C,O,s]) # objA,objB,objC,camera,scale
+        triplets.append([objA,objB,objC,A,B,C,O]) # objA,objB,objC,camera
 
     # The following process answers the question:
     # Where would objC2 be located if it were in the coordinate space of objC1, given
@@ -379,7 +446,6 @@ def calculateCoords(objects,method='sampling'):
     finalCoords[triplets[0][1]] = triplets[0][4] # add objB coords
     finalCoords[triplets[0][2]] = triplets[0][5] # add base objC coords
     finalCoords['CAMERA'] = triplets[0][6] # add camera coords
-    finalCoords['SCALE'] = triplets[0][7] # add scale
 
     for triplet in triplets[1:]:
         pts = [triplet[3],triplet[4],triplet[6]]
@@ -411,6 +477,55 @@ def calculateCoords(objects,method='sampling'):
                     corresp.append(coord)
                     break
         finalCoords[triplet[2]] = [x for x in coordsNew.tolist() if x not in corresp][0]
-        finalCoords['SCALE'] = min(triplet[7],finalCoords['SCALE']) # update scale
 
-    return finalCoords
+    # Add these to pass color to blender - locations will be determined in blender
+    finalCoords['WALL'] = tuple()
+    finalCoords['FLOOR'] = tuple()
+
+    df_obj_cols = pd.read_csv('./data/object_colors.csv')
+    obj_colors = {}
+    for obj in finalCoords.keys():
+        obj_color = retrieve_realistic_object_color(df_obj_cols,obj.split('.')[0].lower())
+        obj_colors[obj] = obj_color
+
+    finalCoords = {obj:{
+        'size':{
+            'diameter':sizes[obj][0] if obj in sizes else 0,
+            'category':sizes[obj][1] if obj in sizes else ''},
+        'color':obj_colors[obj] if obj in obj_colors else (255,255,255),
+        'coords':coords
+        } for obj,coords in finalCoords.items()}
+
+    # If any window-related items are present,
+    # Make sure there is always a window and then randomly select blinds, curtain, or nothing
+    window_objs = ['window','blinds','curtain']
+    curr_window_objs = [o for o in finalCoords.keys() if o.split('.')[0] in window_objs]
+    if len(curr_window_objs)>0:
+        progbar_suffix = f'Windows, blinds, or curtain present: Randomizing a combination of these objects...'
+        text_len = progress_bar.update(40, 100, progbar_prefix, progbar_suffix, length=10, prev_text_len=prev_text_len)
+        if any('window' in o for o in curr_window_objs):
+            for i in range(5):
+                suff = f'.{i}' if i>0 else ''
+                finalCoords.pop('blinds'+suff,None)
+                finalCoords.pop('curtain'+suff,None)
+        else:
+            obj_to_rename = random.choice(curr_window_objs)
+            objs_to_remove = [o for o in curr_window_objs if o!=obj_to_rename]
+            finalCoords['window'] = finalCoords.pop(obj_to_rename)
+            for obj in objs_to_remove:
+                finalCoords.pop(obj)
+
+        # At this point, we've ensured that the calculated coordinates for one of the window
+        # objects are now the coordinates of the window itself. Now, we will add blinds or
+        # curtain or neither and make them the same location and same size as the window.
+        # We will also recalculate the color for each of the items so they are all different.
+        finalCoords['window']['color'] = obj_colors['window'] if 'window' in obj_colors else (255,255,255)
+        blinds_or_curtain = random.sample(['blinds','curtain'], random.randint(0,2))
+        for item in blinds_or_curtain:
+            finalCoords[item] = copy.deepcopy(finalCoords['window'])
+            #finalCoords[item]['size']['diameter'] +=  finalCoords[item]['size']['diameter']*0.05
+            finalCoords[item]['color'] = obj_colors[item] if item in obj_colors else (255,255,255)
+    else:
+        text_len = prev_text_len
+
+    return finalCoords, text_len
