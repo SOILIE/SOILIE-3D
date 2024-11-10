@@ -5,6 +5,8 @@ import json
 import shutil
 import gc
 import re
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context # for Mac compatibility
 
 import urllib.request
 from io import BytesIO
