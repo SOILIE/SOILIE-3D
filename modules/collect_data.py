@@ -1,11 +1,4 @@
-''' SOILIE 3D
-    v.24.07.05
-    Written by Mike Cichonski
-    With contributions from Tae Burque and Isil Sanusoglu
-    for the Science of Imagination Laboratory
-    Carleton University
-
-    File: collect_data.py
+''' File: collect_data.py
 	This file traverses the selected dataset(s) and calculates
 	angles and distances between object triplets in each frame.
 	Requires JSON label files in the json folder.'''

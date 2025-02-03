@@ -1,5 +1,11 @@
-data/*
+data*/*
 output/*
 modules/__*
 3d/*obj
+3d/*zip
 examples/*
+papers/*
+archives/*
+*.blend1
+*_test*
+*zip

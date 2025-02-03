@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-''' SOILIE 3D
-    v.24.07.05
-    Written by Mike Cichonski
-    for the Science of Imagination Laboratory
-    Carleton University
-
-    File: progress_bar.py
+''' File: progress_bar.py
     Provides a simple progress bar for any iterative operation.'''
 import random
 

@@ -1,11 +1,4 @@
-''' VISUO 3D
-    v.24.04.14
-    Written by Mike Cichonski
-    With contributions from Tae Burque
-    for the Science of Imagination Laboratory
-    Carleton University
-
-    File: menu.py
+''' File: menu.py
     This module provides a menu interface for collect_data.py'''
 
 import json

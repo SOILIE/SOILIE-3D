@@ -1,12 +1,6 @@
-''' VISUO 3D
-    v.24.07.05
-    Written by Mike Cichonski
-    for the Science of Imagination Laboratory
-    Carleton University
-
-    File: working_combos.py
+''' File: working_combos.py
     This module is written for python3 and the functions are
-    meant to be called from inside the run.py script.'''
+    meant to be called from inside the imagine.py script.'''
 
 import sys
 import pickle

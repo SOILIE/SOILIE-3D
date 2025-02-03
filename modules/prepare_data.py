@@ -1,11 +1,4 @@
-''' SOILIE 3D
-    v.24.07.05
-    Written by Mike Cichonski
-    With contributions from Tae Bourque and Isil Sanusoglu
-    for the Science of Imagination Laboratory
-    Carleton University
-
-    File: prepare_data.py
+''' File: prepare_data.py
 	This file processes all the csv files output by collect_data.py and
 	averages/fuzzifies the values of the object triplets.
 	It also estimates relative object sizes using the object's
