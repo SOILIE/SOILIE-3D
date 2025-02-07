@@ -1,9 +1,9 @@
-##  SOILIE 3D
+##  [REDACTED SYSTEM NAME]
 v.24.07.05
 
-### What is SOILIE?
+### What is [REDACTED SYSTEM NAME]?
 
-Science of Imagination Lab: Imagination Engine 3D ("SOILIE-3D"), is an innovative tool that harnesses the power of AI to simulate human visual imagination by generating (or "imagining") novel indoor three-dimensional scenes. Objects are placed in the scene based on real-world examples extracted from RGB-D datasets with object labels. To put it in human brain terms, this labeled RGB-D data is roughly equivalent our engine's memories of past scenes it has encountered. Objects that were placed most recently are the most opaque and detailed to simulate the recency effect, while earlier objects "fade" from existence. Walls and floors also become more transparent the further they are from the most recent object. The final image is a snapshot representation of what an imagined visual scene might actually look like. Outputs also contain a gif animation to simulate how an imagined scene might change over time as we introduce new objects into it.
+We introduce an innovative tool that harnesses the power of AI to simulate human visual imagination by generating (or "imagining") novel indoor three-dimensional scenes. Objects are placed in the scene based on real-world examples extracted from RGB-D datasets with object labels. To put it in human brain terms, this labeled RGB-D data is roughly equivalent our engine's memories of past scenes it has encountered. Objects that were placed most recently are the most opaque and detailed to simulate the recency effect, while earlier objects "fade" from existence. Walls and floors also become more transparent the further they are from the most recent object. The final image is a snapshot representation of what an imagined visual scene might actually look like. Outputs also contain a gif animation to simulate how an imagined scene might change over time as we introduce new objects into it.
 
 ### Required packages
 * numpy

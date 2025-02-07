@@ -16,7 +16,7 @@ from modules.timer import *
 
 def menuLoop():
     print ("\n#=============================#\n" + \
-             "#     SOILIE 3D v.24.07.05    #\n" + \
+             "#     REDACTED  v.24.07.05    #\n" + \
              "#=============================#\n" + \
              "#      SELECT AN OPTION       #\n" + \
              "#-----------------------------#\n" + \

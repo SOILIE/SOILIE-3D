@@ -12,7 +12,7 @@ from modules.timer import *
 
 def determine():
     '''determine all combinations of objects that can
-    be used as input into SOILIE3D (imagine.py script) given
+    be used as input (imagine.py script) given
     the data gathered into the data/triplets.csv file
     output: data/working-combos.csv'''
 
