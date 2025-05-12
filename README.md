@@ -41,6 +41,7 @@ After installing Blender and Python, you can install all required packages using
 > ℹ️ Select the option to process input data before selecting the option to imagine a scene. Processing the input data may take several hours, but only needs to be done once.
 
 ### Key Scripts
+
 #### 1. modules/collect_data.py
 
 ###### **INPUTS**
@@ -57,7 +58,6 @@ For each frame:
 * `##.cen` Contains the 3d world coordinate centroids for each object in the frame, calculated using <b>only the points present in the frame.</b>
 * `##.csv` Contains angles (degrees) and distances (meters) between every permutation of <b>3 objects + camera</b> in the frame.
 * `##.jpg` Contains the projected 2D bounding boxes for each object in the frame, with labels appearing in the location of the centroids.
-<br>
 
 For each scene:
 * `centroids.csv` Contains the 3d world coordinate centroids for each object in the scene, calculated using all available 3d points.
