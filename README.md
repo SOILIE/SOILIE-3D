@@ -11,7 +11,7 @@ Ottawa, Canada <br>
 
 ### What is SOILIE-3D?
 
-Science of Imagination Lab: Imagination Engine 3D ("SOILIE-3D"), is an innovative tool that harnesses the power of AI to simulate human visual imagination by generating (or "imagining") novel indoor three-dimensional scenes. Objects are placed in the scene based on real-world examples extracted from RGB-D datasets with object labels. To put it in human brain terms, this labeled RGB-D data is roughly equivalent our engine's memories of past scenes it has encountered. Objects that were placed most recently are the most opaque and detailed to simulate the recency effect, while earlier objects "fade" from existence. Walls and floors also become more transparent the further they are from the most recent object. The final image is a snapshot representation of what an imagined visual scene might actually look like. Outputs also contain a gif animation to simulate how an imagined scene might change over time as we introduce new objects into it.
+Science of Imagination Lab: Imagination Engine 3D ("SOILIE-3D"), is an innovative tool that harnesses the power of AI to simulate human visual imagination by generating (or "imagining") novel indoor three-dimensional scenes. Objects are placed in the scene based on real-world examples extracted from RGB-D datasets with object labels. To put it in human brain terms, this labeled RGB-D data is roughly equivalent our engine's memories of past scenes it has encountered. Objects that were placed most recently are the most opaque and detailed to simulate the recency effect, while earlier objects "fade" from existence. Walls and floors also become more transparent the further they are from the most recent object. The final image is a snapshot representation of what an imagined visual scene might actually look like. Outputs also contain a GIF animation to simulate how an imagined scene might change over time as we introduce new objects into it.
 
 ### Required Runtime
 
@@ -41,7 +41,8 @@ After installing Blender and Python, you can install all required packages using
 > ℹ️ Select the option to process input data before selecting the option to imagine a scene. Processing the input data may take several hours, but only needs to be done once.
 
 ### Key Scripts
-##### 1. modules/collect_data.py
+
+#### 1. modules/collect_data.py
 
 ###### **INPUTS**
 * `json/{datasetName}/{sceneName}.json` JSON files containing 2D annotation coordinates for each labeled object in each frame.
@@ -57,12 +58,11 @@ For each frame:
 * `##.cen` Contains the 3d world coordinate centroids for each object in the frame, calculated using <b>only the points present in the frame.</b>
 * `##.csv` Contains angles (degrees) and distances (meters) between every permutation of <b>3 objects + camera</b> in the frame.
 * `##.jpg` Contains the projected 2D bounding boxes for each object in the frame, with labels appearing in the location of the centroids.
-<br>
 
 For each scene:
 * `centroids.csv` Contains the 3d world coordinate centroids for each object in the scene, calculated using all available 3d points.
 
-##### 2. modules/prepare_data.py
+#### 2. modules/prepare_data.py
 
 ###### **INPUTS**
 * The output from `collect_data.py`
@@ -72,7 +72,7 @@ For each scene:
 * `data/object-sizes.csv` Approximated object sizes for all objects found in all scenes.
 * `coords` Variable passed to render.py containing world coordinate locations for a novel 3d scene.
 
-##### 3. modules/render.py
+#### 3. modules/render.py
 
 ###### **INPUTS**
 * `00_blender_inputs.json` The output from `collect_data.py` and `prepare_data.py` (saved with output).
