@@ -49,7 +49,6 @@ After installing Blender and Python, you can install all required packages using
 * `data/{datasetName}/{sceneName}/depth/*` 2D depth map per frame.
 * `data/{datasetName}/{sceneName}/extrinsics/*` Camera extrinsics for each frame.
 * `data/{datasetName}/{sceneName}/intrinsics.txt` Camera intrinsics.
-<br>
 
 ###### **OUTPUTS**
 
@@ -67,7 +66,6 @@ For each scene:
 
 ###### **INPUTS**
 * The output from `collect_data.py`
-<br>
 
 ###### **OUTPUTS**
 * `data/triplets.csv` Angles and distances between permutations of <b>3 objects + camera</b>, aggregated from all frames in all scenes.
@@ -79,7 +77,6 @@ For each scene:
 ###### **INPUTS**
 * `00_blender_inputs.json` The output from `collect_data.py` and `prepare_data.py` (saved with output).
 * `3d/{objectName}_####.obj` OBJ files in the 3d folder that match the object names in the RGBD databases.
-<br>
 
 ###### **OUTPUTS**
 * `output/{objectNames}.gif` GIF animation of imagined 3D scene(s).
