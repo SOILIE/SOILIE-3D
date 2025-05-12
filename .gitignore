@@ -1,5 +1,11 @@
 data/*
 output/*
 modules/__*
-3d/*obj
+assets/*obj
+assets/bad_assets/*
 examples/*
+archives/*
+papers/*
+*blend1
+*_test*
+requirements_all.txt

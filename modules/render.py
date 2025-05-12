@@ -25,7 +25,7 @@ def generateFileName(filename):
         if i>0:
             folder_name = os.path.join(splitname[i-1],folder_name)
         if not os.path.exists(folder_name):
-            os.mkdir(folder_name)            
+            os.mkdir(folder_name)
     if os.path.exists(filename):
         num = str(int(os.path.splitext(filename)[-2][-4:])+1)
         return generateFileName( \
@@ -45,15 +45,15 @@ def generate_next_output_folder():
 
 def load_rotations():
     rotations = {}
-    with open('3d/asset_rotations.csv', newline='') as csvfile:
+    with open('assets/asset_rotations.csv', newline='') as csvfile:
         reader = csv.reader(csvfile)
         next(reader)  # Skip the header if there is one
         for row in reader:
             obj_name, asset_name, x, y, z = row
             if obj_name not in rotations:
                 rotations[obj_name] = {}
-            r = (int(x) if x!='' else 0, 
-                 int(y) if y!='' else 0, 
+            r = (int(x) if x!='' else 0,
+                 int(y) if y!='' else 0,
                  int(z) if z!='' else 0)
             rotations[obj_name][asset_name] = r
     return rotations
@@ -92,15 +92,15 @@ def look_at(objA, locB, away=False):
     rot_quat = direction.to_track_quat('-Z', 'Y')
     # assume we're using euler rotation
     objA.rotation_euler = rot_quat.to_euler()
-    
+
 
 def make_centroid_the_object_location(obj):
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode='OBJECT')
     bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS', center='BOUNDS')
-            
-            
+
+
 def get_centroid(obj):
     # Calculate the centroid from the bounding box
     local_corners = [Vector(corner) for corner in obj.bound_box]
@@ -129,7 +129,7 @@ def closest_object_to_point(point_vec, objects):
             continue
 
         bbox_corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-        
+
         # Interpolate points along the edges of the bounding box
         interpolated_points = []
         for (corner1, corner2) in combinations(bbox_corners, 2):
@@ -171,27 +171,27 @@ def load_variables(inputs):
     params = {x:y for x,y in inputs.items() if x.isupper()}
     inputs = {x:y for x,y in inputs.items() if not x.isupper()}
     # Merge synonymous names
-    inputs = {SYNONYMS[x] if x in SYNONYMS else x:y for x,y in inputs.items()}     
+    inputs = {SYNONYMS[x] if x in SYNONYMS else x:y for x,y in inputs.items()}
     return og_inputs, inputs, params
 
 
 def load_assets(inputs,params):
     rotations = load_rotations()
     valid_assets = [v2 for v1 in rotations.values() for v2 in v1.keys()]
-    obj_files = [f for f in os.listdir('3d') if os.path.splitext(f)[1].lower()=='.obj' and f in valid_assets]
+    obj_files = [f for f in os.listdir('assets') if os.path.splitext(f)[1].lower()=='.obj' and f in valid_assets]
     # Load assets into blender
     for obj_name in inputs.keys():
-        suffix = '.'+obj_name.split('.')[1] if '.' in obj_name else ''                       
+        suffix = '.'+obj_name.split('.')[1] if '.' in obj_name else ''
         # Select random 3d asset file matching object name
-        asset_name = random.choice([f for f in obj_files if '_'.join(f.split('_')[:-1])==obj_name.split('.')[0]])        
+        asset_name = random.choice([f for f in obj_files if '_'.join(f.split('_')[:-1])==obj_name.split('.')[0]])
         # Import object into the scene
         bpy.ops.object.select_all(action='DESELECT')
         bpy.ops.import_scene.obj(
-            filepath=os.path.join('3d',asset_name),
+            filepath=os.path.join('assets',asset_name),
             use_split_objects=False,
             use_split_groups=False,
             axis_forward='-Y',
-            axis_up='Z')                                
+            axis_up='Z')
         # Add object to input dictionary for easier access later
         asset_name = os.path.splitext(asset_name)[0]
         matching_objects = [obj.name for obj in bpy.data.objects if obj.name.startswith(asset_name)]
@@ -207,7 +207,7 @@ def load_assets(inputs,params):
         inputs[obj_name]['blender_obj'] = obj
         bpy.context.view_layer.update()
     return inputs,params
-        
+
 
 def resize_objects_to_unit_scale():
     for obj in bpy.data.objects:
@@ -217,13 +217,13 @@ def resize_objects_to_unit_scale():
             obj.scale *= scale_factor
             bpy.context.view_layer.objects.active = obj
             bpy.ops.object.transform_apply(scale=True)
-            
-            
+
+
 def transform_objects(inputs):
     # Transform: move, resize, and reorient each object
     rotations = load_rotations() # load "front" rotations
     current_rotations = {}
-    for obj_name in inputs.keys():                
+    for obj_name in inputs.keys():
         # Get the object name and handle
         bpy.ops.object.select_all(action='DESELECT')
         asset_name = inputs[obj_name]['asset_name']
@@ -231,7 +231,7 @@ def transform_objects(inputs):
         # Create variables for xyz coords and object size
         xyz = inputs[obj_name]['coords']
         obj_size = inputs[obj_name]['size']['diameter']
-        obj_size_cat = inputs[obj_name]['size']['category']                       
+        obj_size_cat = inputs[obj_name]['size']['category']
         # Move object to its xyz location
         make_centroid_the_object_location(obj)
         obj.location = Vector(xyz)
@@ -241,7 +241,7 @@ def transform_objects(inputs):
         obj.scale.x *= obj_size
         obj.scale.y *= obj_size
         obj.scale.z *= obj_size
-        bpy.context.view_layer.update()                              
+        bpy.context.view_layer.update()
         # Rotate object so that "front" is aligned with X
         x_rot,y_rot,z_rot = rotations[obj_name.split('.')[0]][asset_name+'.obj']
         x_rot_rad = math.radians(x_rot)
@@ -252,7 +252,7 @@ def transform_objects(inputs):
         obj.rotation_euler[2] += z_rot_rad
         bpy.context.view_layer.update()
         reset_object_rotation(obj)
-        current_rotations[asset_name] = 0       
+        current_rotations[asset_name] = 0
     # Resize blinds and curtains to window
     for obj_name,properties in inputs.items():
         obj = properties['blender_obj']
@@ -261,7 +261,7 @@ def transform_objects(inputs):
         if obj_name=='curtain':
             # make curtains 5% larger than window
             obj.dimensions = inputs['window']['blender_obj'].dimensions*1.05
-        bpy.context.view_layer.update()        
+        bpy.context.view_layer.update()
     return current_rotations
 
 
@@ -287,8 +287,8 @@ def create_floor(name, x, y, width, depth):
     # Rescale and add some extra room around the objects
     floor.scale.x = width / 2 + 0.15
     floor.scale.y = depth / 2 + 0.15
-   
-    
+
+
 def create_walls_and_floor(min_x, max_x, min_y, max_y, floor_level, wall_height):
     walls = [
         create_wall("Left Wall", (min_x + max_x) / 2, max_y, floor_level, wall_height, max_x - min_x, 0.2),
@@ -321,9 +321,9 @@ def delete_closest_walls_to_camera(walls, count=2):
     cam = bpy.data.objects.get('Camera')
     if cam:
         sorted_walls = sorted(walls, key=lambda wall: (cam.location - wall.location).length)
-        for wall in sorted_walls[:count]:            
+        for wall in sorted_walls[:count]:
             bpy.data.objects.remove(wall, do_unlink=True)
-            
+
 
 def adjust_objects_to_floor():
     floor = bpy.data.objects.get('Floor')
@@ -366,14 +366,14 @@ def expand_floor(min=0.2,max=2):
 
     floor = bpy.data.objects['Floor']
     floor_centroid = get_centroid(floor)
-    
+
     scene_objects = bpy.context.scene.objects
-    objects = [obj for obj in scene_objects if "Wall" not in obj.name 
+    objects = [obj for obj in scene_objects if "Wall" not in obj.name
         and "Floor" not in obj.name and obj.type == 'MESH']
     room_blocking_objects = ['sofa', 'couch', 'bookcase', 'bed', 'night_stand',
         'bathtub','cabinet','closet','cupboard','desk','fridge','microwave_oven',
         'sink','toilet','tv','tv_stand']
-    
+
     # Determine the expansion for each side
     expansions = {
         'left': random.uniform(min, max),
@@ -396,12 +396,12 @@ def expand_floor(min=0.2,max=2):
                     expansions['front'] = 0
                 else:
                     expansions['back'] = 0
-    
-    # Ensure floor location is its centroid so below transformations apply correctly    
+
+    # Ensure floor location is its centroid so below transformations apply correctly
     make_centroid_the_object_location(floor)
     bpy.context.view_layer.update()
     bpy.ops.object.mode_set(mode='OBJECT')
-                    
+
     # Apply expansion to the floor by adjusting the dimensions (in meters)
     floor.dimensions.x += expansions['front'] + expansions['back']
     bpy.context.view_layer.update()
@@ -411,37 +411,37 @@ def expand_floor(min=0.2,max=2):
     bpy.context.view_layer.update()
     floor.location.y += (expansions['left']/2) - (expansions['right']/2)
     bpy.context.view_layer.update()
-    
+
     fit_walls_around_floor()
-      
-    return expansions  
+
+    return expansions
 
 
 ### FOR OBJECT ROTATION ADJUSTMENT
 
 def objects_back_against_nearest_wall(current_rotations):
-    
+
     # Separate walls and target objects
     scene_objects = bpy.context.scene.objects
     walls = [obj for obj in scene_objects if "Wall" in obj.name]
-    target_objects = [obj for obj in scene_objects if "Wall" not in obj.name 
+    target_objects = [obj for obj in scene_objects if "Wall" not in obj.name
         and "Floor" not in obj.name and obj.type == 'MESH']
 
     for obj in target_objects:
-        
+
         # Find the nearest wall to this object using centroids
         make_centroid_the_object_location(obj)
         nearest_wall = closest_object_to_point(obj.location, walls)
         make_centroid_the_object_location(nearest_wall)
-        
-        # Get the location and rotation of the object and the location of the nearest wall        
+
+        # Get the location and rotation of the object and the location of the nearest wall
         obj_loc_x, obj_loc_y = obj.location.x,obj.location.y
         wall_loc_x, wall_loc_y = nearest_wall.location.x,nearest_wall.location.y
-        obj_rot = current_rotations[obj.name]    
-        
+        obj_rot = current_rotations[obj.name]
+
         # Now it is safe to deselect object and wall
-        bpy.ops.object.select_all(action='DESELECT')   
-            
+        bpy.ops.object.select_all(action='DESELECT')
+
         # Find the correct rotation based on the nearest wall
         if 'front' in nearest_wall.name.lower():
             obj_desired_rot = 180
@@ -451,16 +451,16 @@ def objects_back_against_nearest_wall(current_rotations):
             obj_desired_rot = 270
         elif 'right' in nearest_wall.name.lower():
             obj_desired_rot = 90
-        obj1_required_rot = obj_desired_rot - obj_rot  
-          
-        # Rotate the object to the nearest 90 degree increment        
+        obj1_required_rot = obj_desired_rot - obj_rot
+
+        # Rotate the object to the nearest 90 degree increment
         obj.rotation_euler[2] += radians(obj1_required_rot)
         bpy.context.view_layer.update()
-        current_rotations[obj.name] = obj_desired_rot    
-            
+        current_rotations[obj.name] = obj_desired_rot
+
     # Make sure windows, curtains, and blinds are attached to the wall
     #adjust_windows_to_walls(chisel_walls=False)
-            
+
     return current_rotations
 
 
@@ -477,7 +477,7 @@ def rotate_object_pairs(current_rotations):
 
     object_pairs = {
         'front-any': [['chair', 'table'], ['chair', 'coffee_table'], ['chair', 'dining_table'],
-            ['sofa', 'coffee_table'], ['sofa', 'table'],['sofa_chair', 'coffee_table'], 
+            ['sofa', 'coffee_table'], ['sofa', 'table'],['sofa_chair', 'coffee_table'],
             ['sofa_chair', 'table']],
         'front-front': [['chair', 'desk'], ['office_chair', 'desk'], ['sofa', 'tv'],
             ['sofa', 'tv_stand'], ['sofa_chair', 'tv'], ['sofa_chair', 'tv_stand']]
@@ -499,7 +499,7 @@ def rotate_object_pairs(current_rotations):
             obj2_loc_x, obj2_loc_y = obj2.location.x,obj2.location.y
             obj1_rot = current_rotations[obj1.name]
             obj2_rot = current_rotations[obj2.name]
-            
+
             x_dist = abs(obj1_loc_x-obj2_loc_x)
             y_dist = abs(obj1_loc_y-obj2_loc_y)
 
@@ -509,27 +509,27 @@ def rotate_object_pairs(current_rotations):
                 obj1_desired_rot = 90 if obj1_loc_y<obj2_loc_y else 270
             else:
                 obj1_desired_rot = 0 if obj1_loc_x<obj2_loc_x else 180
-            obj1_required_rot = obj1_desired_rot - obj1_rot                    
-             
-            if rule == 'front-front':                   
+            obj1_required_rot = obj1_desired_rot - obj1_rot
+
+            if rule == 'front-front':
                 # Rotate obj2 to face obj1
                 if x_dist<y_dist:
                     obj2_desired_rot = 90 if obj2_loc_y<obj1_loc_y else 270
                 else:
                     obj2_desired_rot = 0 if obj2_loc_x<obj1_loc_x else 180
-                obj2_required_rot = obj2_desired_rot - obj2_rot             
+                obj2_required_rot = obj2_desired_rot - obj2_rot
 
             elif rule == 'front-any':
                 obj2_desired_rot = current_rotations[obj2.name]
-                obj2_required_rot = 0                     
-           
+                obj2_required_rot = 0
+
             obj1.rotation_euler[2] += radians(obj1_required_rot)
             bpy.context.view_layer.update()
             current_rotations[obj1.name] = obj1_desired_rot
             obj2.rotation_euler[2] += radians(obj2_required_rot)
             bpy.context.view_layer.update()
             current_rotations[obj2.name] = obj2_desired_rot
-    
+
     bpy.ops.object.select_all(action='DESELECT')
 
     return current_rotations
@@ -574,7 +574,7 @@ def is_indoors(obj, shift_vector=Vector((0, 0, 0))):
     # Get the bounding box corners
     bbox_corners = get_bbox_corners(obj)
     shifted_bbox_corners = [corner + shift_vector for corner in bbox_corners]
-    
+
     # Calculate the axis-aligned bounding box extents
     min_x = min(corner.x for corner in shifted_bbox_corners)
     max_x = max(corner.x for corner in shifted_bbox_corners)
@@ -673,11 +673,11 @@ def move_objects_apart(objA, objB, directions_to_skip={}):
     '''Move objA away from objB in the smallest direction that is still surrounded by walls'''
     # Find walls so we know our boundaries
     walls = [obj for obj in bpy.context.scene.objects if "Wall" in obj.name]
-    
+
     # Get bounding boxes of both objects
     bboxA = get_bbox_corners(objA)
     bboxB = get_bbox_corners(objB)
-    
+
     # Calculate the extremities of both objects
     minA_x, maxA_x = min(corner.x for corner in bboxA), max(corner.x for corner in bboxA)
     minA_y, maxA_y = min(corner.y for corner in bboxA), max(corner.y for corner in bboxA)
@@ -690,10 +690,10 @@ def move_objects_apart(objA, objB, directions_to_skip={}):
     shifts['back'] = maxA_x - minB_x + 0.01
     shifts['left'] = maxB_y - minA_y + 0.01
     shifts['right'] = maxA_y - minB_y + 0.01
-    
+
     # Sort shifts from smallest to largest
     shifts = dict(sorted(shifts.items(),key=lambda item: item[1]))
-    
+
     # Try shifting in only one direction, then break out of the loop
     continueLoop = True
     while continueLoop:
@@ -731,7 +731,7 @@ def move_objects_apart(objA, objB, directions_to_skip={}):
                 # All directions result in objA going outside of wall boundaries
                 print('expand')
                 expand_floor(0.2,0.3) # Expand out the walls again, but only slightly
-                
+
     bpy.context.view_layer.update()
 
 
@@ -740,7 +740,7 @@ def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_s
     # Define list of objects with surfaces
     surface_objs = ['bed','bookcase','cabinet','coffee_table','cupboard','desk','dining_table',
         'fridge','microwave_oven','night_stand','speaker','table','tv_stand']
-    
+
     # Define list of objects that always sit on the floor regardless of size
     ground_objs = ['bathtub','bed','bin','bookcase','boots','cabinet','chair','closet',
         'coffee_table','cupboard','desk','dining_table','dust_bin','fridge','lamp','light',
@@ -750,7 +750,7 @@ def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_s
     # Get object names from asset names
     objA_name = objA.name[:-5].lower()
     objB_name = objB.name[:-5].lower()
-    
+
     # Determine whether either object is a surface object
     objA_has_surface = objA_name in surface_objs
     objB_has_surface = objB_name in surface_objs
@@ -761,38 +761,38 @@ def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_s
     overlap_percentage = calculate_overlap_percentage(objA, objB)
     if overlap_percentage == 0:
         return  # No overlap, no action needed
-    
+
     print('---|',round(overlap_percentage,2))
     print('---|',directions_to_skip)
-    
-    # Mapping sizes to integers for comparison    
+
+    # Mapping sizes to integers for comparison
     rankA = SIZE_MAP[sizeA]
     rankB = SIZE_MAP[sizeB]
-    
+
     # Apply the rules based on size comparison
     if rankA < rankB and objB_has_surface and not objA_is_grounded:
-        # Move objA on top of objB 
+        # Move objA on top of objB
         move_obj_on_top(objA, objB)
         move_obj_to_fit_on_top(objA, objB)
     elif rankB < rankA and objA_has_surface and not objB_is_grounded:
-        # Move objB on top of objA 
+        # Move objB on top of objA
         move_obj_on_top(objB, objA)
         move_obj_to_fit_on_top(objB, objA)
     else:
         # Same size, grounded, or no surface
         # Move the smaller object away from the larger one
         if rankA <= rankB:
-            move_objects_apart(objA, objB, directions_to_skip) 
+            move_objects_apart(objA, objB, directions_to_skip)
         else:
             move_objects_apart(objB, objA, directions_to_skip)
     #bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     bpy.context.view_layer.update()
-    
-    
+
+
 def adjust_overlapping_objects(inputs):
     # Sort by size_cat, then by size - move largest objects first, then smaller ones
     sorted_objects = dict(
-        sorted(inputs.items(), 
+        sorted(inputs.items(),
         key=lambda item: (SIZE_MAP[item[1]['size']['category']])|int(item[1]['size']['diameter']*10000),
         reverse=True))
     # Store walls in a list
@@ -807,7 +807,7 @@ def adjust_overlapping_objects(inputs):
         pairs_checked = []
         for obj_nameA,valsA in sorted_objects.items():
             objA = valsA['blender_obj']
-            obj_size_catA = valsA['size']['category']            
+            obj_size_catA = valsA['size']['category']
             # Next, make sure object is not overlapping with any other object
             for obj_nameB,valsB in sorted_objects.items():
                 if obj_nameA==obj_nameB or {obj_nameA,obj_nameB} in pairs_checked:
@@ -825,17 +825,17 @@ def adjust_windows_to_walls(chisel_walls=True):
     # Separate walls and target objects
     scene_objects = bpy.context.scene.objects
     walls = [obj for obj in scene_objects if "Wall" in obj.name]
-    target_objects = [obj for obj in scene_objects 
+    target_objects = [obj for obj in scene_objects
         if obj.name.lower().split('_')[0] in ['window','blinds','curtain']]
 
     for obj in target_objects:
-        
+
         # Find the nearest wall to this object using centroids
         make_centroid_the_object_location(obj)
         nearest_wall = closest_object_to_point(obj.location, walls)
         make_centroid_the_object_location(nearest_wall)
-        bpy.ops.object.select_all(action='DESELECT') 
-            
+        bpy.ops.object.select_all(action='DESELECT')
+
         # Make sure windows, curtains, and blinds are attached to the wall
         obj_name = obj.name.lower().split('_')[0]
         slight_shift = 0.1 if obj_name=='window' else 0.17
@@ -852,7 +852,7 @@ def adjust_windows_to_walls(chisel_walls=True):
         bpy.context.view_layer.update()
         if chisel_walls:
             subtract_overlap(obj, nearest_wall)
-            bpy.context.view_layer.update()   
+            bpy.context.view_layer.update()
 
 
 ### FOR RENDERING
@@ -900,14 +900,14 @@ def add_light_to_lamps_and_windows(max_lum_lamp = 400, max_lum_window=75):
     lights = []
     for lamp in lamps:
         location = Vector(list(lamp.location)[:2]+[lamp.location[2]*2+4])
-        bpy.ops.object.light_add(type='SPOT', radius=0.35, align='WORLD', 
+        bpy.ops.object.light_add(type='SPOT', radius=0.35, align='WORLD',
                                  location=location, scale=(1, 1, 1))
         light_object = bpy.context.active_object
         light_object.name=lamp.name+'.Light'
         light_object.data.energy = max_lum_lamp
         bpy.context.view_layer.update()
         lights.append(light_object)
-        
+
     windows = [o for o in bpy.context.scene.objects if 'window' in o.name.lower()]
     walls =[o for o in bpy.context.scene.objects if 'wall' in o.name.lower()]
     for window in windows:
@@ -925,7 +925,7 @@ def add_light_to_lamps_and_windows(max_lum_lamp = 400, max_lum_window=75):
             rotation = Vector((radians(-60),0,0))
         elif 'right' in nearest_wall.name.lower():
             location.y += slight_shift
-            rotation = Vector((radians(60),0,0))  
+            rotation = Vector((radians(60),0,0))
         location.z += window.dimensions.z/2
         bpy.ops.object.light_add(type='AREA', align='WORLD',location=location,rotation=rotation)
         light_object = bpy.context.active_object
@@ -941,10 +941,10 @@ def add_light_to_lamps_and_windows(max_lum_lamp = 400, max_lum_window=75):
         bpy.context.view_layer.update()
         lights.append(light_object)
     return lights, max_lum_lamp, max_lum_window
-        
-            
 
-def focus_walls_floor(focus_point,colors): 
+
+
+def focus_walls_floor(focus_point,colors):
     scene_objects = bpy.context.scene.objects
     walls_floor = [obj for obj in scene_objects if "Wall" in obj.name]+[bpy.data.objects['Floor']]
     for obj in walls_floor:
@@ -1007,26 +1007,26 @@ def focus_walls_floor(focus_point,colors):
 def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,colors,lights,max_lum_lamp,max_lum_window):
     # Determine 8-bit depth values
     curr_index = assets_in_order.index(current)
-    t = curr_frame/total_frames # Used below to adjust focus point and object alpha        
-    depths = [i+8-curr_index if i<curr_index else 0 if i==curr_index else -1 for i in range(len(assets_in_order))]    
+    t = curr_frame/total_frames # Used below to adjust focus point and object alpha
+    depths = [i+8-curr_index if i<curr_index else 0 if i==curr_index else -1 for i in range(len(assets_in_order))]
     # Determine alpha values
-    depth_alpha_map = {2:0.03,3:0.05,4:0.1,5:0.2,6:0.35,7:0.5,0:1,-1:0,1:0.03} 
+    depth_alpha_map = {2:0.03,3:0.05,4:0.1,5:0.2,6:0.35,7:0.5,0:1,-1:0,1:0.03}
     aord = list(depth_alpha_map.values())[::-1]
-    alphas = [depth_alpha_map[d] for d in depths]    
+    alphas = [depth_alpha_map[d] for d in depths]
     alphas = [a + t * (aord[(aord.index(a)+1)%len(aord)] - aord[aord.index(a)]) if a!=0 or i==alphas.index(1)+1 else 0 for i,a in enumerate(alphas)]
     # Get the current focus object
     focus_obj = bpy.data.objects[os.path.splitext(current)[0]]
-    focus_obj_loc = get_centroid(focus_obj)    
+    focus_obj_loc = get_centroid(focus_obj)
     # Get the next focus object
     next_obj_name = assets_in_order[(curr_index+1)%len(assets_in_order)]
     next_obj = bpy.data.objects[os.path.splitext(next_obj_name)[0]]
-    next_obj_loc = get_centroid(next_obj)    
-    # Calculate focus point location    
-    ## Curr_frame/total_frames (t) = the fraction of the way between 
-    ## the current focus object and the next one    
-    focus_point = focus_obj_loc + t * (next_obj_loc - focus_obj_loc)  
+    next_obj_loc = get_centroid(next_obj)
+    # Calculate focus point location
+    ## Curr_frame/total_frames (t) = the fraction of the way between
+    ## the current focus object and the next one
+    focus_point = focus_obj_loc + t * (next_obj_loc - focus_obj_loc)
     # Make walls and floor most opaque around the focus object
-    focus_walls_floor(focus_point,colors)        
+    focus_walls_floor(focus_point,colors)
     # Point camera at focus point
     camera = bpy.data.objects['Camera']
     look_at(camera,focus_point)
@@ -1034,7 +1034,7 @@ def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,col
     apply_colors_to_objects(colors)
     for i, obj_name in enumerate(assets_in_order):
         # Ensure your object is selected and active
-        obj = bpy.data.objects[os.path.splitext(obj_name)[0]]        
+        obj = bpy.data.objects[os.path.splitext(obj_name)[0]]
         # Check if the object has a material, if not, create one
         mat = obj.data.materials[0] if obj.data.materials else bpy.data.materials.new(name=f"{obj.name}_material")
         obj.data.materials.append(mat) if not obj.data.materials else None
@@ -1053,8 +1053,8 @@ def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,col
         # Connect the shader to the output
         links.new(shader_node.outputs['BSDF'], output_node.inputs['Surface'])
         # Assign color
-        color = colors[obj_name]       
-        # Adjust the alpha value to change opacity, where 0 is fully transparent and 1 is fully 
+        color = colors[obj_name]
+        # Adjust the alpha value to change opacity, where 0 is fully transparent and 1 is fully
         ## Reasonable mapping from octree depth (8-bit effect) to opacity value:
         ## 3: 0.03, 4: 0.05, 5: 0.1, 6: 0.2, 7: 0.35, 8: 0.5
         ## NOTE: Adjusted for partial transparency for frames in between two objects
@@ -1066,7 +1066,7 @@ def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,col
         mat.shadow_method = 'HASHED'
         # Adjust lamp lighting and window
         if obj_name.lower()[:4]=='lamp' or obj_name.lower()[:4]=='window':
-            light_object = [l for l in lights if obj_name in l.name]            
+            light_object = [l for l in lights if obj_name in l.name]
             if light_object:
                 light_object = light_object[0]
                 max_lum = max_lum_lamp if 'lamp' in obj_name.lower() else max_lum_window
@@ -1090,7 +1090,7 @@ def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,col
 
 
 def apply_colors_to_objects(colors):
-    scene_objects = bpy.context.scene.objects   
+    scene_objects = bpy.context.scene.objects
     walls_colors = {obj.name:colors['wall'] for obj in scene_objects if "wall" in obj.name.lower()}
     floor_colors = {obj.name:colors['floor'] for obj in scene_objects if "floor" in obj.name.lower()}
     colors.update(walls_colors)
@@ -1123,27 +1123,27 @@ def apply_colors_to_objects(colors):
 with open(f'output/11/00_blender_inputs.json','rb') as f:
     inputs = json.load(f)
 '''
-           
+
 ## MAIN FUNCTION
 
 def visualize(inputs):
     '''Create 3D renderings of the objects at the given inputs
     inputs: a dictionary of final object locations
     output: PNG file of the 3D scene in the output folder'''
-    
+
     bpy.context.view_layer.update()
     og_inputs, inputs, params = load_variables(inputs)
 
     #-----------------------
     # Place and adjust objects, and create a room around them
     inputs,params = load_assets(inputs,params)
-    
+
     ## Get object/wall/floor colors into one dictionary and normalize to 0-1 scale
     colors = {
-        vals['asset_name'] if 'asset_name' in vals else obj_name.lower():Vector(vals['color'])/255 
+        vals['asset_name'] if 'asset_name' in vals else obj_name.lower():Vector(vals['color'])/255
         for obj_name,vals in dict(inputs,**params).items()}
 
-    # Make all objects uniform size    
+    # Make all objects uniform size
     resize_objects_to_unit_scale()
 
     # Place loaded assets to their correct location, rotation, and size
@@ -1160,7 +1160,7 @@ def visualize(inputs):
     # Rotate objects to face the middle of the room
     current_rotations = objects_back_against_nearest_wall(current_rotations)
 
-    # Rotate pairs of objects to face each other correctly    
+    # Rotate pairs of objects to face each other correctly
     current_rotations = rotate_object_pairs(current_rotations)
 
     # Translate overlapping objects
@@ -1172,11 +1172,11 @@ def visualize(inputs):
     # Add light for any lamps, if present
     lights, max_lum_lamp, max_lum_window = add_light_to_lamps_and_windows()
 
-    #-----------------------    
+    #-----------------------
     # Imagination Sequence
-    
+
     output = [] # Create a list for output
-    
+
     ## Set up rendering engine and camera
     bpy.context.scene.render.engine = 'BLENDER_EEVEE'
     bpy.data.cameras['Camera'].type = 'ORTHO'
@@ -1188,12 +1188,12 @@ def visualize(inputs):
     # Determine output folder
     curr_out_folder = generate_next_output_folder()
 
-    # Render a bird's eye view before transparency and 8-bit effects applied   
+    # Render a bird's eye view before transparency and 8-bit effects applied
     take_snapshot_from_above(f'output/{curr_out_folder}/01_birds_eye_view.png')
-    
+
     # Save original inputs as JSON
     json.dump(og_inputs,open(f'output/{curr_out_folder}/00_blender_inputs.json','w'))
-        
+
     ## Add walls and floor data to output
     # This is done before we delete the closest walls to camera so all 4 walls are included
     scene_objects = bpy.context.scene.objects
@@ -1217,7 +1217,7 @@ def visualize(inputs):
         'rot_x':rx,'rot_y':ry,'rot_z':rz,
         'dim_x':sx,'dim_y':sy,'dim_z':sz,
         'sizecat':'xlarge'})
-    
+
     ## Add camera data to output
     camera = bpy.data.objects['Camera']
     output.append({
@@ -1233,18 +1233,18 @@ def visualize(inputs):
         'rot_z':degrees(camera.rotation_euler.z),
         'dim_x':0,'dim_y':0,'dim_z':0,
         'sizecat':''})
-        
+
     ## Delete walls closest to the camera for better visibility inside the room
     delete_closest_walls_to_camera(walls)
-        
+
     ## Randomly shuffle objects to simulate different order of "imagining" items
     objects_in_order = [obj_name for obj_name in inputs.keys()]
     random.shuffle(objects_in_order)
-    assets_in_order = [inputs[obj_name]['asset_name'] for obj_name in objects_in_order]    
-    
+    assets_in_order = [inputs[obj_name]['asset_name'] for obj_name in objects_in_order]
+
     filename = '-'.join([o.split('.')[0] for o in objects_in_order])
-        
-    fpo = 4 # frames per object    
+
+    fpo = 4 # frames per object
     for obj_i,asset_name in enumerate(assets_in_order):
         obj_name = objects_in_order[obj_i]
         for i in range(fpo):
@@ -1252,9 +1252,9 @@ def visualize(inputs):
             change_imagination_focus(asset_name,assets_in_order,i,fpo,colors,lights,max_lum_lamp,max_lum_window)
             # If it's the first frame of final object
             if obj_i==len(assets_in_order)-1 and i==0:
-                # Render a final bird's eye view of the imagined scene   
+                # Render a final bird's eye view of the imagined scene
                 take_snapshot_from_above(f'output/{curr_out_folder}/02_birds_eye_view.png')
-            # Render/save snapshots for gif animation            
+            # Render/save snapshots for gif animation
             filepath = generateFileName(f'output/{curr_out_folder}/{filename}_0001.png')
             bpy.data.scenes['Scene'].render.filepath = filepath
             bpy.ops.render.render(write_still=True)
@@ -1297,8 +1297,8 @@ def visualize(inputs):
         for material in bpy.data.materials:
             bpy.data.materials.remove(material)
         bpy.context.view_layer.update()
-    
-    ## Print output to return it to triggering script        
+
+    ## Print output to return it to triggering script
     result_dict = {
         "status": "success",
         "path": os.path.join(os.getcwd(),'output',curr_out_folder),
@@ -1306,7 +1306,7 @@ def visualize(inputs):
         "data": output}
     result_json = json.dumps(result_dict)
     print(result_json) # Print the JSON string to stdout
-    
+
 
 if __name__=="__main__":
 

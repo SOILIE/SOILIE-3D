@@ -1,5 +1,5 @@
-''' VISUO 3D
-    v.24.04.14
+''' SOILIE 3D
+    v.24.07.05
     Written by Mike Cichonski
     With contributions from Tae Burque
     for the Science of Imagination Laboratory
