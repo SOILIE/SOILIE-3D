@@ -174,17 +174,3 @@ def generate_per_frame_point_clouds(dataset='washington',scene='scene_01',cumula
         if not cumulative or progress==total:
             plt.close()
     progress_bar.update(progress,total,suffix=' '*22)
-
-'''
-Plan (Dec2023/Jan2024)
-1. Check if diagnostics are good for washington
-2. If not good, fix extrinsics issues using washington. Else, move to step 3
-3. Try slightly earlier extrinsics files (not latest) for SUN3D.
-4. Check if same issue exists in other SUN3D scenes
-5. Determine if it is worth running the bundle adjustment code if it means better 3d scene reconsctruction
-    - Will this give us better extrinsics as output?
-6. If world coordinates turn out to be too difficult to consolidate across frames, explore option of using only camera coordinates
-'''
-
-#generate_per_frame_point_clouds()
-#generate_per_frame_point_clouds(dataset='princeton',scene='hotel_umd/maryland_hotel3',cumulative=False,plot=3)
