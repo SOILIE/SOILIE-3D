@@ -8,4 +8,4 @@ archives/*
 papers/*
 *blend1
 *_test*
-requirements_all.txt
+misc/*
