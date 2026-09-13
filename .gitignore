@@ -9,3 +9,6 @@ papers/*
 *blend1
 *_test*
 misc/*
+.codex/
+__pycache__/
+*.pyc

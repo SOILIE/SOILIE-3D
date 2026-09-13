@@ -1,0 +1,14 @@
+**/__pycache__
+**/*.pyc
+.git
+.gitignore
+.codex/*
+!.codex/runtime/
+!.codex/runtime/**
+assets
+data
+json
+modules
+output
+papers
+*.blend

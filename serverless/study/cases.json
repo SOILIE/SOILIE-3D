@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 3,
+  "studyVersion": "prepared-v3",
+  "collectionEnabled": false,
+  "status": "Protocol prepared; exact V4 and baseline stimuli are not yet frozen, and no participant responses are being accepted.",
+  "primaryQuestion": "Which arrangement looks more plausible as an indoor scene?",
+  "secondaryMeasures": [
+    "obvious collision, unsupported-object, or boundary error",
+    "confidence from 1 to 5",
+    "optional short rationale"
+  ],
+  "plannedConditions": [
+    {
+      "id": "soilie-v4-exact",
+      "description": "The original SOILIE-3D V4 pipeline and original V4 camera/recency implementation."
+    },
+    {
+      "id": "layoutgpt-official",
+      "description": "Official released LayoutGPT output selected under a preregistered matching rule."
+    },
+    {
+      "id": "grains-official",
+      "description": "Author-released GRAINS output, if licensing and matched stimulus construction are feasible."
+    },
+    {
+      "id": "infinigen-indoors-official",
+      "description": "Author-released Infinigen Indoors output, if licensing and matched stimulus construction are feasible."
+    }
+  ],
+  "controls": {
+    "methodLabelsHidden": true,
+    "leftRightAssignment": "deterministic HMAC-balanced assignment per participant and case",
+    "presentation": "same display size and neutral page chrome; native output differences are documented rather than silently normalized",
+    "analysis": "report condition-level choice proportions with confidence intervals; keep secondary error and confidence measures separate"
+  },
+  "cases": []
+}

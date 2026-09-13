@@ -1,0 +1,4 @@
+# Keep the serverless adapter portable without rewriting the original V4 files.
+.dockerignore text eol=lf
+modules/room_fit.py text eol=lf
+serverless/** text eol=lf

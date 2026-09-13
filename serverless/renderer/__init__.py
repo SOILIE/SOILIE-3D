@@ -1,0 +1,1 @@
+"""Queued Blender renderer Lambda."""

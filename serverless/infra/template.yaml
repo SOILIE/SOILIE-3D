@@ -1,0 +1,444 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SOILIE-3D asynchronous public research renderer
+
+Parameters:
+  ApiImageUri:
+    Type: String
+  RendererImageUri:
+    Type: String
+  VisitorHmacSecret:
+    Type: String
+    NoEcho: true
+
+Resources:
+  JobTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: soilie3d-generation-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: SOILIE-3D
+
+  GalleryAuthBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub soilie3d-gallery-auth-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      Tags:
+        - Key: Project
+          Value: SOILIE-3D
+        - Key: DataClassification
+          Value: Private
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: soilie3d-generation-dlq
+      MessageRetentionPeriod: 604800
+      SqsManagedSseEnabled: true
+
+  GenerationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: soilie3d-generation-queue
+      VisibilityTimeout: 5400
+      MessageRetentionPeriod: 86400
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 2
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: soilie3d-api-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: soilie3d-api-data
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:Query
+                Resource: !GetAtt JobTable.Arn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt GenerationQueue.Arn
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - arn:aws:s3:::soilie3d-data/generated/*
+                  - arn:aws:s3:::soilie3d-data/gallery/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub ${GalleryAuthBucket.Arn}/*
+              - Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/E233HJHDZKRH4
+
+  RendererRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: soilie3d-renderer-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: soilie3d-renderer-data
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource: !GetAtt JobTable.Arn
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: arn:aws:s3:::soilie3d-data/generated/*
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt GenerationQueue.Arn
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: soilie3d-api
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ApiImageUri
+      Architectures: [x86_64]
+      MemorySize: 512
+      Timeout: 15
+      ReservedConcurrentExecutions: 4
+      Role: !GetAtt ApiRole.Arn
+      Environment:
+        Variables:
+          JOB_TABLE: !Ref JobTable
+          QUEUE_URL: !Ref GenerationQueue
+          VISITOR_HMAC_SECRET: !Ref VisitorHmacSecret
+          RUNTIME_DB: /var/task/runtime/relations.sqlite3
+          OUTPUT_BUCKET: soilie3d-data
+          OUTPUT_BASE_URL: https://soilie3d.com/data
+          DISTRIBUTION_ID: E233HJHDZKRH4
+          GALLERY_AUTH_BUCKET: !Ref GalleryAuthBucket
+          STUDY_COLLECTION_ENABLED: "false"
+      Tags:
+        - Key: Project
+          Value: SOILIE-3D
+
+  RendererFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: soilie3d-renderer
+      PackageType: Image
+      Code:
+        ImageUri: !Ref RendererImageUri
+      Architectures: [x86_64]
+      # Blender scales well with Lambda's proportional CPU allocation. The
+      # original 4 GiB setting exceeded the 15-minute limit in live testing;
+      # Maximum CPU allocation plus remesh-cache preservation keeps full
+      # still-plus-animation jobs inside the timing gate.
+      MemorySize: 10240
+      Timeout: 900
+      ReservedConcurrentExecutions: 2
+      EphemeralStorage:
+        Size: 10240
+      Role: !GetAtt RendererRole.Arn
+      Environment:
+        Variables:
+          JOB_TABLE: !Ref JobTable
+          OUTPUT_BUCKET: soilie3d-data
+          OUTPUT_BASE_URL: https://soilie3d.com/data
+          V4_RUNTIME_DIR: /var/task/v4
+          BLENDER_PATH: /opt/blender/blender
+      Tags:
+        - Key: Project
+          Value: SOILIE-3D
+
+  RendererEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt GenerationQueue.Arn
+      FunctionName: !Ref RendererFunction
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      Enabled: true
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: soilie3d-engine-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - https://soilie3d.com
+          - https://www.soilie3d.com
+        AllowMethods: [GET, POST, DELETE, OPTIONS]
+        AllowHeaders: [content-type]
+        MaxAge: 86400
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 15000
+
+  CatalogRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /catalog
+      Target: !Sub integrations/${ApiIntegration}
+
+  CreateGenerationRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /generations
+      Target: !Sub integrations/${ApiIntegration}
+
+  GetGenerationRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /generations/{jobId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  GalleryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /gallery
+      Target: !Sub integrations/${ApiIntegration}
+
+  RetentionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /generations/{jobId}/scenes/{sceneNumber}/retention
+      Target: !Sub integrations/${ApiIntegration}
+
+  DeleteGalleryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: DELETE /gallery/{galleryId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  CreateStudySessionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /study/sessions
+      Target: !Sub integrations/${ApiIntegration}
+
+  ResumeStudySessionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /study/sessions/{sessionId}
+      Target: !Sub integrations/${ApiIntegration}
+
+  SaveStudyResponseRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /study/sessions/{sessionId}/responses
+      Target: !Sub integrations/${ApiIntegration}
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/apigateway/soilie3d-engine-api
+      RetentionInDays: 14
+
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/soilie3d-api
+      RetentionInDays: 14
+
+  RendererLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/soilie3d-renderer
+      RetentionInDays: 14
+
+  ApiLogResourcePolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: soilie3d-api-gateway-logs
+      PolicyDocument: !Sub |
+        {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"apigateway.amazonaws.com"},"Action":["logs:CreateLogStream","logs:PutLogEvents"],"Resource":"arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/soilie3d-engine-api:*"}]}
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    DependsOn:
+      - CatalogRoute
+      - CreateGenerationRoute
+      - GetGenerationRoute
+      - GalleryRoute
+      - RetentionRoute
+      - DeleteGalleryRoute
+      - CreateStudySessionRoute
+      - ResumeStudySessionRoute
+      - SaveStudyResponseRoute
+      - ApiLogResourcePolicy
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 3
+      AccessLogSettings:
+        DestinationArn: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/soilie3d-engine-api
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency"}'
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+
+  DeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: soilie3d-renderer-dead-letter-messages
+      AlarmDescription: SOILIE rendering jobs require inspection.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  RendererErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: soilie3d-renderer-errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RendererFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  RendererThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: soilie3d-renderer-throttles
+      AlarmDescription: Rendering work is being throttled beyond the bounded queue design.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RendererFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  RendererDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: soilie3d-renderer-duration-headroom
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref RendererFunction
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 720000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiEndpoint:
+    Value: !GetAtt HttpApi.ApiEndpoint
+  JobTableName:
+    Value: !Ref JobTable
+  GenerationQueueUrl:
+    Value: !Ref GenerationQueue
+  GalleryAuthBucketName:
+    Value: !Ref GalleryAuthBucket
