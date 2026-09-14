@@ -36,6 +36,15 @@ def stages(args):
                                  '--replays',args.output/'soilie-support','--output',args.output/'soilie-support/parity.json')),
         ('infinigen-preflight', python('run_infinigen', *indoors, '--output', run, '--per-room', 20, '--max-attempts', 1)),
         ('infinigen-preflight-export', python('import_infinigen', *indoors, '--run', run, '--output', imported)),
+        ('diversity-plan', python('diversity','--runtime',args.runtime,'--plan',args.output/'soilie-diversity-plan.json')),
+        ('diversity-placements', python('run_batch',*common,'--output',args.output/'soilie-diversity',
+                                      '--request-plan',args.output/'soilie-diversity-plan.json')),
+        ('diversity-export', python('diversity','--plan',args.output/'soilie-diversity-plan.json',
+                                  '--run',args.output/'soilie-diversity','--output',args.output/'soilie-diversity-measured.json')),
+        ('support-mesh-v2', python('run_batch',*common,'--output',args.output/'soilie-support-mesh-v2',
+                                  '--target',10000,'--seed',20260913,'--max-attempts',40,'--support')),
+        ('support-mesh-v2-parity',python('support_replays','--baseline',args.output/'soilie-bedroom',
+                                      '--replays',args.output/'soilie-support-mesh-v2','--output',args.output/'soilie-support-mesh-v2/parity.json')),
         ('living-room', python('run_batch', *common, '--output', args.output/'soilie-living-room',
                               '--target', 200, '--seed', 30260913, '--room-type', 'living_room')),
         ('bedroom-10000', python('run_batch', *common, '--output', args.output/'soilie-bedroom',
@@ -108,17 +117,21 @@ def main():
     parser.add_argument('--infinigen-blender', type=Path, required=True)
     parser.add_argument('--infinigen-packages', type=Path, required=True)
     parser.add_argument('--output', type=Path, default=ROOT/'.codex/benchmark')
+    parser.add_argument('--handoff-after-stage',type=int,help='Linux PID of an owned older controller; let its current child finish before replacing its queued plan')
     args = parser.parse_args()
     if os.name != 'posix':
         raise RuntimeError('Run this local campaign from the benchmark Linux/WSL environment')
     def interrupted(signum, frame):
         raise KeyboardInterrupt('Campaign interrupted')
     signal.signal(signal.SIGTERM, interrupted)
-    for name in vars(args):
+    for name in ('runtime','blender','infinigen','infinigen_blender','infinigen_packages','output'):
         setattr(args,name,getattr(args,name).resolve())
     if not args.output.is_relative_to(ROOT/'.codex'):
         raise ValueError('Campaign output must stay under the backend project .codex directory')
     directory = args.output/'campaign'
+    if args.handoff_after_stage:
+        from serverless.benchmark.handoff import after_stage
+        after_stage(args.handoff_after_stage, ROOT, directory/'plan-handoff.json')
     with run_lock(directory):
         wait_for_existing_run(args.output/'infinigen-original')
         for name, command in stages(args):

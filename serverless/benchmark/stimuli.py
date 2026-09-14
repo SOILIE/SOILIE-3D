@@ -84,7 +84,7 @@ def diagram(scene, highlight_ids=frozenset()):
     return "\n".join(lines)
 
 
-def select_pairs(rows, seed=SEED, limit=12):
+def select_pairs(rows, seed=SEED, limit=12, previous_protocols=()):
     grouped = defaultdict(lambda:defaultdict(list))
     for row in rows:
         scene = row["scene"]
@@ -94,11 +94,18 @@ def select_pairs(rows, seed=SEED, limit=12):
         grouped[scene["model"]][key].append(scene)
     selected = []
     for baseline in ("layoutgpt","infinigen"):
+        used_left, used_right = set(), set()
+        for protocol in previous_protocols:
+            conditions = {case['id']:case['comparisonCondition'] for case in protocol['cases']}
+            for prior in protocol['stimulusEvidence']:
+                if conditions[prior['caseId']] == baseline:
+                    used_left.add(prior['soilieScene'])
+                    used_right.add(prior['baselineScene'])
         candidates = []
         randomizer = random.Random(f"{seed}:{baseline}")
         for key in sorted(set(grouped["soilie"]) & set(grouped[baseline])):
-            left = sorted(grouped["soilie"][key],key=lambda scene:scene["id"])
-            right = sorted(grouped[baseline][key],key=lambda scene:scene["id"])
+            left = sorted((scene for scene in grouped["soilie"][key] if scene['id'] not in used_left),key=lambda scene:scene["id"])
+            right = sorted((scene for scene in grouped[baseline][key] if scene['id'] not in used_right),key=lambda scene:scene["id"])
             randomizer.shuffle(left)
             randomizer.shuffle(right)
             candidates.extend((key,a,b) for a,b in zip(left,right))
@@ -107,10 +114,10 @@ def select_pairs(rows, seed=SEED, limit=12):
     return selected
 
 
-def freeze(rows, output, protocol_path, seed=SEED, limit=12):
+def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=()):
     cases, evidence = [], []
     output.mkdir(parents=True,exist_ok=True)
-    for baseline,key,a,b in select_pairs(rows,seed,limit):
+    for baseline,key,a,b in select_pairs(rows,seed,limit,previous_protocols):
         pair_id = digest([a,b])[:20]
         paths = []
         for scene in (a,b):
@@ -134,6 +141,9 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12):
                             "cohortSceneIdsSha256":digest(sorted(row["scene"]["id"] for row in rows)),
                             "scope":"Completed scenes available in this frozen snapshot, not subsequent benchmark completions"},
                 "stimulusEvidence":evidence}
+    if previous_protocols:
+        document['sampling']['excludedPriorStudyVersions'] = sorted(protocol['studyVersion'] for protocol in previous_protocols)
+        document['sampling']['noSceneReuseAcrossWavesWithinBaseline'] = True
     if protocol_path.exists():
         previous = json.loads(protocol_path.read_text())
         if previous.get("pilotCollectionEnabled") and previous != document:
@@ -148,8 +158,11 @@ def main():
     parser.add_argument("--measurements",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
     parser.add_argument("--protocol",type=Path,required=True)
+    parser.add_argument("--limit",type=int,default=12)
+    parser.add_argument("--exclude-protocol",type=Path,nargs="*",default=[])
     args = parser.parse_args()
-    result = freeze(json.loads(args.measurements.read_text())["rows"],args.output,args.protocol)
+    result = freeze(json.loads(args.measurements.read_text())["rows"],args.output,args.protocol,
+                    limit=args.limit,previous_protocols=[json.loads(path.read_text()) for path in args.exclude_protocol])
     print(json.dumps({"studyVersion":result["studyVersion"],"cases":len(result["cases"])}))
 
 

@@ -85,6 +85,8 @@ def main():
         # Every explicitly requested run must exist. A path typo must not
         # silently remove a workload from the comparison or failure totals.
         config = json.loads((folder/"run.json").read_text())
+        if config.get('cohort') == 'diversity':
+            raise ValueError('Exploration inputs cannot enter the controlled benchmark comparison')
         if config.get("full"):
             raise ValueError("Full-render parity runs cannot enter placement-only timing results")
         batch = [json.loads(path.read_text()) for path in sorted(folder.glob("attempt-*.json"))]

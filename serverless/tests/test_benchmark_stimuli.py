@@ -35,6 +35,17 @@ class StimulusTests(unittest.TestCase):
         self.assertIn("Oblique view",svg)
         self.assertNotIn("soilie",svg)
 
+    def test_new_wave_never_reuses_prior_scenes(self):
+        rows = [fixture(model,i) for model in ('soilie','layoutgpt') for i in range(20)]
+        first = select_pairs(rows)
+        prior = {'cases':[{'id':str(i),'comparisonCondition':pair[0]} for i,pair in enumerate(first)],
+                 'stimulusEvidence':[{'caseId':str(i),'soilieScene':pair[2]['id'],'baselineScene':pair[3]['id']}
+                                     for i,pair in enumerate(first)]}
+        second = select_pairs(rows,limit=50,previous_protocols=[prior])
+        self.assertEqual(8,len(second))
+        self.assertFalse({row[2]['id'] for row in first} & {row[2]['id'] for row in second})
+        self.assertFalse({row[3]['id'] for row in first} & {row[3]['id'] for row in second})
+
 
 class ExportTests(unittest.TestCase):
     setUp = study_tests.StudyServiceTests.setUp

@@ -18,11 +18,13 @@ class CampaignTests(unittest.TestCase):
         args = argparse.Namespace(runtime=Path('/runtime'),blender=Path('/blender'),infinigen=Path('/infinigen'),
                                   infinigen_blender=Path('/original-blender'),infinigen_packages=Path('/packages'),output=Path('/output'))
         plan = stages(args)
-        self.assertEqual(['support-replays','support-parity','infinigen-preflight','infinigen-preflight-export','living-room',
+        self.assertEqual(['support-replays','support-parity','infinigen-preflight','infinigen-preflight-export',
+                          'diversity-plan','diversity-placements','diversity-export','support-mesh-v2','support-mesh-v2-parity','living-room',
                           'bedroom-10000','infinigen-40','infinigen-final-export'],[row[0] for row in plan])
         self.assertIn('--support',plan[0][1])
         self.assertEqual('40',plan[0][1][-2])
-        self.assertIn('10000',plan[5][1])
+        self.assertIn('10000',dict(plan)['bedroom-10000'])
+        self.assertIn('--request-plan',dict(plan)['diversity-placements'])
         self.assertNotIn('fast_solve',str(plan))
         self.assertNotIn('deploy',str(plan))
         self.assertNotIn('publish_comparison',str(plan))

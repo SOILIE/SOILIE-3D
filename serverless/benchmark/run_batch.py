@@ -100,6 +100,7 @@ def worker(args):
 
 def batch(args):
     args.output.mkdir(parents=True, exist_ok=True)
+    plan = load_request_plan(args.request_plan) if args.request_plan else None
     manifest = args.output/"run.json"
     config = {"schemaVersion": 1, "model": "soilie", "runtime": str(args.runtime), "seed": args.seed,
               "roomType": args.room_type, "allowDuplicates": not args.no_duplicates, "objectCounts": [args.object_count] if args.object_count else [3,4,5,6],
@@ -107,6 +108,11 @@ def batch(args):
               "full": args.full, "support": args.support, "pythonVersion": platform.python_version(),
               "hardware": platform.platform(), "cpu": platform.processor(), "cpuThreadsAvailable": os.cpu_count(),
               "roomFitIncluded": False, "provenance": json.loads((args.runtime/"v4-provenance.json").read_text())}
+    if plan:
+        # A distinct finite exploration workload, never mixed into the fixed
+        # bedroom throughput run. Hash the inputs, not a machine-specific path.
+        config.update(cohort='diversity', requestPlanSha256=hashlib.sha256(args.request_plan.read_bytes()).hexdigest(),
+                      plannedAttempts=len(plan), targetCompletions=len(plan),roomType='mixed',allowDuplicates='per-request')
     if manifest.exists():
         previous = json.loads(manifest.read_text())
         if previous != config:
@@ -116,7 +122,7 @@ def batch(args):
     rows = checkpoint_rows(args.output)
     completed = sum(row["status"] == "complete" for row in rows)
     attempted = len(rows)
-    while completed < args.target and (not args.max_attempts or attempted < args.max_attempts):
+    while (attempted < len(plan) if plan else completed < args.target) and (not args.max_attempts or attempted < args.max_attempts):
         if shutil.disk_usage(args.output).free < 15*1024**3:
             raise RuntimeError("Paused before disk space falls below 15 GiB; checkpoint is resumable")
         index = attempted
@@ -125,7 +131,7 @@ def batch(args):
             # Only the exact interrupted attempt directory owned by this run.
             shutil.rmtree(work)
         work.mkdir()
-        request = {"mode": "room_type", "roomType": args.room_type, "objectCount": args.object_count or 3+index%4,
+        request = dict(plan[index]) if plan else {"mode": "room_type", "roomType": args.room_type, "objectCount": args.object_count or 3+index%4,
                    "seed": args.seed+index*997, "allowDuplicates": not args.no_duplicates,
                    "sameObjectsAcrossScenes": True}
         write_json(work/"request.json", request)
@@ -136,8 +142,12 @@ def batch(args):
         if args.support:
             command.append("--support")
         started = time.perf_counter()
-        row = {"id": f"soilie-{args.room_type}-{request['seed']}", "attempt": index, "request": request,
+        room_type = request.get('roomType', 'unspecified')
+        identity = f"soilie-diversity-{index:05d}-{request['seed']}" if plan else f"soilie-{args.room_type}-{request['seed']}"
+        row = {"id": identity, "attempt": index, "request": request,
                "startedAt": datetime.now(UTC).isoformat(), "status": "failed"}
+        if plan:
+            row['cohort'] = 'diversity'
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = "0"
         environment.pop("SOILIE_ROOM_REQUEST", None)
@@ -153,7 +163,9 @@ def batch(args):
                     row["status"] = "complete"
                     row.pop("errorCode", None)
                     for stage in row["stages"].values():
-                        stage.update({"id": row["id"], "model": "soilie", "roomType": args.room_type})
+                        stage.update({"id": row["id"], "model": "soilie", "roomType": room_type})
+                        if plan:
+                            stage['cohort'] = 'diversity'
                     completed += 1
             except subprocess.TimeoutExpired:
                 terminate_tree(process)
@@ -179,6 +191,35 @@ def batch(args):
             shutil.rmtree(work)
 
 
+def load_request_plan(path):
+    document = json.loads(path.read_text())
+    rows = document.get('requests')
+    if document.get('schemaVersion') != 1 or document.get('cohort') != 'diversity' or not rows:
+        raise ValueError('Expected a nonempty frozen diversity request plan')
+    for row in rows:
+        allowed = {'mode','roomType','objectCount','objects','seed','allowDuplicates','sameObjectsAcrossScenes'}
+        if set(row)-allowed or type(row.get('seed')) is not int or not 0 <= row['seed'] < 2**32:
+            raise ValueError('Invalid exploration request fields or seed')
+        if row.get('mode') == 'objects':
+            objects = row.get('objects', [])
+            if not 3 <= len(objects) <= 6 or not all(isinstance(v,str) and v.strip() for v in objects):
+                raise ValueError('Explicit exploration inputs require three to six labels')
+            if 'roomType' in row or 'objectCount' in row:
+                raise ValueError('Explicit scenes cannot be assigned an inferred room preset')
+        elif row.get('mode') in {'random','room_type'}:
+            if row.get('objectCount') not in (3,4,5,6) or 'objects' in row:
+                raise ValueError('Invalid random/preset count')
+            if row['mode'] == 'room_type' and row.get('roomType') not in {'bedroom','living_room','kitchen','bathroom'}:
+                raise ValueError('Unknown preset')
+            if row['mode'] == 'random' and 'roomType' in row:
+                raise ValueError('Random scenes have no preset room label')
+            if type(row.get('allowDuplicates')) is not bool:
+                raise ValueError('Duplicate policy must be explicit')
+        else:
+            raise ValueError('Unknown generation mode')
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime", type=Path, required=True)
@@ -188,7 +229,8 @@ def main():
     parser.add_argument("--max-attempts", type=int, default=0)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--seed", type=int, default=20260913)
-    parser.add_argument("--room-type", choices=["bedroom","living_room"], default="bedroom")
+    parser.add_argument("--room-type", choices=["bedroom","living_room","kitchen","bathroom"], default="bedroom")
+    parser.add_argument('--request-plan', type=Path)
     parser.add_argument("--object-count", type=int, choices=[3,4,5,6])
     parser.add_argument("--no-duplicates", action="store_true")
     parser.add_argument("--full", action="store_true")
@@ -196,7 +238,7 @@ def main():
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--work", type=Path)
     args = parser.parse_args()
-    for name in ("runtime","blender","output","work"):
+    for name in ("runtime","blender","output","work","request_plan"):
         if getattr(args,name) is not None:
             setattr(args,name,getattr(args,name).resolve())
     if args.worker:

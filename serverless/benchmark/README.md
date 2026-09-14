@@ -228,7 +228,52 @@ Playwright, store artifacts in `.codex/`, and close their browser processes.
 Stop the loopback server when finished. Browser automation fills only choices
 supplied by a reviewer; it does not manufacture pilot judgments.
 
-## Checks
+## Broad scene exploration and rolling evidence
+
+`diversity.py` freezes a separate, finite 260-attempt workload before observing
+quality: all four original presets and random mode, counts 3–6, both duplicate
+policies, and 128 coverage-selected explicit inputs. Explicit inputs preserve
+the order of existing catalog prefixes or recorded triplets with registered
+assets and size entries. This reaches classes omitted by the refined preset
+catalog without rebuilding it. Labels and label-pair coverage guide selection;
+overlap scores and reviewer preferences never do.
+
+The publication runtime's bathroom preset is empty. Four original-path probes
+document that limitation; no replacement combinations are injected into its
+sampler. An explicit bathroom-object input is not called a working bathroom
+preset. `diversity.py --run ... --plan ... --output ...` exports actual completed
+class coverage and all-attempt accounting separately. `publish_comparison.py`
+rejects diversity runs, preventing exploratory input choices from changing the
+controlled bedroom timing or geometric comparison cohort.
+
+`run_campaign.py` sequences diversity before the long bedroom batch, and includes
+the updated 40-seed mesh-support replay/parity checks. On Linux, the optional
+`--handoff-after-stage PID` verifies an owned older controller, pauses only that
+controller, lets its active child finish, and resumes checkpoints under the new
+plan. It never pauses or terminates an active model worker to change the queue.
+
+Additional pilot waves use `stimuli.py --exclude-protocol ... --limit ...` to
+exclude previously reviewed scenes on both sides within each baseline. Do not
+relax matching or reuse scenes merely to reach a requested sample count.
+`serverless.study.combine_pilots` requires complete ten-reviewer waves, rejects
+reused scenes, excludes reversed controls, and bootstraps whole pairs rather
+than pretending that correlated votes are independent room samples.
+
+`archive.py` publishes completed geometry and neutral plan/oblique diagrams
+under `files/outputs/benchmark-YYYY-MM-DD/`. These are not full rendered rooms
+or recency animations. It stores original AI-labelled exports, exact stimulus
+paths, content checksums, combined pilot data and a generated discussion note.
+`--extra-measurements` accepts separately labelled diversity evidence without
+adding it to the benchmark comparison. Public geometry is allow-checked for
+private execution metadata; invitations, session credentials and logs never
+enter the archive.
+
+Content-addressed artifacts are immutable, the manifest advances last, and
+the existing gzip data index is merged with an ETag condition. No bucket policy,
+listing access, deletion or lifecycle rule is changed. The dated archive lies
+outside the temporary `generated/` prefix and therefore persists.
+
+## Validation
 
 ```bash
 python -m unittest discover -s serverless/tests -v
