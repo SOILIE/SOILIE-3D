@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 
@@ -12,6 +13,13 @@ renderer = importlib.import_module("serverless.renderer.handler")
 
 
 class RendererRedeliveryTests(unittest.TestCase):
+    def test_blender_scene_uses_absolute_job_path(self) -> None:
+        work_dir = (Path.cwd() / ".codex" / "job-id" / "1").resolve()
+        command = renderer._blender_command(work_dir, 123, {"objects": ["bed"]})
+        scene_index = command.index("--background") + 1
+        self.assertEqual(command[scene_index], str(work_dir / "suggested_setup.blend"))
+        self.assertTrue(Path(command[scene_index]).is_absolute())
+
     def test_blender_diagnostic_tail_is_bounded_and_log_safe(self) -> None:
         diagnostic = renderer._process_output_tail("before\x00" + ("x" * 4000))
         self.assertEqual(len(diagnostic), 3500)

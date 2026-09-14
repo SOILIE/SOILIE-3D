@@ -44,6 +44,22 @@ def _process_output_tail(value: str, limit: int = 3500) -> str:
 
     return value.replace("\x00", "").strip()[-limit:]
 
+
+def _blender_command(work_dir: Path, scene_seed: int, v4_inputs: dict[str, Any]) -> list[str]:
+    """Build an invocation whose scene path is independent of Lambda's PWD."""
+
+    return [
+        BLENDER_PATH,
+        "--background",
+        str(work_dir / "suggested_setup.blend"),
+        "--python-expr",
+        f"import random; random.seed({scene_seed})",
+        "--python",
+        str(Path(__file__).with_name("v4_entrypoint.py")),
+        "--",
+        json.dumps(v4_inputs, separators=(",", ":")),
+    ]
+
 dynamodb = boto3.client("dynamodb")
 s3 = boto3.client("s3")
 
@@ -313,18 +329,11 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
         _stage(job_id, scene_index, "rendering")
         environment = os.environ.copy()
         environment["SOILIE_ROOM_REQUEST"] = json.dumps(request["room"], separators=(",", ":"))
+        # Blender consults PWD while resolving its startup file in Lambda even
+        # when subprocess.cwd is set. Keep both sources of truth aligned.
+        environment["PWD"] = str(work_dir)
         result = subprocess.run(
-            [
-                BLENDER_PATH,
-                "--background",
-                "suggested_setup.blend",
-                "--python-expr",
-                f"import random; random.seed({scene_seed})",
-                "--python",
-                str(Path(__file__).with_name("v4_entrypoint.py")),
-                "--",
-                json.dumps(v4_inputs, separators=(",", ":")),
-            ],
+            _blender_command(work_dir, scene_seed, v4_inputs),
             capture_output=True,
             text=True,
             timeout=840,
