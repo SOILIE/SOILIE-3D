@@ -181,7 +181,8 @@ Resources:
           OUTPUT_BASE_URL: https://soilie3d.com/data
           DISTRIBUTION_ID: E233HJHDZKRH4
           GALLERY_AUTH_BUCKET: !Ref GalleryAuthBucket
-          STUDY_COLLECTION_ENABLED: "false"
+          # Signed AI invitations only; no route supports human enrollment.
+          STUDY_PILOT_ENABLED: "false"
       Tags:
         - Key: Project
           Value: SOILIE-3D

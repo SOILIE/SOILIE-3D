@@ -1,0 +1,44 @@
+{
+  "checkedAt": "2026-09-13T23:52:23.680683+00:00",
+  "currency": "USD",
+  "lambda": {
+    "storageUsdPerGbSecond": 3.4e-08,
+    "requestUsd": 2e-07,
+    "computeUsdPerGbSecond": 1.66667e-05,
+    "region": "ca-central-1",
+    "architecture": "x86_64",
+    "source": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ca-central-1/index.json",
+    "offerPublishedAt": "2026-09-11T17:35:10Z",
+    "sha256": "b0b747c06dc35783bc9d93b64cb1746a7c85a2f0f9955fd86525e722f7676391",
+    "skus": {
+      "storageUsdPerGbSecond": {
+        "sku": "WFVQTPK4SQ6UGEPT",
+        "rateCode": "WFVQTPK4SQ6UGEPT.JRTCKXETXF.6YS6EN2CT7"
+      },
+      "requestUsd": {
+        "sku": "XM5KDGVKY9KYJWCG",
+        "rateCode": "XM5KDGVKY9KYJWCG.JRTCKXETXF.6YS6EN2CT7"
+      },
+      "computeUsdPerGbSecond": {
+        "sku": "KS26AK5FJMDYPXSF",
+        "rateCode": "KS26AK5FJMDYPXSF.JRTCKXETXF.CUKFZ388N3"
+      }
+    }
+  },
+  "gpt5nano": {
+    "model": "gpt-5-nano",
+    "inputUsdPerMillion": 0.05,
+    "outputUsdPerMillion": 0.4,
+    "source": "https://developers.openai.com/api/docs/models/gpt-5-nano",
+    "verifiedOn": "2026-09-14",
+    "verification": "Official model documentation; standard text-token rates; price sensitivity only, not a room-generation evaluation"
+  },
+  "gpt4": {
+    "model": "gpt-4",
+    "inputUsdPerMillion": 30.0,
+    "outputUsdPerMillion": 60.0,
+    "source": "https://developers.openai.com/api/docs/models/gpt-4",
+    "verifiedOn": "2026-09-13",
+    "verification": "Official model documentation; standard text-token rates"
+  }
+}

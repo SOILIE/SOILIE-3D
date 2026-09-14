@@ -1,37 +1,251 @@
 {
-  "schemaVersion": 3,
-  "studyVersion": "prepared-v3",
-  "collectionEnabled": false,
-  "status": "Protocol prepared; exact V4 and baseline stimuli are not yet frozen, and no participant responses are being accepted.",
-  "primaryQuestion": "Which arrangement looks more plausible as an indoor scene?",
-  "secondaryMeasures": [
-    "obvious collision, unsupported-object, or boundary error",
-    "confidence from 1 to 5",
-    "optional short rationale"
-  ],
-  "plannedConditions": [
+  "schemaVersion": 1,
+  "studyVersion": "spatial-boxes-d02eb4f02f328d187103",
+  "humanEnrollmentEnabled": false,
+  "pilotCollectionEnabled": true,
+  "cases": [
     {
-      "id": "soilie-v4-exact",
-      "description": "The original SOILIE-3D V4 pipeline and original V4 camera/recency implementation."
+      "id": "d34323c3ba52bcc30711",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/c0682f6feb62cfbd30fd2d83.svg",
+      "comparisonImage": "/benchmarks/stimuli/3c6b073f3adbe96b5e864b58.svg",
+      "comparisonCondition": "layoutgpt"
     },
     {
-      "id": "layoutgpt-official",
-      "description": "Official released LayoutGPT output selected under a preregistered matching rule."
+      "id": "9aa3f41050a102a4295c",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/e842d002820e97fb232e51f6.svg",
+      "comparisonImage": "/benchmarks/stimuli/ae25a51cc74c0e3491e2d6c0.svg",
+      "comparisonCondition": "layoutgpt"
     },
     {
-      "id": "grains-official",
-      "description": "Author-released GRAINS output, if licensing and matched stimulus construction are feasible."
+      "id": "6afb831a33776b236631",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/f3654bbf6a61e58abb147cde.svg",
+      "comparisonImage": "/benchmarks/stimuli/da11478fc7ef166a681f411b.svg",
+      "comparisonCondition": "layoutgpt"
     },
     {
-      "id": "infinigen-indoors-official",
-      "description": "Author-released Infinigen Indoors output, if licensing and matched stimulus construction are feasible."
+      "id": "24971c76fa8ec1b64694",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/d0508062e209f345e767ac12.svg",
+      "comparisonImage": "/benchmarks/stimuli/dde7e09cc0ead6b19c8c2b51.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "d26c517976df217083af",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/20ad54acccc70c5b8505cf25.svg",
+      "comparisonImage": "/benchmarks/stimuli/6456e8e520f203c0437b0e8c.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "15e94b2f99cb09609a00",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/6b9b347b6e48443c622045a7.svg",
+      "comparisonImage": "/benchmarks/stimuli/9e5afa2b7a9a8e15b19ed01f.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "62cd25360956a2b02045",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/4d620f69f67b8f6c5e3ab670.svg",
+      "comparisonImage": "/benchmarks/stimuli/6109a0b2f37d140359570a73.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "c7ad5602b510a62d98af",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/e4cbd83d8b925158dc14f7ef.svg",
+      "comparisonImage": "/benchmarks/stimuli/f96217bca5eb646b789222f2.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "bbadd943fe668fc91551",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/b5602e199df096cb331d8251.svg",
+      "comparisonImage": "/benchmarks/stimuli/ddf0e5ec352e7c2282485f5d.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "e7c069e8caf7f94c5be2",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/a06e2267665ecabe59cb2570.svg",
+      "comparisonImage": "/benchmarks/stimuli/410880c9755da8e866309e77.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "d3da3b22800d5229aa40",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/5672973e575cfaf25858f9c0.svg",
+      "comparisonImage": "/benchmarks/stimuli/630f1880442e4b2a3b7e3071.svg",
+      "comparisonCondition": "layoutgpt"
+    },
+    {
+      "id": "11c5a167d1b05b753001",
+      "title": "Bedroom arrangement",
+      "relationImage": "/benchmarks/stimuli/404360a1dd8f362d3fec6abf.svg",
+      "comparisonImage": "/benchmarks/stimuli/8788be4776a3f2780d25192d.svg",
+      "comparisonCondition": "layoutgpt"
     }
   ],
-  "controls": {
-    "methodLabelsHidden": true,
-    "leftRightAssignment": "deterministic HMAC-balanced assignment per participant and case",
-    "presentation": "same display size and neutral page chrome; native output differences are documented rather than silently normalized",
-    "analysis": "report condition-level choice proportions with confidence intervals; keep secondary error and confidence measures separate"
+  "sampling": {
+    "seed": 20260913,
+    "maximumPairsPerBaseline": 12,
+    "withoutReplacementWithinBaseline": true,
+    "qualityScoresUsed": false,
+    "matching": "room type, exact furniture count, 0.25-wide summed footprint density bins",
+    "cohortScenes": {
+      "soilie": 158,
+      "layoutgpt": 476
+    },
+    "cohortSceneIdsSha256": "22779c5ca8234d7cb069779ee1433a42057ee0652003d9310c7694e7f280e975",
+    "scope": "Completed scenes available in this frozen snapshot, not subsequent benchmark completions"
   },
-  "cases": []
+  "stimulusEvidence": [
+    {
+      "caseId": "d34323c3ba52bcc30711",
+      "matchingStratum": [
+        "bedroom",
+        5,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20394511",
+      "baselineScene": "layoutgpt-bedroom-0355",
+      "soilieDigest": "2a2065328037be5cf284451025eed66df4ad1ca6661d49562a088373700661ad",
+      "baselineDigest": "6b33dccd3bc332e0da7dceb9d9cf879218429dbba11049418ae35590d73d33f3"
+    },
+    {
+      "caseId": "9aa3f41050a102a4295c",
+      "matchingStratum": [
+        "bedroom",
+        5,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20426415",
+      "baselineScene": "layoutgpt-bedroom-0221",
+      "soilieDigest": "860a13fcca415600f1fd0aea983f4c9e3c009233123b6b8aaad3bc9d661bff6d",
+      "baselineDigest": "dd149ed502fa45b4e5e6c229242892f79814ecfc82f8eade4c13a2fe40363a7a"
+    },
+    {
+      "caseId": "6afb831a33776b236631",
+      "matchingStratum": [
+        "bedroom",
+        5,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20370583",
+      "baselineScene": "layoutgpt-bedroom-0054",
+      "soilieDigest": "398b77a358efb08dcfe7b4df1b969857b7301890b55657665861b5b65a4eddea",
+      "baselineDigest": "ce93bd3973624b2b13ab3f0eada67ec3da62924917f1888eeceb8b6abb0842a7"
+    },
+    {
+      "caseId": "24971c76fa8ec1b64694",
+      "matchingStratum": [
+        "bedroom",
+        4,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20361610",
+      "baselineScene": "layoutgpt-bedroom-0347",
+      "soilieDigest": "246d1b41e4f55f97f6bdc7200e4cee83adf7df52ce606a6a5eb15f99343b797a",
+      "baselineDigest": "3cf57e31d2920126f01ff402190c6d9ebbdac9c56fd45c8abbf5f5119c14684f"
+    },
+    {
+      "caseId": "d26c517976df217083af",
+      "matchingStratum": [
+        "bedroom",
+        3,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20420433",
+      "baselineScene": "layoutgpt-bedroom-0242",
+      "soilieDigest": "e360e81ceb36337ec0ceea7d1444c0a7b9d55ca2e8a39f03253adcb7312c7897",
+      "baselineDigest": "76786c040f7748b324bc9eff5ce058b004e173a9b8e7d774c97d08967ab85d68"
+    },
+    {
+      "caseId": "15e94b2f99cb09609a00",
+      "matchingStratum": [
+        "bedroom",
+        4,
+        2
+      ],
+      "soilieScene": "soilie-bedroom-20353634",
+      "baselineScene": "layoutgpt-bedroom-0330",
+      "soilieDigest": "c91df157634a8d25fe40d1f532d5832708f3cc5aa7396eb702f8877952e9479a",
+      "baselineDigest": "abb53c0ee8f882a3b12439d416575aa62b1f74667ea85e0374cded7d972e00e8"
+    },
+    {
+      "caseId": "62cd25360956a2b02045",
+      "matchingStratum": [
+        "bedroom",
+        6,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20315748",
+      "baselineScene": "layoutgpt-bedroom-0056",
+      "soilieDigest": "205ce2e4fe477ee25e975fdb902cb1b94a54cb684937735504b6f11152edd102",
+      "baselineDigest": "d78ce5d74b73fb0363d6e787f4a6321c0f5bd641c430afb57877b1240c076c52"
+    },
+    {
+      "caseId": "c7ad5602b510a62d98af",
+      "matchingStratum": [
+        "bedroom",
+        6,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20283844",
+      "baselineScene": "layoutgpt-bedroom-0369",
+      "soilieDigest": "e7821cdba51e3fe84b2133550d8c14887f99911841afbff513fc36322fa68cda",
+      "baselineDigest": "091c3edaccf76bafd430c306803d493bae4d74a2b9aebccc022ce051a1a28565"
+    },
+    {
+      "caseId": "bbadd943fe668fc91551",
+      "matchingStratum": [
+        "bedroom",
+        6,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20291820",
+      "baselineScene": "layoutgpt-bedroom-0104",
+      "soilieDigest": "c0cdeb8bbee4b8413d0fb644c689e65dd67dae5332d8da02b56b5cec0722ef7f",
+      "baselineDigest": "8a50fcc2b07dd05c8e802e2085e2e4832bada3818a4218167c383569f0e4cfd5"
+    },
+    {
+      "caseId": "e7c069e8caf7f94c5be2",
+      "matchingStratum": [
+        "bedroom",
+        5,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20450343",
+      "baselineScene": "layoutgpt-bedroom-0133",
+      "soilieDigest": "8e632032d8cfae65376c00ad69506beb06a64c29bcb899c7396e35c0bacd317d",
+      "baselineDigest": "a2cf84755666ffbfcd7728521c586e7a0f3b6acb93a26bba86dcc77f0e0793c6"
+    },
+    {
+      "caseId": "d3da3b22800d5229aa40",
+      "matchingStratum": [
+        "bedroom",
+        5,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20343664",
+      "baselineScene": "layoutgpt-bedroom-0222",
+      "soilieDigest": "824de6e3658a6e1bcf9a67a310b92ee66d4209f5a6efb00622f5898e2e3462ed",
+      "baselineDigest": "f16d9931c734ea0a583c888b7a44fc25b757f80eddfb634e2e21b23467b89149"
+    },
+    {
+      "caseId": "11c5a167d1b05b753001",
+      "matchingStratum": [
+        "bedroom",
+        4,
+        1
+      ],
+      "soilieScene": "soilie-bedroom-20334691",
+      "baselineScene": "layoutgpt-bedroom-0145",
+      "soilieDigest": "2878756c9f7ff0cd9dcb83d04d5acdd9e209b2ef56f88411e46ef44cf9d80dcd",
+      "baselineDigest": "9b95447a7bf203076703a6031bed3b558fbaae2b2440242af0dd9db0c1070e9d"
+    }
+  ]
 }

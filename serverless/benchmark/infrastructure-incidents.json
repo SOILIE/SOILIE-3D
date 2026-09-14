@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "incidents": [
+    {
+      "id": "infinigen-controller-loss-20260914",
+      "model": "infinigen",
+      "roomType": "bedroom",
+      "seed": 0,
+      "affectedExecutions": 2,
+      "completedScenes": 0,
+      "errorCode": "CONTROLLER_LOST_AND_OUTPUT_REUSED",
+      "generationTimingAvailable": false,
+      "originalWorkerElapsedSecondsLowerBound": 3849,
+      "restartSessionWallSeconds": 203.10012906600014,
+      "timingBasis": "The original worker's elapsed time was observed from the Linux process table while it was alive. Its exact full attempt timer was lost. The restart's wall time comes from its interrupted session ledger; it is not original model-generation time.",
+      "disposition": "Both workers were stopped and their shared output quarantined. Neither execution supplies geometry or a successful scene. The same seed is restarted in a clean directory after adding and testing kernel-enforced parent-death ownership.",
+      "interpretation": "An infrastructure interruption, not evidence of model failure. It remains part of campaign accounting; overall campaign throughput is unavailable because complete interrupted-attempt timing was not retained."
+    }
+  ]
+}

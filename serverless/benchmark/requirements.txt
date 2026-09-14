@@ -1,0 +1,6 @@
+# Offline measurements only. These dependencies do not enter the model runtime.
+numpy==1.26.4
+scipy==1.14.1
+shapely==2.0.6
+pandas==2.1.4
+Pillow==10.4.0

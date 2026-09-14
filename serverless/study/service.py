@@ -1,0 +1,161 @@
+"""Blinded, immutable AI-pilot sessions. Human enrollment is deliberately closed.
+
+The same service backs Lambda and the local end-to-end pilot. Invitations, not
+browser-supplied participant fields, determine respondent provenance.
+"""
+import base64
+import hashlib
+import hmac
+import json
+import time
+import uuid
+
+PROFILES = {
+    "overlap": "Pay particular attention to objects intruding into each other.",
+    "boundaries": "Pay particular attention to furniture crossing room boundaries.",
+    "support": "Pay particular attention to apparently floating or sunken objects; state uncertainty when boxes cannot establish support.",
+    "clearance": "Pay particular attention to connected space for moving around the room.",
+    "access": "Pay particular attention to whether furniture appears reachable and usable.",
+    "orientation": "Pay particular attention to the orientation of furniture toward nearby objects and room space.",
+    "proportions": "Pay particular attention to relative furniture and room proportions; do not assume an unprovided physical scale.",
+    "relationships": "Pay particular attention to sensible relationships between the kinds of objects shown.",
+    "room_function": "Pay particular attention to whether the arrangement serves its stated room type.",
+    "overall": "Consider the arrangement as a whole, balancing visible spatial problems rather than one issue alone.",
+}
+RUBRIC = ("Inspect both the plan and oblique views. These are bounding-box diagrams of final placements, not photographs or solid meshes. "
+          "Choose the more plausible indoor arrangement, or tie if there is no defensible preference. "
+          "Use the same overall plausibility criterion regardless of your inspection emphasis. "
+          "Mark which side has obvious spatial problems, give confidence 1 (very uncertain) to 5 (very confident), and a short visual rationale. "
+          "Do not infer hidden geometry, method identity, or unavailable details. Do not consult other reviewers or numerical benchmark scores.")
+
+
+class StudyError(Exception):
+    def __init__(self, status, code, message):
+        super().__init__(message)
+        self.status, self.code = status, code
+
+
+def packed(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+class StudyService:
+    def __init__(self, document, store, secret, enabled=False, clock=time.time):
+        self.document, self.store, self.secret = document, store, secret
+        self.enabled, self.clock = enabled, clock
+
+    def signature(self, value):
+        return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()
+
+    def invite(self, reviewer_id, profile, model, lifetime=86400):
+        if profile not in PROFILES or not reviewer_id or not model:
+            raise ValueError("Reviewer ID, known profile and actual model provenance are required")
+        claims = {"reviewerId": reviewer_id, "promptProfile": profile, "model": model,
+                  "studyVersion": self.document["studyVersion"], "expiresAt": int(self.clock())+lifetime}
+        payload = base64.urlsafe_b64encode(packed(claims).encode()).decode().rstrip("=")
+        return payload+"."+self.signature("pilot-invitation:"+payload)
+
+    def token(self, session_id):
+        return self.signature("pilot-session:"+session_id)
+
+    def start(self, body):
+        if not self.enabled or not self.document.get("pilotCollectionEnabled") or not self.document.get("cases"):
+            raise StudyError(503, "STUDY_NOT_COLLECTING", "Human enrollment is closed. The AI pilot is not currently accepting sessions.")
+        invitation = body.get("invitation", "")
+        try:
+            payload, signature = invitation.split(".")
+            if not hmac.compare_digest(signature, self.signature("pilot-invitation:"+payload)):
+                raise ValueError()
+            claims = json.loads(base64.urlsafe_b64decode(payload+"="*(-len(payload)%4)))
+            if claims["expiresAt"] <= self.clock() or claims["studyVersion"] != self.document["studyVersion"] or claims["promptProfile"] not in PROFILES:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise StudyError(403, "PILOT_INVITATION_REQUIRED", "A valid AI-pilot invitation is required. Human enrollment remains closed.")
+        identity = {key: claims[key] for key in ("reviewerId", "studyVersion")}
+        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, self.signature("pilot-identity:"+packed(identity))))
+        session = self.store.get(session_id)
+        if session and any(session[key] != claims[key] for key in ("promptProfile", "model")):
+            raise StudyError(409, "REVIEWER_PROVENANCE_CHANGED", "An existing reviewer cannot change model or prompt profile.")
+        if not session:
+            cases = self.document["cases"]
+            # Explicitly balance each baseline, rather than calling coin flips balanced.
+            sides = {}
+            for condition in {case["comparisonCondition"] for case in cases}:
+                group = sorted([case for case in cases if case["comparisonCondition"] == condition],
+                               key=lambda case: self.signature(session_id+":side:"+case["id"]))
+                sides.update({case["id"]: index % 2 == 1 for index,case in enumerate(group)})
+            assignments = []
+            for case in sorted(cases, key=lambda case: self.signature(session_id+":order:"+case["id"])):
+                flip = sides[case["id"]]
+                assignments.append({"caseId": case["id"], "title": case["title"],
+                                    "leftImage": case["comparisonImage"] if flip else case["relationImage"],
+                                    "rightImage": case["relationImage"] if flip else case["comparisonImage"],
+                                    "leftCondition": case["comparisonCondition"] if flip else "soilie",
+                                    "rightCondition": "soilie" if flip else case["comparisonCondition"],
+                                    "comparisonCondition": case["comparisonCondition"], "repeatOf": None})
+            # Two consistency trials are held out of preference totals. Their
+            # control status is private until all reviewer responses are frozen.
+            for index, original in enumerate(assignments[:2]):
+                repeat = dict(original, caseId=self.signature(session_id+f":repeat:{index}")[:20], repeatOf=original["caseId"])
+                repeat["leftImage"], repeat["rightImage"] = original["rightImage"], original["leftImage"]
+                repeat["leftCondition"], repeat["rightCondition"] = original["rightCondition"], original["leftCondition"]
+                assignments.append(repeat)
+            session = {"sessionId": session_id, "respondentType": "ai_pilot", **claims,
+                       "expiresAt": int(self.clock())+7*86400, "createdAt": int(self.clock()),
+                       "promptHash": hashlib.sha256((RUBRIC+PROFILES[claims["promptProfile"]]).encode()).hexdigest(),
+                       "assignments": assignments}
+            self.store.create(session_id, session)
+            session = self.store.get(session_id)
+        return {**self.public_session(session), "sessionToken": self.token(session_id)}
+
+    def public_session(self, session):
+        # An assignment can outlive a deployment. Never silently change the
+        # instructions under which an existing reviewer is completing it.
+        prompt_hash = hashlib.sha256((RUBRIC+PROFILES[session["promptProfile"]]).encode()).hexdigest()
+        if not hmac.compare_digest(session["promptHash"], prompt_hash):
+            raise StudyError(409, "STUDY_PROTOCOL_CHANGED", "This session's original review instructions are no longer available. Contact the study organizer.")
+        public_fields = ("caseId", "title", "leftImage", "rightImage")
+        return {"sessionId": session["sessionId"], "studyVersion": session["studyVersion"], "respondentType": "ai_pilot",
+                "rubric": RUBRIC, "emphasis": PROFILES[session["promptProfile"]],
+                "cases": [{key: case[key] for key in public_fields} for case in session["assignments"]],
+                "completedCaseIds": [row["caseId"] for row in self.store.responses(session["sessionId"])]}
+
+    def authorized(self, session_id, body):
+        if not self.enabled:
+            raise StudyError(503, "STUDY_NOT_COLLECTING", "AI-pilot collection is paused.")
+        token = body.get("sessionToken")
+        if not isinstance(token, str) or not token.isascii() or not hmac.compare_digest(token, self.token(session_id)):
+            raise StudyError(403, "STUDY_SESSION_FORBIDDEN", "This session token is not valid.")
+        session = self.store.get(session_id)
+        if not session or session["expiresAt"] <= self.clock():
+            raise StudyError(404, "STUDY_SESSION_NOT_FOUND", "The session was not found or has expired.")
+        if session["respondentType"] != "ai_pilot":
+            raise StudyError(403, "HUMAN_ENROLLMENT_CLOSED", "Human enrollment remains closed.")
+        return session
+
+    def resume(self, session_id, body):
+        return self.public_session(self.authorized(session_id, body))
+
+    def respond(self, session_id, body):
+        session = self.authorized(session_id, body)
+        self.public_session(session) # Enforce the same immutable prompt on resume and submission.
+        case = next((case for case in session["assignments"] if case["caseId"] == body.get("caseId")), None)
+        confidence = body.get("confidence")
+        note = body.get("note", "")
+        # Tuples also reject malformed JSON arrays/objects without triggering an
+        # unhashable-type error before the API can return a validation response.
+        if (case is None or body.get("judgement") not in ("left","tie","right")
+            or body.get("errorChoice") not in ("left","right","both","neither","uncertain")
+            or type(confidence) is not int or not 1 <= confidence <= 5 or not isinstance(note,str) or len(note)>500):
+            raise StudyError(400, "INVALID_STUDY_RESPONSE", "Choose both judgements, confidence from 1 to 5, and a rationale of at most 500 characters.")
+        row = {key: body[key] for key in ("caseId","judgement","errorChoice","confidence")}
+        row.update({"note":note.strip(), "respondentType":"ai_pilot", "reviewerId":session["reviewerId"],
+                    "recordedAt":int(self.clock()),
+                    "promptProfile":session["promptProfile"], "model":session["model"], "promptHash":session["promptHash"],
+                    "studyVersion":session["studyVersion"], "leftCondition":case["leftCondition"],
+                    "rightCondition":case["rightCondition"], "comparisonCondition":case["comparisonCondition"],
+                    "repeatOf":case["repeatOf"]})
+        saved = self.store.save_response(session_id, row)
+        if {key:value for key,value in saved.items() if key != "recordedAt"} != {key:value for key,value in row.items() if key != "recordedAt"}:
+            raise StudyError(409, "RESPONSE_ALREADY_SAVED", "A different response is already saved for this case.")
+        return {"saved":True,"caseId":case["caseId"]}

@@ -1,9 +1,10 @@
-from __future__ import annotations
-
+"""API serialization uses the same service as the browser pilot."""
+import base64
 import json
 import os
+from pathlib import Path
+import tempfile
 import unittest
-import uuid
 from unittest.mock import patch
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "ca-central-1")
@@ -13,46 +14,54 @@ os.environ.setdefault("QUEUE_URL", "https://sqs.ca-central-1.amazonaws.com/00000
 os.environ.setdefault("VISITOR_HMAC_SECRET", "unit-test-secret")
 os.environ.setdefault("GALLERY_AUTH_BUCKET", "test-gallery-auth")
 
-from serverless.api import handler as api  # noqa: E402
+from serverless.api import handler as api
+from serverless.study.service import StudyService
+from serverless.study.store import SQLiteStudyStore
+from serverless.tests.test_study_service import protocol
 
 
 class StudyApiTests(unittest.TestCase):
-    def test_protocol_is_prepared_without_legacy_approximation_cases(self):
-        self.assertEqual("prepared-v3", api._study_document["studyVersion"])
-        self.assertFalse(api._study_document["collectionEnabled"])
-        self.assertEqual([], api._study_document["cases"])
-        conditions = {item["id"] for item in api._study_document["plannedConditions"]}
-        self.assertEqual(
-            {"soilie-v4-exact", "layoutgpt-official", "grains-official", "infinigen-indoors-official"},
-            conditions,
-        )
+    def setUp(self):
+        base = Path(__file__).parents[2]/".codex/tests"
+        base.mkdir(parents=True,exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=base)
+        self.store = SQLiteStudyStore(Path(self.temp.name)/"api.sqlite3")
+        self.service = StudyService(protocol(),self.store,b"unit-only",enabled=True)
+        self.adapter = patch.object(api,"_study_service",return_value=self.service)
+        self.adapter.start()
 
-    def test_future_assignments_are_stable_and_opaque(self):
-        session_id = str(uuid.uuid4())
-        case = {
-            "id": "future-01",
-            "objects": ["bed", "desk", "lamp"],
-            "relationImage": "https://example.test/v4.png",
-            "comparisonImage": "https://example.test/baseline.png",
-            "comparisonCondition": "baseline",
-        }
-        first = api._study_assignment(session_id, case)
-        self.assertEqual(first, api._study_assignment(session_id, case))
-        self.assertEqual({"caseId", "objects", "leftImage", "rightImage"}, set(first))
-        self.assertNotIn("comparisonCondition", first)
-        self.assertNotEqual(first["leftImage"], first["rightImage"])
+    def tearDown(self):
+        self.adapter.stop()
+        self.temp.cleanup()
 
-    def test_start_is_closed_before_validation_or_storage(self):
-        with patch.object(api.dynamodb, "put_item") as put_item:
-            result = api._study_start({"body": json.dumps({"participantLabel": "P-101"})})
-        self.assertEqual(503, result["statusCode"])
-        self.assertEqual("STUDY_NOT_COLLECTING", json.loads(result["body"])["error"]["code"])
-        put_item.assert_not_called()
+    def test_default_closed_and_no_human_enrollment(self):
+        self.service.enabled = False
+        self.assertEqual(503,api._study_start({"body":"{}"})["statusCode"])
+        self.service.enabled = True
+        self.assertEqual(403,api._study_start({"body":json.dumps({"participantLabel":"Person"})})["statusCode"])
 
-    def test_resume_and_response_are_closed(self):
-        session_id = str(uuid.uuid4())
-        self.assertEqual(503, api._study_session({"body": "{}"}, session_id)["statusCode"])
-        self.assertEqual(503, api._study_response({"body": "{}"}, session_id)["statusCode"])
+    def test_start_submit_resume_immutable_over_api(self):
+        invite = self.service.invite("r1","overlap","test-model")
+        result = api._study_start({"body":json.dumps({"invitation":invite,"respondentType":"human"})})
+        self.assertEqual(201,result["statusCode"])
+        session = json.loads(result["body"])
+        self.assertEqual("ai_pilot",session["respondentType"])
+        self.assertNotIn("leftCondition",session["cases"][0])
+        row = {"sessionToken":session["sessionToken"],"caseId":session["cases"][0]["caseId"],
+               "judgement":"tie","errorChoice":"uncertain","confidence":1,"note":"Test fixture only"}
+        event = {"body":json.dumps(row)}
+        for _ in range(2):
+            self.assertEqual(200,api._study_response(event,session["sessionId"])["statusCode"])
+        resumed = api._study_session(event,session["sessionId"])
+        self.assertEqual([row["caseId"]],json.loads(resumed["body"])["completedCaseIds"])
+        self.assertEqual(409,api._study_response({"body":json.dumps(dict(row,judgement="left"))},session["sessionId"])["statusCode"])
+
+    def test_json_base64_and_size_validation(self):
+        for body in ("not json", "[]"):
+            self.assertEqual(400,api._study_start({"body":body})["statusCode"])
+        event = {"body":base64.b64encode(b'{}').decode(),"isBase64Encoded":True}
+        self.assertEqual(403,api._study_start(event)["statusCode"])
+        self.assertEqual(413,api._study_start({"body":"x"*12001})["statusCode"])
 
 
 if __name__ == "__main__":

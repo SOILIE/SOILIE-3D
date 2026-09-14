@@ -1,0 +1,186 @@
+"""Compile website evidence from measured artifacts, never hand-entered scores."""
+import argparse
+from collections import Counter, defaultdict
+from datetime import datetime, UTC
+import hashlib
+import json
+from pathlib import Path
+import statistics
+
+from serverless.benchmark.geometry import measure, stratum, summarize
+from serverless.benchmark.cost import evidence as cost_evidence
+from serverless.benchmark.stimuli import diagram
+from serverless.benchmark.support_replays import merge_support
+from serverless.benchmark.timing import session_summary
+from serverless.benchmark.verify_parity import digest
+
+METRICS = {
+    "meanWorstOverlapPct": {"title": "Typical object's worst overlap", "unit": "%", "direction": "lower", "meaning": "For each object, the largest shared box volume divided by its own box volume; averaged across the room. A bounding-box proxy, not a solid-mesh collision test."},
+    "meanOutsideFootprintPct": {"title": "Furniture footprint outside the room", "unit": "%", "direction": "lower", "meaning": "The fraction of each furniture footprint outside the original boundary, averaged across the room. Auto-built rooms and fixed input rooms remain different tasks."},
+    "supportGapCm": {"title": "Sampled gap to a supporting surface", "unit": "cm", "direction": "lower", "meaning": "Smallest vertical gap from actual lowest mesh vertices and sampled lower surfaces to a real supporting mesh, averaged over measured objects. Probes can miss contacts; a positive gap is not proof of floating, and contact is not proof of stability."},
+    "belowFloorCm": {"title": "Depth below the floor", "unit": "cm", "direction": "lower", "meaning": "Object depth below the floor, averaged over measured objects."},
+    "connectedClearancePct": {"title": "Connected clearance area", "unit": "%", "direction": "context", "meaning": "Largest connected area where the centre of a 0.6 m-wide, 1.8 m-tall cylinder fits, as a fraction of room area. More space is not automatically a better room."},
+}
+LABELS = {"soilie": "SOILIE-3D", "layoutgpt": "LayoutGPT", "infinigen": "Infinigen Indoors"}
+
+
+def aggregate(rows):
+    return {name: summarize([row["metrics"].get(name) for row in rows]) for name in METRICS}
+
+
+def measured_rows(scenes):
+    rows, invalid = [], []
+    for scene in scenes:
+        try:
+            rows.append({"scene": scene, "metrics": measure(scene)})
+        except (ValueError, KeyError, TypeError) as error:
+            invalid.append({"id": scene["id"], "reason": str(error)})
+    return rows, invalid
+
+
+def compare(rows):
+    """Equal stratum weighting prevents the largest source dataset dominating.
+
+    This is an observational comparison of native outputs, not identical inputs
+    or an estimate of a causal model effect. Filters are fixed before scoring.
+    """
+    groups = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        groups[row["scene"]["model"]][stratum(row["scene"], row["metrics"])].append(row)
+    results = []
+    for baseline in ("layoutgpt", "infinigen"):
+        shared = sorted(set(groups["soilie"]) & set(groups[baseline]))
+        sides = {model: [row for key in shared for row in groups[model][key]] for model in ("soilie", baseline)}
+        metric_results = {}
+        for name in METRICS:
+            means = {}
+            for model in sides:
+                per_stratum = [statistics.fmean(row["metrics"][name] for row in groups[model][key]
+                                               if row["metrics"][name] is not None)
+                               for key in shared if any(row["metrics"][name] is not None for row in groups[model][key])]
+                means[model] = statistics.fmean(per_stratum) if len(per_stratum) == len(shared) and shared else None
+            available = all(value is not None for value in means.values())
+            metric_results[name] = {"means": means, "difference": means["soilie"]-means[baseline] if available else None,
+                                    "available": available}
+        results.append({"baseline": baseline, "sharedStrata": [list(key) for key in shared],
+                        "counts": {model: len(side) for model, side in sides.items()}, "metrics": metric_results,
+                        "includedIds": {model: [row["scene"]["id"] for row in side] for model,side in sides.items()}})
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--runs", type=Path, nargs="+", required=True)
+    parser.add_argument("--layoutgpt", type=Path, required=True)
+    parser.add_argument("--infinigen", type=Path)
+    parser.add_argument("--support-replays", type=Path, nargs="*", default=[])
+    parser.add_argument("--rates", type=Path, required=True)
+    parser.add_argument("--selection", type=Path, required=True)
+    parser.add_argument("--incidents", type=Path, default=Path(__file__).with_name("infrastructure-incidents.json"))
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    attempts, scenes, before_after, runs = [], [], [], []
+    provenance_hashes = set()
+    for folder in args.runs:
+        # Every explicitly requested run must exist. A path typo must not
+        # silently remove a workload from the comparison or failure totals.
+        config = json.loads((folder/"run.json").read_text())
+        if config.get("full"):
+            raise ValueError("Full-render parity runs cannot enter placement-only timing results")
+        batch = [json.loads(path.read_text()) for path in sorted(folder.glob("attempt-*.json"))]
+        provenance_hashes.add(digest(config["provenance"]))
+        successes = [row for row in batch if row["status"] == "complete"]
+        runs.append({"roomType": config["roomType"], "target": config["targetCompletions"], "attempted": len(batch),
+                     "completed": len(successes), "status": "complete" if len(successes) >= config["targetCompletions"] else "in_progress",
+                     "activeWallSeconds": sum(row["wallSeconds"] for row in batch),
+                     "generationSeconds": sum(row["generationSeconds"] for row in batch),
+                     "failures": dict(Counter(row.get("errorCode") for row in batch if row["status"] != "complete")),
+                     "first10000Attempts": {"attempted": min(10000,len(batch)), "completed": sum(row["status"] == "complete" for row in batch[:10000])},
+                     "configuration": {key: value for key,value in config.items() if key not in {"runtime","blender","provenance"}},
+                     "baselineCommit": config["provenance"]["baselineCommit"],
+                     "sessionTiming": session_summary(folder,batch)})
+        attempts.extend(batch)
+    attempts, support_evidence = merge_support(attempts,args.support_replays,provenance_hashes)
+    for row in attempts:
+        if row["status"] != "complete":
+            continue
+        scenes.append(row["stages"]["final"])
+        try:
+            before_after.append({"id": row["id"], **{stage: measure(value)["meanWorstOverlapPct"] for stage,value in row["stages"].items()}})
+        except ValueError:
+            pass # Invalid geometry is separately recorded below, not a zero.
+    release = json.loads(args.layoutgpt.read_text())
+    scenes.extend(release["scenes"])
+    indoors = {"scenes":[],"attempts":[],"invalidArtifacts":[],"configuration":None}
+    if args.infinigen:
+        indoors = json.loads(args.infinigen.read_text())
+        scenes.extend(indoors["scenes"])
+    rows, invalid = measured_rows(scenes)
+    if len({row["scene"]["id"] for row in rows}) != len(rows):
+        raise ValueError("Duplicate scene IDs would inflate sample sizes")
+    groups = {model: [row for row in rows if row["scene"]["model"] == model] for model in LABELS}
+    all_time = sum(row["generationSeconds"] for row in attempts)
+    successful_time = [row["generationSeconds"] for row in attempts if row["status"] == "complete"]
+    indoors_attempts = indoors["attempts"]
+    indoors_times = [row["generationSeconds"] for row in indoors_attempts if row["status"] == "complete"]
+    indoors_total = sum(row["generationSeconds"] for row in indoors_attempts)
+    incidents = json.loads(args.incidents.read_text())["incidents"]
+    indoors_incidents = [row for row in incidents if row["model"] == "infinigen"]
+    indoors_timing_complete = not any(not row["generationTimingAvailable"] for row in indoors_incidents)
+    document = {"schemaVersion": 1, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
+                "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group)} for model,group in groups.items()},
+                "comparisons": compare(rows), "runs": runs, "invalidGeometry": invalid,
+                "layoutgptSources": release["sources"], "layoutgptInvalidArtifacts": release["invalidArtifacts"],
+                "beforeAfter": before_after,
+                "supportReplays":support_evidence,
+                "infinigenInvalidArtifacts":indoors["invalidArtifacts"],
+                "infinigenConfiguration":indoors["configuration"],
+                "infrastructureIncidents":incidents,
+                "timing": {"soilie": {"completedPerMinute": 60*len(successful_time)/all_time if all_time else None,
+                                      "completedLatencySeconds": summarize(successful_time), "allAttemptSeconds": all_time},
+                           "layoutgpt": {"available": False, "reason": "Released layouts do not include inference timings."},
+                           "infinigen":{"available":bool(indoors_attempts),"attempted":len(indoors_attempts),
+                                         "completed":len(indoors_times),"allAttemptSeconds":indoors_total if indoors_timing_complete else None,
+                                         "recordedAttemptSeconds":indoors_total,
+                                         "infrastructureInterruptedExecutions":sum(row["affectedExecutions"] for row in indoors_incidents),
+                                         "completedPerMinute":60*len(indoors_times)/indoors_total if indoors_total and indoors_timing_complete else None,
+                                         "completedLatencySeconds":summarize(indoors_times),
+                                         "failures":dict(Counter(row["errorCode"] for row in indoors_attempts if row["status"] != "complete")),
+                                         "stage":"Default single-room coarse task: solving, procedural mesh construction, camera preparation and serialization; no image rendering"},
+                           "grains": {"evidence": "paper-reported", "scenes": 10000, "seconds": 1027, "hierarchySeconds": 94, "placementSeconds": 933,
+                                      "hardware": "GTX 1080 Ti and Intel i7-8700; after training", "source": "https://arxiv.org/html/1807.09193"}},
+                "selectionExplanation": json.loads(args.selection.read_text()),
+                "humanParticipants": 0,
+                "cost": cost_evidence(attempts, json.loads(args.rates.read_text())),
+                "method": "Native final outputs, matched by room type, exact furniture count and 0.25-wide summed-footprint-density bins; equal weight per shared stratum. Not identical-input experiments.",
+                "grainsAvailability": "The authors removed pretrained weights; no new GRAINS geometry or inference run is claimed."}
+    args.output.mkdir(parents=True, exist_ok=True)
+    illustrations = []
+    for model, group in groups.items():
+        if not group:
+            continue
+        # Deliberately show a problem case, explicitly not a representative
+        # random sample. This selection never feeds the blinded pilot sampler.
+        sample = max(group,key=lambda row: row["metrics"]["meanWorstOverlapPct"])
+        pairs = sample["metrics"]["overlapPairs"]
+        if not pairs:
+            continue
+        pair = max(pairs,key=lambda pair: max(pair["fractions"]))
+        svg = diagram(sample["scene"],{pair["a"],pair["b"]})
+        filename = hashlib.sha256(svg.encode()).hexdigest()[:24]+".svg"
+        directory = args.output/"illustrations"
+        directory.mkdir(exist_ok=True)
+        (directory/filename).write_text(svg,encoding="utf-8")
+        illustrations.append({"model":model,"sceneId":sample["scene"]["id"],"image":"benchmarks/illustrations/"+filename,
+                              "meanWorstOverlapPct":sample["metrics"]["meanWorstOverlapPct"],
+                              "highlightedPair":pair,"selection":"Largest recorded scene-average box intrusion in this native-output sample; illustrative, not typical"})
+    document["illustrations"] = illustrations
+    packed = json.dumps(document, separators=(",", ":"))
+    document["evidenceDigest"] = hashlib.sha256(packed.encode()).hexdigest()
+    (args.output/"comparison.json").write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
+    (args.output/"measured-scenes.json").write_text(json.dumps({"schemaVersion":1,"rows":rows}, separators=(",", ":")), encoding="utf-8")
+    print(json.dumps({"measuredScenes":len(rows), "invalidGeometry":len(invalid), "output":str(args.output)}))
+
+
+if __name__ == "__main__":
+    main()

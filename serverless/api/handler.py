@@ -49,10 +49,6 @@ cloudfront = boto3.client("cloudfront")
 _connection: sqlite3.Connection | None = None
 _catalog_cache: dict[str, Any] | None = None
 _study_document = json.loads((Path(__file__).parents[1] / "study" / "cases.json").read_text(encoding="utf-8"))
-STUDY_COLLECTION_ENABLED = (
-    os.environ.get("STUDY_COLLECTION_ENABLED", "false").lower() == "true"
-    and _study_document.get("collectionEnabled") is True
-)
 
 ARTIFACT_FILES = {
     "ordinary.png": ("ordinaryImage", "image/png"),
@@ -116,157 +112,44 @@ def _management_token(job_id: str) -> str:
     return hmac.new(HMAC_SECRET, f"manage:{job_id}".encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def _study_token(session_id: str) -> str:
-    return hmac.new(HMAC_SECRET, f"study:{session_id}".encode("utf-8"), hashlib.sha256).hexdigest()
+def _study_service():
+    from serverless.study.service import StudyService
+    from serverless.study.store import DynamoStudyStore
+    return StudyService(_study_document, DynamoStudyStore(dynamodb, TABLE_NAME), HMAC_SECRET,
+                        enabled=os.environ.get("STUDY_PILOT_ENABLED", "false").lower() == "true")
 
 
-def _study_assignment(session_id: str, case: dict[str, Any]) -> dict[str, Any]:
-    """Return opaque, deterministically balanced sides without revealing conditions."""
-    flip = hmac.new(HMAC_SECRET, f"{session_id}:{case['id']}".encode("utf-8"), hashlib.sha256).digest()[0] % 2 == 1
-    comparison = case.get("comparisonImage", case.get("ablationImage"))
-    left = comparison if flip else case["relationImage"]
-    right = case["relationImage"] if flip else comparison
-    return {"caseId": case["id"], "objects": case["objects"], "leftImage": left, "rightImage": right}
-
-
-def _study_case(case_id: str) -> dict[str, Any] | None:
-    return next((case for case in _study_document["cases"] if case["id"] == case_id), None)
-
-
-def _study_parse_body(event: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _study_call(action: str, event: dict[str, Any], session_id: str | None = None) -> dict[str, Any]:
+    from serverless.study.service import StudyError
     try:
-        body = json.loads(event.get("body") or "{}")
+        raw = event.get("body") or "{}"
+        if not isinstance(raw, str) or len(raw) > 12000:
+            return _response(413, {"error": {"code": "STUDY_REQUEST_TOO_LARGE", "message": "A small JSON object is required."}})
+        if event.get("isBase64Encoded"):
+            raw = base64.b64decode(raw).decode("utf-8")
+        body = json.loads(raw)
         if not isinstance(body, dict):
-            raise ValueError
-        return body, None
-    except (json.JSONDecodeError, ValueError):
-        return None, _response(400, {"error": {"code": "INVALID_JSON", "message": "The request body is not valid JSON."}})
-
-
-def _study_unavailable() -> dict[str, Any]:
-    return _response(503, {
-        "error": {
-            "code": "STUDY_NOT_COLLECTING",
-            "message": "The comparison protocol is prepared, but participant data collection is not open.",
-        }
-    })
+            raise ValueError()
+    except (ValueError, TypeError, UnicodeError, binascii.Error):
+        return _response(400, {"error": {"code": "INVALID_JSON", "message": "A JSON object is required."}})
+    try:
+        service = _study_service()
+        result = getattr(service, action)(body) if session_id is None else getattr(service, action)(session_id, body)
+        return _response(201 if action == "start" else 200, result)
+    except StudyError as error:
+        return _response(error.status, {"error": {"code": error.code, "message": str(error)}})
 
 
 def _study_start(event: dict[str, Any]) -> dict[str, Any]:
-    if not STUDY_COLLECTION_ENABLED:
-        return _study_unavailable()
-    body, error = _study_parse_body(event)
-    if error:
-        return error
-    participant = " ".join(str(body.get("participantLabel", "")).split())
-    if not 2 <= len(participant) <= 60 or any(ord(character) < 32 for character in participant):
-        return _response(400, {"error": {"code": "INVALID_PARTICIPANT_LABEL", "message": "Enter a participant name or assigned code between 2 and 60 characters."}})
-    if body.get("consent") is not True or body.get("invited") is not True:
-        return _response(400, {"error": {"code": "STUDY_ACKNOWLEDGEMENT_REQUIRED", "message": "Both study acknowledgements are required."}})
-
-    session_id = str(uuid.uuid4())
-    now = int(time.time())
-    expires_at = int((datetime.now(UTC) + timedelta(days=365)).timestamp())
-    dynamodb.put_item(
-        TableName=TABLE_NAME,
-        Item={
-            "pk": {"S": f"study-session#{session_id}"},
-            "sk": {"S": "meta"},
-            "entity": {"S": "study-session"},
-            "participantLabel": {"S": participant},
-            "studyVersion": {"S": _study_document["studyVersion"]},
-            "consentVersion": {"S": "2026-09-12"},
-            "createdAt": {"N": str(now)},
-            "expiresAt": {"N": str(expires_at)},
-        },
-        ConditionExpression="attribute_not_exists(pk)",
-    )
-    print(json_dumps({"event": "study_session_started", "sessionId": session_id, "studyVersion": _study_document["studyVersion"]}))
-    return _response(201, {
-        "sessionId": session_id,
-        "sessionToken": _study_token(session_id),
-        "studyVersion": _study_document["studyVersion"],
-        "cases": [_study_assignment(session_id, case) for case in _study_document["cases"]],
-        "completedCaseIds": [],
-    })
+    return _study_call("start", event)
 
 
 def _study_session(event: dict[str, Any], session_id: str) -> dict[str, Any]:
-    if not STUDY_COLLECTION_ENABLED:
-        return _study_unavailable()
-    try:
-        session_id = str(uuid.UUID(session_id))
-    except ValueError:
-        return _response(404, {"error": {"code": "STUDY_SESSION_NOT_FOUND", "message": "That study session was not found."}})
-    body, error = _study_parse_body(event)
-    if error:
-        return error
-    if not hmac.compare_digest(str(body.get("sessionToken", "")), _study_token(session_id)):
-        return _response(403, {"error": {"code": "STUDY_SESSION_FORBIDDEN", "message": "This browser cannot open that study session."}})
-    records = dynamodb.query(
-        TableName=TABLE_NAME,
-        KeyConditionExpression="pk = :pk",
-        ExpressionAttributeValues={":pk": {"S": f"study-session#{session_id}"}},
-        ConsistentRead=True,
-    ).get("Items", [])
-    if not any(record["sk"]["S"] == "meta" for record in records):
-        return _response(404, {"error": {"code": "STUDY_SESSION_NOT_FOUND", "message": "That study session was not found."}})
-    completed = sorted(record["caseId"]["S"] for record in records if record.get("entity", {}).get("S") == "study-response")
-    return _response(200, {
-        "sessionId": session_id,
-        "studyVersion": _study_document["studyVersion"],
-        "cases": [_study_assignment(session_id, case) for case in _study_document["cases"]],
-        "completedCaseIds": completed,
-    })
+    return _study_call("resume", event, session_id)
 
 
 def _study_response(event: dict[str, Any], session_id: str) -> dict[str, Any]:
-    if not STUDY_COLLECTION_ENABLED:
-        return _study_unavailable()
-    body, error = _study_parse_body(event)
-    if error:
-        return error
-    try:
-        session_id = str(uuid.UUID(session_id))
-    except ValueError:
-        return _response(404, {"error": {"code": "STUDY_SESSION_NOT_FOUND", "message": "That study session was not found."}})
-    if not hmac.compare_digest(str(body.get("sessionToken", "")), _study_token(session_id)):
-        return _response(403, {"error": {"code": "STUDY_SESSION_FORBIDDEN", "message": "This browser cannot save to that study session."}})
-    if not _get(f"study-session#{session_id}"):
-        return _response(404, {"error": {"code": "STUDY_SESSION_NOT_FOUND", "message": "That study session was not found."}})
-    case = _study_case(str(body.get("caseId", "")))
-    judgement = body.get("judgement")
-    error_choice = body.get("errorChoice")
-    confidence = body.get("confidence")
-    note = str(body.get("note", "")).strip()
-    if case is None or judgement not in {"left", "tie", "right"} or error_choice not in {"left", "neither", "both", "right"}:
-        return _response(400, {"error": {"code": "INVALID_STUDY_RESPONSE", "message": "Choose a plausibility judgement and an error judgement for a valid case."}})
-    if not isinstance(confidence, int) or not 1 <= confidence <= 5 or len(note) > 280:
-        return _response(400, {"error": {"code": "INVALID_STUDY_RESPONSE", "message": "Confidence must be 1–5 and a note may contain at most 280 characters."}})
-
-    assignment = _study_assignment(session_id, case)
-    comparison_condition = case.get("comparisonCondition", "ablation")
-    left_condition = "relation" if assignment["leftImage"] == case["relationImage"] else comparison_condition
-    now = int(time.time())
-    expires_at = int((datetime.now(UTC) + timedelta(days=365)).timestamp())
-    item = {
-        "pk": {"S": f"study-session#{session_id}"},
-        "sk": {"S": f"response#{case['id']}"},
-        "entity": {"S": "study-response"},
-        "caseId": {"S": case["id"]},
-        "judgement": {"S": judgement},
-        "errorChoice": {"S": error_choice},
-        "confidence": {"N": str(confidence)},
-        "leftCondition": {"S": left_condition},
-        "rightCondition": {"S": comparison_condition if left_condition == "relation" else "relation"},
-        "updatedAt": {"N": str(now)},
-        "expiresAt": {"N": str(expires_at)},
-    }
-    if note:
-        item["note"] = {"S": note}
-    dynamodb.put_item(TableName=TABLE_NAME, Item=item)
-    print(json_dumps({"event": "study_response_saved", "sessionId": session_id, "caseId": case["id"]}))
-    return _response(200, {"saved": True, "caseId": case["id"]})
+    return _study_call("respond", event, session_id)
 
 
 def _job_response(job_id: str, expires_at: int, replayed: bool = False) -> dict[str, Any]:

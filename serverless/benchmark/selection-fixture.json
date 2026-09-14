@@ -1,0 +1,566 @@
+{
+  "model": {
+    "baselineCommit": "b8c7c5a2f88f5c87e499c4f05e7aa8b6f1b7c51b"
+  },
+  "rows": [
+    {
+      "mode": "random",
+      "seed": 20260913,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "table",
+        "book",
+        "chair"
+      ],
+      "returnedObjects": [
+        "book",
+        "table",
+        "chair"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20261910,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "sofa",
+        "printer",
+        "dining_table"
+      ],
+      "returnedObjects": [
+        "dining_table",
+        "printer",
+        "sofa"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20262907,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 5,
+      "selectedObjects": [
+        "book",
+        "chair",
+        "curtain",
+        "bed",
+        "desk"
+      ],
+      "returnedObjects": [
+        "desk",
+        "book",
+        "bed",
+        "chair",
+        "window",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20263904,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 6,
+      "selectedObjects": [
+        "table",
+        "chair",
+        "lamp",
+        "sofa",
+        "pillow",
+        "blinds"
+      ],
+      "returnedObjects": [
+        "pillow",
+        "lamp",
+        "table",
+        "sofa",
+        "chair",
+        "window"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20264901,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "blinds",
+        "pillow",
+        "chair"
+      ],
+      "returnedObjects": [
+        "pillow",
+        "chair",
+        "window",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20265898,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "sofa",
+        "dining_table",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "cupboard",
+        "sofa",
+        "dining_table"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20266895,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 5,
+      "selectedObjects": [
+        "printer",
+        "sofa",
+        "pillow",
+        "dining_table",
+        "coffee_table"
+      ],
+      "returnedObjects": [
+        "pillow",
+        "printer",
+        "dining_table",
+        "coffee_table",
+        "sofa"
+      ]
+    },
+    {
+      "mode": "random",
+      "seed": 20267892,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 5,
+      "selectedObjects": [
+        "table",
+        "printer",
+        "chair",
+        "cupboard",
+        "pillow"
+      ],
+      "returnedObjects": [
+        "pillow",
+        "table",
+        "chair",
+        "cupboard",
+        "printer"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20360916,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "curtain",
+        "desk",
+        "bed"
+      ],
+      "returnedObjects": [
+        "desk",
+        "bed",
+        "window",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20361913,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "bed",
+        "desk",
+        "telephone"
+      ],
+      "returnedObjects": [
+        "bed",
+        "desk",
+        "telephone"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20362910,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 5,
+      "selectedObjects": [
+        "table",
+        "printer",
+        "book",
+        "chair",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "chair",
+        "table",
+        "cupboard",
+        "book",
+        "printer"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20363907,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 6,
+      "selectedObjects": [
+        "printer",
+        "lamp",
+        "plant",
+        "cupboard",
+        "pillow",
+        "telephone"
+      ],
+      "returnedObjects": [
+        "pillow",
+        "lamp",
+        "cupboard",
+        "telephone",
+        "printer",
+        "plant"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20364904,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "blinds",
+        "chair",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "chair",
+        "cupboard",
+        "window",
+        "curtain"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20365901,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "table",
+        "blinds",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "table",
+        "cupboard",
+        "window",
+        "curtain",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20366898,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 4,
+      "selectedObjects": [
+        "lamp",
+        "pillow",
+        "chair",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "chair",
+        "pillow",
+        "cupboard",
+        "lamp"
+      ]
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20367895,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 6,
+      "selectedObjects": [
+        "table",
+        "sofa_chair",
+        "chair",
+        "plant",
+        "pillow",
+        "blinds"
+      ],
+      "returnedObjects": [
+        "chair",
+        "table",
+        "sofa_chair",
+        "plant",
+        "pillow",
+        "window",
+        "curtain"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20460919,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "chair",
+        "dining_table",
+        "lamp"
+      ],
+      "returnedObjects": [
+        "dining_table",
+        "chair",
+        "lamp"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20461916,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 4,
+      "selectedObjects": [
+        "table",
+        "blinds",
+        "dining_table",
+        "chair"
+      ],
+      "returnedObjects": [
+        "table",
+        "chair",
+        "dining_table",
+        "window",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20462913,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 5,
+      "selectedObjects": [
+        "printer",
+        "chair",
+        "lamp",
+        "plant",
+        "blinds"
+      ],
+      "returnedObjects": [
+        "plant",
+        "lamp",
+        "printer",
+        "chair",
+        "window",
+        "blinds",
+        "curtain"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20463910,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 6,
+      "selectedObjects": [
+        "table",
+        "chair",
+        "plant",
+        "sofa",
+        "coffee_table",
+        "sofa_chair"
+      ],
+      "returnedObjects": [
+        "sofa",
+        "table",
+        "coffee_table",
+        "sofa_chair",
+        "chair",
+        "plant"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20464907,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "bin",
+        "window",
+        "chair"
+      ],
+      "returnedObjects": [
+        "window",
+        "chair",
+        "bin",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20465904,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "sofa",
+        "chair",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "chair",
+        "sofa",
+        "cupboard"
+      ]
+    },
+    {
+      "mode": "living_room",
+      "seed": 20466901,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 4
+    },
+    {
+      "mode": "living_room",
+      "seed": 20467898,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 6,
+      "selectedObjects": [
+        "window",
+        "chair",
+        "lamp",
+        "cupboard",
+        "dining_table",
+        "blinds"
+      ],
+      "returnedObjects": [
+        "chair",
+        "lamp",
+        "dining_table",
+        "window",
+        "cupboard"
+      ]
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20560922,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "blinds",
+        "chair",
+        "lamp"
+      ],
+      "returnedObjects": [
+        "lamp",
+        "chair",
+        "window",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20561919,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "dining_table",
+        "plant",
+        "chair"
+      ],
+      "returnedObjects": [
+        "dining_table",
+        "chair",
+        "plant"
+      ]
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20562916,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 4,
+      "selectedObjects": [
+        "dining_table",
+        "blinds",
+        "chair",
+        "lamp"
+      ],
+      "returnedObjects": [
+        "chair",
+        "dining_table",
+        "lamp",
+        "window"
+      ]
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20563913,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 4
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20564910,
+      "requestedObjectCount": 3,
+      "selectedObjectCount": 3,
+      "selectedObjects": [
+        "blinds",
+        "chair",
+        "lamp"
+      ],
+      "returnedObjects": [
+        "chair",
+        "lamp",
+        "window",
+        "blinds",
+        "curtain"
+      ]
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20565907,
+      "requestedObjectCount": 4,
+      "selectedObjectCount": 3
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20566904,
+      "requestedObjectCount": 5,
+      "selectedObjectCount": 4,
+      "selectedObjects": [
+        "dining_table",
+        "window",
+        "chair",
+        "cupboard"
+      ],
+      "returnedObjects": [
+        "cupboard",
+        "dining_table",
+        "chair",
+        "window",
+        "curtain",
+        "blinds"
+      ]
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20567901,
+      "requestedObjectCount": 6,
+      "selectedObjectCount": 5,
+      "selectedObjects": [
+        "table",
+        "coffee_mug",
+        "cap",
+        "cereal_box",
+        "soda_can"
+      ],
+      "returnedObjects": [
+        "table",
+        "cereal_box",
+        "soda_can",
+        "cap",
+        "coffee_mug"
+      ]
+    }
+  ]
+}

@@ -48,23 +48,25 @@ Publishing uses an optional display name and removal password. Only a salted
 PBKDF2-SHA256 verifier is stored in a separate encrypted, public-access-blocked
 S3 bucket. The plaintext password is never retained.
 
-The comparison-study endpoints are deployed but closed. Both the environment
-and `study/cases.json` must explicitly enable collection after ethics,
-recruitment, consent, and frozen-stimulus work is complete.
+Human enrollment remains closed. The comparison endpoints accept only signed
+AI-pilot invitations when `STUDY_PILOT_ENABLED` and the frozen protocol both
+enable that pilot. Ten independent review contexts use the same rubric, with
+different inspection emphases. Their records cannot enter human-participant
+totals. Human enrollment requires separate ethics, recruitment and consent work.
 
 ## Local validation
 
 ```powershell
 python -m serverless.compiler.build_runtime --repository . --output .codex/runtime
 python -m unittest discover -s serverless/tests -v
-$env:PYTHONHASHSEED = "0"
-python -m serverless.benchmark.evaluate_v4 --runtime .codex/runtime/v4 --output serverless/benchmark/results/soilie-exact-v4.json
 ```
 
-The fixed 32-attempt machine audit exercises original V4 object selection and
-`calculateCoords`. It is an implementation diagnostic, not a plausibility or
-final-collision score, because V4 performs important corrections later in
-Blender. The room-fitting extension is excluded from the audit.
+The [benchmark guide](benchmark/README.md) documents completed-placement
+measurement, source importers, fixed-seed parity checks, checkpointed local
+batches, generic cost assumptions and the AI pilot. The optional website room
+fitting is excluded from model measurements. Compact selection fixtures retain
+the evidence behind the earlier duplicate-disabled examples without keeping
+their obsolete preliminary scores.
 
 ## Deployment
 

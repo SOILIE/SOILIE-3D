@@ -1,0 +1,864 @@
+{
+  "schemaVersion": 1,
+  "sourceAuditSha256": "6bdf4cab3eae97edb65c3f5886036e4406f47a3a6bb338ccb1d6dad5faabbdac",
+  "sourceCommit": "b8c7c5a2f88f5c87e499c4f05e7aa8b6f1b7c51b",
+  "shorterSelections": 14,
+  "auditedSelections": 32,
+  "allCausedByDuplicateRemoval": true,
+  "architecturalConsolidationCases": [
+    {
+      "seed": 20467898,
+      "selected": [
+        "window",
+        "chair",
+        "lamp",
+        "cupboard",
+        "dining_table",
+        "blinds"
+      ],
+      "returned": [
+        "chair",
+        "lamp",
+        "dining_table",
+        "window",
+        "cupboard"
+      ]
+    }
+  ],
+  "rows": [
+    {
+      "mode": "random",
+      "seed": 20260913,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "table",
+        "book"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "book",
+        "chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "table",
+        "book"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20261910,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "sofa",
+        "sofa",
+        "dining_table",
+        "printer"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "sofa",
+        "printer",
+        "dining_table"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "sofa",
+        "sofa",
+        "dining_table",
+        "printer"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20262907,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "curtain",
+        "desk",
+        "bed",
+        "book",
+        "chair"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "book",
+        "chair",
+        "curtain",
+        "bed",
+        "desk"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "curtain",
+        "desk",
+        "bed",
+        "book",
+        "chair"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20263904,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "blinds",
+        "sofa",
+        "chair",
+        "lamp",
+        "pillow",
+        "table"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "chair",
+        "lamp",
+        "sofa",
+        "pillow",
+        "blinds"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "blinds",
+        "sofa",
+        "chair",
+        "lamp",
+        "pillow",
+        "table"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20264901,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "blinds",
+        "pillow",
+        "chair"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "blinds",
+        "pillow",
+        "chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "blinds",
+        "pillow",
+        "chair"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20265898,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "sofa",
+        "sofa",
+        "cupboard",
+        "dining_table"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "sofa",
+        "dining_table",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "sofa",
+        "sofa",
+        "cupboard",
+        "dining_table"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20266895,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "printer",
+        "sofa",
+        "coffee_table",
+        "dining_table",
+        "pillow"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "printer",
+        "sofa",
+        "pillow",
+        "dining_table",
+        "coffee_table"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "printer",
+        "sofa",
+        "coffee_table",
+        "dining_table",
+        "pillow"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "random",
+      "seed": 20267892,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "table",
+        "table",
+        "chair",
+        "cupboard",
+        "pillow",
+        "printer"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "printer",
+        "chair",
+        "cupboard",
+        "pillow"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "table",
+        "table",
+        "chair",
+        "cupboard",
+        "pillow",
+        "printer"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20360916,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "curtain",
+        "desk",
+        "bed"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "curtain",
+        "desk",
+        "bed"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "curtain",
+        "desk",
+        "bed"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20361913,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "telephone",
+        "bed",
+        "bed",
+        "desk"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "bed",
+        "desk",
+        "telephone"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "telephone",
+        "bed",
+        "bed",
+        "desk"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20362910,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "table",
+        "book",
+        "cupboard",
+        "printer"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "printer",
+        "book",
+        "chair",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "table",
+        "book",
+        "cupboard",
+        "printer"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20363907,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "lamp",
+        "pillow",
+        "cupboard",
+        "plant",
+        "printer",
+        "telephone"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "printer",
+        "lamp",
+        "plant",
+        "cupboard",
+        "pillow",
+        "telephone"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "lamp",
+        "pillow",
+        "cupboard",
+        "plant",
+        "printer",
+        "telephone"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20364904,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "blinds",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "blinds",
+        "chair",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "chair",
+        "closet"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20365901,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "table",
+        "cupboard",
+        "blinds",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "blinds",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "table",
+        "cupboard",
+        "blinds",
+        "cupboard"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20366898,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "cupboard",
+        "chair",
+        "cupboard",
+        "lamp",
+        "pillow"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "lamp",
+        "pillow",
+        "chair",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "cupboard",
+        "chair",
+        "cupboard",
+        "lamp",
+        "pillow"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "bedroom",
+      "seed": 20367895,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "table",
+        "pillow",
+        "blinds",
+        "chair",
+        "plant",
+        "sofa_chair"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "sofa_chair",
+        "chair",
+        "plant",
+        "pillow",
+        "blinds"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "table",
+        "pillow",
+        "blinds",
+        "chair",
+        "plant",
+        "sofa_chair"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20460919,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "lamp",
+        "dining_table",
+        "chair"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "chair",
+        "dining_table",
+        "lamp"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "lamp",
+        "dining_table",
+        "chair"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20461916,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "table",
+        "chair",
+        "blinds",
+        "dining_table"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "blinds",
+        "dining_table",
+        "chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "table",
+        "chair",
+        "blinds",
+        "dining_table"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20462913,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "printer",
+        "lamp",
+        "blinds",
+        "chair",
+        "plant"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "printer",
+        "chair",
+        "lamp",
+        "plant",
+        "blinds"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "printer",
+        "lamp",
+        "blinds",
+        "chair",
+        "plant"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20463910,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "table",
+        "coffee_table",
+        "plant",
+        "sofa",
+        "sofa_chair"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "chair",
+        "plant",
+        "sofa",
+        "coffee_table",
+        "sofa_chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "table",
+        "coffee_table",
+        "plant",
+        "sofa",
+        "sofa_chair"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20464907,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "window",
+        "bin"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "bin",
+        "window",
+        "chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "window",
+        "bin"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20465904,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "sofa",
+        "chair",
+        "chair",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "sofa",
+        "chair",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "sofa",
+        "chair",
+        "chair",
+        "cupboard"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20466901,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "chair",
+        "cabinet",
+        "coffee_table",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "cupboard",
+        "coffee_table",
+        "chair",
+        "cabinet"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "chair",
+        "cabinet",
+        "coffee_table",
+        "cupboard"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "living_room",
+      "seed": 20467898,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "cupboard",
+        "dining_table",
+        "blinds",
+        "chair",
+        "lamp",
+        "window"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "window",
+        "chair",
+        "lamp",
+        "cupboard",
+        "dining_table",
+        "blinds"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "cupboard",
+        "dining_table",
+        "blinds",
+        "chair",
+        "lamp",
+        "window"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20560922,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "lamp",
+        "chair",
+        "blinds"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "blinds",
+        "chair",
+        "lamp"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "lamp",
+        "chair",
+        "blinds"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20561919,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "dining_table",
+        "chair",
+        "plant"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "dining_table",
+        "plant",
+        "chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "dining_table",
+        "chair",
+        "plant"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20562916,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "lamp",
+        "blinds",
+        "chair",
+        "dining_table"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "dining_table",
+        "blinds",
+        "chair",
+        "lamp"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "lamp",
+        "blinds",
+        "chair",
+        "dining_table"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20563913,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "chair",
+        "chair",
+        "table",
+        "trash_bin",
+        "window"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "trash_bin",
+        "window",
+        "chair"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "chair",
+        "chair",
+        "table",
+        "trash_bin",
+        "window"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20564910,
+      "requested": 3,
+      "sampledBeforeDeduplication": [
+        "lamp",
+        "chair",
+        "blinds"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "blinds",
+        "chair",
+        "lamp"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "chair",
+        "chair"
+      ],
+      "shorter": false,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20565907,
+      "requested": 4,
+      "sampledBeforeDeduplication": [
+        "chair",
+        "chair",
+        "bin",
+        "cabinet"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "bin",
+        "chair",
+        "cabinet"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "chair",
+        "chair",
+        "bin",
+        "cabinet"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20566904,
+      "requested": 5,
+      "sampledBeforeDeduplication": [
+        "window",
+        "chair",
+        "chair",
+        "cupboard",
+        "dining_table"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "dining_table",
+        "window",
+        "chair",
+        "cupboard"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "window",
+        "chair",
+        "chair",
+        "cupboard",
+        "dining_table"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    },
+    {
+      "mode": "kitchen",
+      "seed": 20567901,
+      "requested": 6,
+      "sampledBeforeDeduplication": [
+        "cap",
+        "soda_can",
+        "cap",
+        "cereal_box",
+        "coffee_mug",
+        "table"
+      ],
+      "selectedWithDuplicatesDisabled": [
+        "table",
+        "coffee_mug",
+        "cap",
+        "cereal_box",
+        "soda_can"
+      ],
+      "selectedWithDuplicatesEnabled": [
+        "cap",
+        "soda_can",
+        "cap",
+        "cereal_box",
+        "coffee_mug",
+        "table"
+      ],
+      "shorter": true,
+      "explainedByDeduplication": true
+    }
+  ],
+  "interpretation": "Duplicate-disabled selection intentionally collapses repeated labels. This is expected configuration behavior, not a quality metric."
+}
