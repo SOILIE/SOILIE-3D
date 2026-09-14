@@ -235,6 +235,12 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
 
 def build(repository: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
+    legacy_runtime = output / "v4"
+    if legacy_runtime.exists():
+        raise RuntimeError(
+            f"Legacy copied model source exists at {legacy_runtime}. Remove that generated "
+            "directory and pass the checked-out repository itself to --runtime."
+        )
     provenance = record_v4_provenance(repository, output)
     counts = compile_api_index(repository, output)
     checksums = {

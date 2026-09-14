@@ -75,7 +75,7 @@ functions run in both modes; layout-only exits after the final placement.
 ```bash
 python -m serverless.compiler.build_runtime --repository . --output .codex/runtime
 python -m serverless.benchmark.run_batch \
-  --runtime .codex/runtime/v4 \
+  --runtime . \
   --blender .codex/tools/blender-3.6.23-linux-x64/blender \
   --output .codex/benchmark/soilie-bedroom --target 10000 --seed 20260913
 python -m serverless.benchmark.import_layoutgpt --output .codex/benchmark/layoutgpt
@@ -89,6 +89,10 @@ An OS lock prevents two writers from overwriting a run. Pauses between sessions
 are not included in active-attempt seconds. Keep runs with different settings
 in separate directories. Full-render parity runs are rejected by the
 placement-timing publisher.
+
+`--runtime .` deliberately executes the model source, data, and assets from the
+checked-out commit. `.codex/runtime` contains generated API indexes and the
+checksum provenance record only; it is not a second copy of the model.
 
 `timing.py` records new invocation sessions separately from per-attempt timers.
 It records the CPU model and visible RAM/CPU allocation without hostnames or
