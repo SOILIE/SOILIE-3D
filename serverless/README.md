@@ -6,11 +6,12 @@ solver, simplified recency model, reduced asset catalog, or fallback renderer.
 
 ## Exact execution boundary
 
-`compiler/build_runtime.py` stages all 191 OBJ assets, the original relation
-data, `suggested_setup.blend`, and every V4 module. It records checksums before
-adding one reviewed hook to the staged copy of `modules/render.py`. That hook
-runs only after V4 has completed its own placement, grounding, wall alignment,
-pair rotation, stacking, overlap, and window-adjustment operations.
+CI hydrates the 191 OBJ assets and required V4 data files into their canonical
+repository paths, then verifies every byte against `runtime-assets.json`.
+`compiler/build_runtime.py` produces only the indexed catalog and provenance in
+`.codex/runtime`; it never copies or rewrites model source. The renderer image
+copies `modules/`, data, meshes, and Blender setup directly from the checked-out
+`main` commit.
 
 The optional `modules/room_fit.py` extension measures the completed scene and
 redraws only the floor and four walls. It never moves, rotates, rescales,
@@ -18,12 +19,9 @@ replaces, or retries an interior object. The original V4 camera,
 `change_imagination_focus` recency sequence, and `png2gif` animation builder
 remain authoritative.
 
-The staged launcher also skips V4's final in-memory teardown after all artifacts
-and output rows have been completed. The original cleanup removes every mesh
-datablock during its first loop iteration and then raises while selecting an
-already-unlinked object, before it can print the result JSON, on Blender 3.6.
-Skipping that process-exit-only cleanup changes no placement, camera, render,
-data, or artifact and is recorded separately in runtime provenance.
+The tracked V4 cleanup now removes scene objects before orphaned datablocks. It
+therefore supports repeated generations in one Blender process without changing
+placement, camera, render, data, or artifacts.
 
 The SQLite runtime index is limited to API catalog and pre-queue validation.
 Original V4 CSV files remain authoritative for object selection and coordinate
