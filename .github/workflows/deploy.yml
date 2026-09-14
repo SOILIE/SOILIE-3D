@@ -65,7 +65,13 @@ jobs:
       - name: Push immutable images and deploy CloudFormation
         id: deploy
         run: |
-          endpoint="$(bash serverless/scripts/deploy-ci.sh | tail -n 1)"
+          bash serverless/scripts/deploy-ci.sh
+          endpoint="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name "${SOILIE_ENGINE_STACK:-soilie3d-engine}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text)"
+          test "${endpoint#https://}" != "$endpoint"
           echo "endpoint=${endpoint}" >> "$GITHUB_OUTPUT"
 
       - name: Verify catalog and live generation paths
