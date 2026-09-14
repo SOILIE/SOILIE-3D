@@ -1,5 +1,8 @@
 """Combine frozen AI-only waves, using scene pairs, not votes, as clusters."""
 from collections import Counter, defaultdict
+import argparse
+import json
+from pathlib import Path
 import random
 import statistics
 
@@ -56,3 +59,18 @@ def combine(reports, seed=20260914, resamples=10000):
             'byPromptFocus':[dict(baseline=key[0],profile=key[1],votes=dict(votes)) for key,votes in sorted(profiles.items())],
             'pairs':cases,'bootstrapSeed':seed,'bootstrapResamples':resamples,
             'limitations':'Fresh contexts can share one underlying model. Neither different prompts nor consistent repeats establish correctness. Waves are not independent human reviewers. Never treat all votes as independent scene samples.'}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--reports',type=Path,nargs='+',required=True)
+    parser.add_argument('--output',type=Path,required=True)
+    args = parser.parse_args()
+    summary = combine([json.loads(path.read_bytes()) for path in args.reports])
+    args.output.parent.mkdir(parents=True,exist_ok=True)
+    args.output.write_text(json.dumps(summary,indent=2),encoding='utf-8',newline='\n')
+    print(json.dumps({'waves':len(summary['studyVersions']),'judgements':summary['mainJudgements']}))
+
+
+if __name__ == '__main__':
+    main()

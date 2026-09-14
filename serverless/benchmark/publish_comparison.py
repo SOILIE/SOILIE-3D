@@ -11,7 +11,7 @@ from serverless.benchmark.geometry import measure, stratum, summarize
 from serverless.benchmark.cost import evidence as cost_evidence
 from serverless.benchmark.stimuli import diagram
 from serverless.benchmark.support_replays import merge_support
-from serverless.benchmark.timing import session_summary
+from serverless.benchmark.timing import session_summary, generation_breakdown
 from serverless.benchmark.verify_parity import digest
 
 METRICS = {
@@ -96,6 +96,7 @@ def main():
                      "completed": len(successes), "status": "complete" if len(successes) >= config["targetCompletions"] else "in_progress",
                      "activeWallSeconds": sum(row["wallSeconds"] for row in batch),
                      "generationSeconds": sum(row["generationSeconds"] for row in batch),
+                     "generationBreakdown": generation_breakdown(batch),
                      "failures": dict(Counter(row.get("errorCode") for row in batch if row["status"] != "complete")),
                      "first10000Attempts": {"attempted": min(10000,len(batch)), "completed": sum(row["status"] == "complete" for row in batch[:10000])},
                      "configuration": {key: value for key,value in config.items() if key not in {"runtime","blender","provenance"}},

@@ -75,3 +75,21 @@ def session_summary(directory, attempts):
             'calendarAttemptSpanSeconds':span,
             'hardwareSnapshots':[row['hardware'] for row in sessions],
             'interpretation':'Generation seconds sum measured attempt timers and exclude observation work. Calendar span includes pauses. Full active-session wall time is unavailable when any session was not recorded or did not finish.'}
+
+
+def generation_breakdown(attempts):
+    """Sum model-attempt stopwatches, never campaign/session calendar spans.
+
+    Failed placement and watchdog time still consume the generator. Expose
+    them separately so completed-scene latency is not confused with throughput.
+    Read-only geometry observation was already removed by the batch runner.
+    """
+    if any(row['status'] not in {'complete','failed'} for row in attempts):
+        raise ValueError('Only finished attempt checkpoints enter generation timing')
+    completed = sum(row['generationSeconds'] for row in attempts if row['status'] == 'complete')
+    failed = sum(row['generationSeconds'] for row in attempts if row['status'] == 'failed')
+    timeout = sum(row['generationSeconds'] for row in attempts if row.get('errorCode') == 'TIMEOUT')
+    return {'completedSeconds':completed,'failedSeconds':failed,'timeoutSecondsWithinFailures':timeout,
+            'totalSeconds':completed+failed,
+            'excludedObservationSeconds':sum(row.get('observationSeconds',0) for row in attempts),
+            'meaning':'Elapsed time inside generation attempts, including initialization and placement. No queue gaps, session pauses, other cohorts, validation, publishing or image rendering. Timeout failures retain actual elapsed attempt time; this is not CPU utilization time.'}

@@ -6,12 +6,25 @@ from unittest.mock import patch
 
 from serverless.benchmark.run_batch import write_json
 from serverless.benchmark.support_replays import merge_support
-from serverless.benchmark.timing import record_session, session_summary
+from serverless.benchmark.timing import record_session, session_summary, generation_breakdown
 from serverless.benchmark.verify_parity import digest
 from serverless.tests import test_benchmark_parity as parity_fixtures
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_generation_timing_excludes_gaps_but_discloses_actual_failed_work(self):
+        rows = [{'status':'complete','startedAt':'2026-09-14T00:00:00Z','generationSeconds':10,'observationSeconds':3},
+                {'status':'failed','startedAt':'2026-09-14T12:00:00Z','generationSeconds':900,'errorCode':'TIMEOUT'},
+                {'status':'failed','startedAt':'2026-09-14T15:00:00Z','generationSeconds':5}]
+        result = generation_breakdown(rows)
+        self.assertEqual(915,result['totalSeconds'])
+        self.assertEqual(10,result['completedSeconds'])
+        self.assertEqual(905,result['failedSeconds'])
+        self.assertEqual(900,result['timeoutSecondsWithinFailures'])
+        self.assertEqual(3,result['excludedObservationSeconds'])
+        with self.assertRaises(ValueError):
+            generation_breakdown([{'status':'running','generationSeconds':30}])
+
     def setUp(self):
         base = Path(__file__).parents[2]/'.codex/tests'
         base.mkdir(parents=True,exist_ok=True)

@@ -203,6 +203,13 @@ selections without retaining the retired preliminary score reports. Replay it
 with `PYTHONHASHSEED=0 python -m serverless.benchmark.audit_selection`, supplying
 `--runtime`, `--source` and `--output`; the output records the fixture checksum.
 
+Each run's `generationBreakdown` separates completed-attempt time, failed-attempt
+time, and the timeout subset of failures. Their total equals the sum of model
+attempt stopwatches, excluding read-only observation overhead. Queue gaps,
+pauses, other benchmark cohorts, validation, uploads and image rendering never
+enter that sum. Active placement retries are not idle waiting: retain them in
+all-attempt throughput, while reporting completed-scene latency separately.
+
 `stimuli.py` freezes up to 12 matched pairs per eligible baseline with seeded
 sampling and no quality-based selection. Neutral plan and oblique box views
 are immutable and method-blind. Illustrative high-intrusion examples on the

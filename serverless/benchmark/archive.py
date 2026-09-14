@@ -144,12 +144,14 @@ def publish(client,bucket,output):
         raise ValueError('Archive prefix is not the expected dated outputs folder')
     public_only(document)
     manifest_key = expected_prefix+'manifest.json'
+    published_files = {}
     try:
         previous = client.get_object(Bucket=bucket,Key=manifest_key)
         prior = json.loads(previous['Body'].read())
         if not {row['id'] for row in prior['scenes']} <= {row['id'] for row in document['scenes']}:
             raise ValueError('An older checkpoint cannot replace a larger public archive')
         manifest_condition = {'IfMatch':previous['ETag']}
+        published_files = prior.get('files',{})
     except ClientError as error:
         if error.response['Error']['Code'] not in ('NoSuchKey','404'):
             raise
@@ -174,7 +176,11 @@ def publish(client,bucket,output):
         if hashlib.sha256(body).hexdigest() != metadata['sha256']:
             raise ValueError('Local artifact no longer matches its manifest')
         key = expected_prefix+relative
-        immutable(key,body,metadata['contentType'],metadata['sha256'])
+        # The previous manifest was published only after its immutable files.
+        # Reuse those receipts instead of charging a PUT and HEAD for every
+        # unchanged layout each time the growing campaign is published.
+        if published_files.get(relative) != metadata:
+            immutable(key,body,metadata['contentType'],metadata['sha256'])
         return key
     with ThreadPoolExecutor(max_workers=8) as pool:
         keys = list(pool.map(upload,document['files'].items()))

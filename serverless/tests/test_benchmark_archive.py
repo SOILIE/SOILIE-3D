@@ -52,3 +52,14 @@ class ArchiveTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             publish(client,'bucket',self.output)
         client.put_object.assert_not_called()
+
+    def test_unchanged_immutable_files_reuse_the_published_receipt(self):
+        from unittest.mock import patch
+        document = build({'rows':[fixture('soilie',0)]},{'runs':[]},[],'2026-09-14',self.output)
+        client = MagicMock()
+        client.get_object.return_value = {'Body':BytesIO(json.dumps(document).encode()),'ETag':'"original"'}
+        with patch('serverless.benchmark.archive.merge_index',return_value=5):
+            publish(client,'bucket',self.output)
+        uploaded = [call.kwargs['Key'] for call in client.put_object.call_args_list]
+        self.assertFalse(any(document['prefix']+key in uploaded for key in document['files']))
+        self.assertIn(document['prefix']+'manifest.json',uploaded)

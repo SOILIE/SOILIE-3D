@@ -139,9 +139,13 @@ def main():
     parser.add_argument('--plan',type=Path,required=True)
     parser.add_argument('--run',type=Path)
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--summary-only',action='store_true',help='Publish coverage without duplicating scene geometry in the website bundle')
     args = parser.parse_args()
     if args.run:
-        write_json(args.output,export(args.run,json.loads(args.plan.read_text())))
+        document = export(args.run,json.loads(args.plan.read_text()))
+        if args.summary_only:
+            document.pop('rows')
+        write_json(args.output,document)
     else:
         document = freeze(args.runtime)
         if args.plan.exists() and json.loads(args.plan.read_text()) != document:
