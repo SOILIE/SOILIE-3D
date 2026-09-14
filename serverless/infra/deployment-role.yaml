@@ -129,6 +129,7 @@ Resources:
                   - cloudformation:DeleteChangeSet
                   - cloudformation:ExecuteChangeSet
                   - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
                 Resource: !Sub arn:${AWS::Partition}:cloudformation:ca-central-1:${AWS::AccountId}:stack/soilie3d-engine/*
               - Effect: Allow
                 Action: cloudformation:DescribeStacks
