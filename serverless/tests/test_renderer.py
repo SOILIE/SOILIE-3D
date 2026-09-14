@@ -12,6 +12,11 @@ renderer = importlib.import_module("serverless.renderer.handler")
 
 
 class RendererRedeliveryTests(unittest.TestCase):
+    def test_blender_diagnostic_tail_is_bounded_and_log_safe(self) -> None:
+        diagnostic = renderer._process_output_tail("before\x00" + ("x" * 4000))
+        self.assertEqual(len(diagnostic), 3500)
+        self.assertNotIn("\x00", diagnostic)
+
     def test_scene_terminal_check_skips_completed_and_failed_redeliveries(self) -> None:
         client = Mock()
         with patch.object(renderer, "dynamodb", client):
