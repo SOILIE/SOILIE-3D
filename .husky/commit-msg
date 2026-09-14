@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Version changes are applied by post-commit so the bump lands atomically.
+exit 0

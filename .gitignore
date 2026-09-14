@@ -12,3 +12,4 @@ misc/*
 .codex/
 __pycache__/
 *.pyc
+node_modules/

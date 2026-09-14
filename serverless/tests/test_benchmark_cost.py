@@ -35,7 +35,8 @@ class CostTests(unittest.TestCase):
 
     def test_scenarios_never_turn_local_seconds_into_a_cloud_measurement(self):
         result = evidence([{"status":"complete","generationSeconds":20}, {"status":"failed","generationSeconds":10}],CARD)
-        self.assertEqual(30,result["measuredLocal"]["secondsPerCompletedScene"])
+        self.assertEqual(20,result["measuredLocal"]["secondsPerCompletedScene"])
+        self.assertEqual(1,result["measuredLocal"]["failedAttemptsExcludedFromTiming"])
         self.assertFalse(result["lambda"]["moneyAvailable"])
         self.assertFalse(result["layoutgpt"]["moneyAvailable"])
         self.assertTrue(all(row["evidence"] == "conditional-bound" for row in result["conditionalBounds"]))

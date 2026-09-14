@@ -1,0 +1,3 @@
+-r ../requirements.txt
+boto3>=1.40,<2
+shapely>=2.0,<3

@@ -1,7 +1,7 @@
 """Resumable local V4 placement batches; one fresh process per attempt.
 
-Use --worker only internally. Failed attempts are retained and consume time;
-they are never silently replaced in the first-10,000-attempt summary.
+Use --worker only internally. Failed attempts are retained for reliability
+reporting, while successful-layout timing excludes arbitrary watchdog waits.
 """
 from __future__ import annotations
 
@@ -99,6 +99,8 @@ def worker(args):
 
 
 def batch(args):
+    from serverless.common.v4_runtime import load_v4_provenance
+
     args.output.mkdir(parents=True, exist_ok=True)
     plan = load_request_plan(args.request_plan) if args.request_plan else None
     manifest = args.output/"run.json"
@@ -107,7 +109,7 @@ def batch(args):
               "timeoutSeconds": args.timeout, "targetCompletions": args.target, "blender": str(args.blender),
               "full": args.full, "support": args.support, "pythonVersion": platform.python_version(),
               "hardware": platform.platform(), "cpu": platform.processor(), "cpuThreadsAvailable": os.cpu_count(),
-              "roomFitIncluded": False, "provenance": json.loads((args.runtime/"v4-provenance.json").read_text())}
+              "roomFitIncluded": False, "provenance": load_v4_provenance(args.runtime)}
     if plan:
         # A distinct finite exploration workload, never mixed into the fixed
         # bedroom throughput run. Hash the inputs, not a machine-specific path.
@@ -176,10 +178,15 @@ def batch(args):
                 raise
         row["wallSeconds"] = time.perf_counter()-started
         row["generationSeconds"] = row["wallSeconds"]-row.get("observationSeconds", 0)
+        log_text = (work/"process.log").read_text(errors="replace")
+        row["collisionRecoveryActivated"] = "Object-aware collision recovery activated" in log_text
+        row["collisionRecoveryMoves"] = log_text.count("---| Object-aware move")
+        row["boundaryContainmentActivated"] = "Room containment repair activated" in log_text
         if (work/"selection.json").exists():
             row["selection"] = json.loads((work/"selection.json").read_text())["objects"]
         if row["status"] != "complete":
-            log_text = (work/"process.log").read_text(errors="replace")
+            if "Object-aware collision recovery repeated a geometric state" in log_text:
+                row["errorCode"] = "COLLISION_RECOVERY_ASSERTION"
             trace_start = log_text.find("Traceback")
             row["errorTrace"] = log_text[trace_start:trace_start+2400] if trace_start >= 0 else ""
             row["errorTail"] = log_text[-1200:]

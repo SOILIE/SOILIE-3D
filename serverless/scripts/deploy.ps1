@@ -6,6 +6,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$modelVersion = (Get-Content (Join-Path $repoRoot "package.json") -Raw | ConvertFrom-Json).version
+$sourceCommit = (git -C $repoRoot rev-parse HEAD).Trim()
+$assetManifest = Join-Path $repoRoot "serverless\runtime-assets.json"
+$assetManifestSha256 = (Get-FileHash -LiteralPath $assetManifest -Algorithm SHA256).Hash.ToLowerInvariant()
 $accountId = aws sts get-caller-identity --profile $Profile --query Account --output text
 if ($LASTEXITCODE -ne 0) { throw "AWS credentials are unavailable." }
 docker info | Out-Null
@@ -56,7 +60,14 @@ try {
     Pop-Location
 }
 
-$parameters = @("ApiImageUri=$apiUri", "RendererImageUri=$rendererUri")
+$parameters = @(
+    "ApiImageUri=$apiUri",
+    "RendererImageUri=$rendererUri",
+    "ModelVersion=$modelVersion",
+    "SourceCommit=$sourceCommit",
+    "AssetManifestSha256=$assetManifestSha256",
+    "ImplementationChannel=main"
+)
 aws cloudformation describe-stacks --stack-name $StackName --profile $Profile --region $Region 2>$null | Out-Null
 $stackExists = $LASTEXITCODE -eq 0
 if (-not $stackExists) {

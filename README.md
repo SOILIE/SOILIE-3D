@@ -8,7 +8,8 @@
  ########   ######## ####### ####### ####### #######      #######  ########  
 ```                                                                
 
-v.24.07.05
+**Current model version: 4.0.1**
+Original V4 source snapshot: 24.07.05
 
 🌐 [Our Website](https://soilie3d.com/)
 

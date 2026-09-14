@@ -92,10 +92,11 @@ def main():
         batch = [json.loads(path.read_text()) for path in sorted(folder.glob("attempt-*.json"))]
         provenance_hashes.add(digest(config["provenance"]))
         successes = [row for row in batch if row["status"] == "complete"]
+        successful_seconds = sum(row["generationSeconds"] for row in successes)
         runs.append({"roomType": config["roomType"], "target": config["targetCompletions"], "attempted": len(batch),
                      "completed": len(successes), "status": "complete" if len(successes) >= config["targetCompletions"] else "in_progress",
                      "activeWallSeconds": sum(row["wallSeconds"] for row in batch),
-                     "generationSeconds": sum(row["generationSeconds"] for row in batch),
+                     "generationSeconds": successful_seconds,
                      "generationBreakdown": generation_breakdown(batch),
                      "failures": dict(Counter(row.get("errorCode") for row in batch if row["status"] != "complete")),
                      "first10000Attempts": {"attempted": min(10000,len(batch)), "completed": sum(row["status"] == "complete" for row in batch[:10000])},
@@ -122,8 +123,8 @@ def main():
     if len({row["scene"]["id"] for row in rows}) != len(rows):
         raise ValueError("Duplicate scene IDs would inflate sample sizes")
     groups = {model: [row for row in rows if row["scene"]["model"] == model] for model in LABELS}
-    all_time = sum(row["generationSeconds"] for row in attempts)
     successful_time = [row["generationSeconds"] for row in attempts if row["status"] == "complete"]
+    successful_total = sum(successful_time)
     indoors_attempts = indoors["attempts"]
     indoors_times = [row["generationSeconds"] for row in indoors_attempts if row["status"] == "complete"]
     indoors_total = sum(row["generationSeconds"] for row in indoors_attempts)
@@ -139,8 +140,11 @@ def main():
                 "infinigenInvalidArtifacts":indoors["invalidArtifacts"],
                 "infinigenConfiguration":indoors["configuration"],
                 "infrastructureIncidents":incidents,
-                "timing": {"soilie": {"completedPerMinute": 60*len(successful_time)/all_time if all_time else None,
-                                      "completedLatencySeconds": summarize(successful_time), "allAttemptSeconds": all_time},
+                "timing": {"soilie": {"completedPerMinute": 60*len(successful_time)/successful_total if successful_total else None,
+                                      "completedLatencySeconds": summarize(successful_time),
+                                      "successfulGenerationSeconds": successful_total,
+                                      "failedAttemptsExcludedFromTiming":sum(row["status"] != "complete" for row in attempts),
+                                      "failureCounts":dict(Counter(row.get("errorCode","UNCLASSIFIED_FAILURE") for row in attempts if row["status"] != "complete"))},
                            "layoutgpt": {"available": False, "reason": "Released layouts do not include inference timings."},
                            "infinigen":{"available":bool(indoors_attempts),"attempted":len(indoors_attempts),
                                          "completed":len(indoors_times),"allAttemptSeconds":indoors_total if indoors_timing_complete else None,

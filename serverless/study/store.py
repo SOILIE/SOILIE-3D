@@ -1,4 +1,5 @@
 """Persistence adapters share immutable create/response semantics."""
+from contextlib import closing
 import json
 import sqlite3
 from botocore.exceptions import ClientError
@@ -50,33 +51,36 @@ class SQLiteStudyStore:
     """Local E2E adapter, not a second study protocol or browser-only storage."""
     def __init__(self, path):
         self.path = str(path)
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             db.execute("CREATE TABLE IF NOT EXISTS records (session TEXT, key TEXT, document TEXT, PRIMARY KEY(session,key))")
+            db.commit()
 
     def connect(self):
         return sqlite3.connect(self.path, timeout=30)
 
     def get(self, session_id):
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             row = db.execute("SELECT document FROM records WHERE session=? AND key='meta'", (session_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def create(self, session_id, document):
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             db.execute("INSERT OR IGNORE INTO records VALUES (?, 'meta', ?)", (session_id,json.dumps(document)))
+            db.commit()
 
     def save_response(self, session_id, document):
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             db.execute("INSERT OR IGNORE INTO records VALUES (?, ?, ?)", (session_id,document["caseId"],json.dumps(document)))
             row = db.execute("SELECT document FROM records WHERE session=? AND key=?", (session_id,document["caseId"])).fetchone()
+            db.commit()
         return json.loads(row[0])
 
     def responses(self, session_id):
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             rows = db.execute("SELECT document FROM records WHERE session=? AND key != 'meta' ORDER BY key", (session_id,)).fetchall()
         return [json.loads(row[0]) for row in rows]
 
     def sessions(self):
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             rows = db.execute("SELECT document FROM records WHERE key='meta' ORDER BY session").fetchall()
         return [json.loads(row[0]) for row in rows]

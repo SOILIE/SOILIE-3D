@@ -17,8 +17,10 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
+from serverless.common.model_version import MODEL_VERSION
 
-V4_VERSION = "24.07.05"
+
+V4_VERSION = MODEL_VERSION
 SCENE_SEED_STEP = 104_729
 ROOM_COMBINATION_FILES = {
     "bedroom": "working-combos-bedroom.csv",
@@ -137,4 +139,6 @@ def animate_v4_output(runtime_root: Path, filename: str, output_path: Path) -> P
 
 def load_v4_provenance(runtime_root: Path) -> dict[str, Any]:
     path = runtime_root / "v4-provenance.json"
+    if not path.exists():
+        path = runtime_root / ".codex" / "runtime" / "v4-provenance.json"
     return json.loads(path.read_text(encoding="utf-8"))

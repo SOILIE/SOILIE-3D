@@ -78,18 +78,27 @@ def session_summary(directory, attempts):
 
 
 def generation_breakdown(attempts):
-    """Sum model-attempt stopwatches, never campaign/session calendar spans.
+    """Summarize successful compute separately from failure reliability.
 
-    Failed placement and watchdog time still consume the generator. Expose
-    them separately so completed-scene latency is not confused with throughput.
-    Read-only geometry observation was already removed by the batch runner.
+    A watchdog cutoff is an operational choice, not the duration an infinite
+    layout would have taken. Failed attempts are therefore counted by error
+    code but never added to successful-layout timing.
     """
     if any(row['status'] not in {'complete','failed'} for row in attempts):
         raise ValueError('Only finished attempt checkpoints enter generation timing')
     completed = sum(row['generationSeconds'] for row in attempts if row['status'] == 'complete')
-    failed = sum(row['generationSeconds'] for row in attempts if row['status'] == 'failed')
-    timeout = sum(row['generationSeconds'] for row in attempts if row.get('errorCode') == 'TIMEOUT')
-    return {'completedSeconds':completed,'failedSeconds':failed,'timeoutSecondsWithinFailures':timeout,
-            'totalSeconds':completed+failed,
+    completed_count = sum(row['status'] == 'complete' for row in attempts)
+    failures = {}
+    for row in attempts:
+        if row['status'] == 'failed':
+            code = row.get('errorCode','UNCLASSIFIED_FAILURE')
+            failures[code] = failures.get(code,0)+1
+    return {'completedSeconds':completed,'totalSeconds':completed,
+            'successfulLayouts':completed_count,
+            'successfulLayoutsPerMinute':60*completed_count/completed if completed else None,
+            'failedAttempts':sum(failures.values()),'failureCounts':failures,
+            'collisionCyclesDetected':sum(bool(row.get('collisionRecoveryActivated')) for row in attempts),
+            'collisionRecoveryMoves':sum(row.get('collisionRecoveryMoves',0) for row in attempts),
+            'boundaryContainmentRepairs':sum(bool(row.get('boundaryContainmentActivated')) for row in attempts),
             'excludedObservationSeconds':sum(row.get('observationSeconds',0) for row in attempts),
-            'meaning':'Elapsed time inside generation attempts, including initialization and placement. No queue gaps, session pauses, other cohorts, validation, publishing or image rendering. Timeout failures retain actual elapsed attempt time; this is not CPU utilization time.'}
+            'meaning':'Successful generation time includes initialization and placement but excludes geometry observation, queue gaps, pauses, other cohorts, publishing, image rendering, and every failed attempt. Failures and watchdog terminations are reported as counts, because a watchdog cutoff is not model latency.'}

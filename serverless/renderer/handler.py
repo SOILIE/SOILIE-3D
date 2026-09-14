@@ -17,6 +17,7 @@ import boto3
 from PIL import Image, ImageSequence
 
 from serverless.common.engine import json_dumps
+from serverless.common.model_version import model_document
 from serverless.common.v4_runtime import (
     SCENE_SEED_STEP,
     V4GenerationError,
@@ -197,9 +198,7 @@ def _upload(
         "room": render_result["room"],
         "seed": scene_seed,
         "model": {
-            "name": "SOILIE-3D V4",
-            "version": "24.07.05",
-            "implementation": "original",
+            **model_document(),
             "provenanceSha256": load_v4_provenance(V4_RUNTIME_DIR)["files"]["modules/render.py"]["sha256"],
         },
         "animationModel": "original-v4-change_imagination_focus",
