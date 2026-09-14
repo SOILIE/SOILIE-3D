@@ -34,6 +34,16 @@ OUTPUT_BASE_URL = os.environ.get("OUTPUT_BASE_URL", "https://soilie3d.com/data")
 V4_RUNTIME_DIR = Path(os.environ.get("V4_RUNTIME_DIR", "/var/task/v4"))
 BLENDER_PATH = os.environ.get("BLENDER_PATH", "/opt/blender/blender")
 
+
+class BlenderProcessError(RuntimeError):
+    """A deterministic nonzero exit from the local Blender child process."""
+
+
+def _process_output_tail(value: str, limit: int = 3500) -> str:
+    """Keep diagnostics useful and bounded for one-line structured logs."""
+
+    return value.replace("\x00", "").strip()[-limit:]
+
 dynamodb = boto3.client("dynamodb")
 s3 = boto3.client("s3")
 
@@ -322,7 +332,16 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
             env=environment,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"Blender exited with code {result.returncode}: {result.stderr[-1500:]}")
+            diagnostic = {
+                "event": "blender_process_failed",
+                "jobId": job_id,
+                "sceneIndex": scene_index,
+                "exitCode": result.returncode,
+                "stdoutTail": _process_output_tail(result.stdout),
+                "stderrTail": _process_output_tail(result.stderr),
+            }
+            print(json_dumps(diagnostic))
+            raise BlenderProcessError(f"Blender exited with code {result.returncode}")
         render_result = _parse_v4_result(result.stdout)
         _validate_room_boundary_result(render_result)
         v4_output = Path(render_result["path"])
@@ -343,6 +362,11 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
         )
     except V4GenerationError as error:
         _fail_scene(job_id, scene_index, "V4_GENERATION_FAILED", str(error))
+    except BlenderProcessError:
+        # A completed local child process with a nonzero exit is deterministic
+        # for this immutable request and image. Queue redelivery cannot repair
+        # it, so expose a terminal stable code immediately.
+        _fail_scene(job_id, scene_index, "V4_RENDER_FAILED", "The V4 renderer could not complete this scene.")
     except Exception as error:
         if receive_count < 2:
             # The first failed attempt will be redelivered by SQS. Reflect that
