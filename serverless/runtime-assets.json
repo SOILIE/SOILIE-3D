@@ -1,0 +1,1205 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "path": "assets/asset_rotations.csv",
+      "sourceKey": "files/assets/asset_rotations.csv",
+      "bytes": 6282,
+      "sha256": "c83fd551111f853c02a022d5469434d2f2cc0615661f41fa78d3a21538169842"
+    },
+    {
+      "path": "assets/bathtub_0001.obj",
+      "sourceKey": "files/assets/bathtub_0001.obj",
+      "bytes": 172324,
+      "sha256": "187e78d8e722fcb3d9cd09adc2948acb385e7a26c23e12786b62d8ad733174ac"
+    },
+    {
+      "path": "assets/bathtub_0002.obj",
+      "sourceKey": "files/assets/bathtub_0002.obj",
+      "bytes": 5834182,
+      "sha256": "9769ffc1db4ff66c9a16deffdcd8de9676a0c95aef2c3af2e664231687fc14d9"
+    },
+    {
+      "path": "assets/bathtub_0003.obj",
+      "sourceKey": "files/assets/bathtub_0003.obj",
+      "bytes": 9756301,
+      "sha256": "8a4e6f0cd8a152fce7e995446f6a58fe4f1e5f096428e23444897bcdcf653853"
+    },
+    {
+      "path": "assets/bed_0001.obj",
+      "sourceKey": "files/assets/bed_0001.obj",
+      "bytes": 20469031,
+      "sha256": "354c863f530c54effa22da43473e3dc1150a1d7efb6cd9c9d426b1c46a50440d"
+    },
+    {
+      "path": "assets/bed_0006.obj",
+      "sourceKey": "files/assets/bed_0006.obj",
+      "bytes": 43631706,
+      "sha256": "d2cdc4878945e88187f95f85d56d6951ba0075a650ef8fb9103133838c735d94"
+    },
+    {
+      "path": "assets/bed_0008.obj",
+      "sourceKey": "files/assets/bed_0008.obj",
+      "bytes": 34662076,
+      "sha256": "98a61281f9d52955fb908abb8f0cd20306a3ccf45ed239a120912596a4def89f"
+    },
+    {
+      "path": "assets/bed_0011.obj",
+      "sourceKey": "files/assets/bed_0011.obj",
+      "bytes": 100840010,
+      "sha256": "474ebc80749f8fe14b1d15b19e15644403540fe8f21610f68755c2f2fbd402c2"
+    },
+    {
+      "path": "assets/bed_0012.obj",
+      "sourceKey": "files/assets/bed_0012.obj",
+      "bytes": 21355388,
+      "sha256": "e522a55d88c0c4b8564ce58f74bcb8da031bb73ee97dbc5e6e549a462f6007d4"
+    },
+    {
+      "path": "assets/bed_0013.obj",
+      "sourceKey": "files/assets/bed_0013.obj",
+      "bytes": 45357844,
+      "sha256": "906af076552d39bc9381a3012e36d29fefbdfbda00d8530a647861dea315a4f3"
+    },
+    {
+      "path": "assets/bed_0014.obj",
+      "sourceKey": "files/assets/bed_0014.obj",
+      "bytes": 80199902,
+      "sha256": "9a169b17d02ac24865fa5dd1a8e48da8524cf4db0ffac59b2168e1455ff02078"
+    },
+    {
+      "path": "assets/bed_frame_0001.obj",
+      "sourceKey": "files/assets/bed_frame_0001.obj",
+      "bytes": 297902,
+      "sha256": "5052dddbb20c1cf89d9f3ca20c5af20db201132a7725466591f76c7f94eb2b21"
+    },
+    {
+      "path": "assets/bin_0001.obj",
+      "sourceKey": "files/assets/bin_0001.obj",
+      "bytes": 558,
+      "sha256": "434931a34ddac3093e26227319ac846d1dd3b9065266934932f758ab44e9bc56"
+    },
+    {
+      "path": "assets/bin_0002.obj",
+      "sourceKey": "files/assets/bin_0002.obj",
+      "bytes": 4627386,
+      "sha256": "046175eed4f9a278adeaabcef6db1ff8ddb018ac067006235d86505141db3fb4"
+    },
+    {
+      "path": "assets/black_board_0001.obj",
+      "sourceKey": "files/assets/black_board_0001.obj",
+      "bytes": 238899,
+      "sha256": "3e331c44e12511636d6ff87b675b8c7c9596c55bb6f922ee2887e0472717f9b3"
+    },
+    {
+      "path": "assets/black_board_0002.obj",
+      "sourceKey": "files/assets/black_board_0002.obj",
+      "bytes": 54852,
+      "sha256": "8d5eb3908c4be044934915ab762f654ef67e8e4a0460228c88abfc69453ca290"
+    },
+    {
+      "path": "assets/blanket_0002.obj",
+      "sourceKey": "files/assets/blanket_0002.obj",
+      "bytes": 154441,
+      "sha256": "5426c96368396ae99ea2b4b3d8aacaa1d63f970335a182e478867fe9c009d4af"
+    },
+    {
+      "path": "assets/blinds_0001.obj",
+      "sourceKey": "files/assets/blinds_0001.obj",
+      "bytes": 692209,
+      "sha256": "d68163cacca15411ed6e1e74b8076e80a38f123945eba8bb0f9a1c1f4d7f4a0a"
+    },
+    {
+      "path": "assets/blinds_0002.obj",
+      "sourceKey": "files/assets/blinds_0002.obj",
+      "bytes": 34933,
+      "sha256": "7dc69a8810af6cd75785c2cc75efd88044b9f819148a3331046f8504641a2825"
+    },
+    {
+      "path": "assets/blinds_0003.obj",
+      "sourceKey": "files/assets/blinds_0003.obj",
+      "bytes": 1666211,
+      "sha256": "5acb2ed70c0004abce4e9ccfaaeaf01fbb3d47986eb06be941cb9360bf2cd8a5"
+    },
+    {
+      "path": "assets/book_0001.obj",
+      "sourceKey": "files/assets/book_0001.obj",
+      "bytes": 914688,
+      "sha256": "2ae88e0b4efd56c2b93f7798a618f4a53d647f1da8d1463183e0da0fba6d258e"
+    },
+    {
+      "path": "assets/book_0004.obj",
+      "sourceKey": "files/assets/book_0004.obj",
+      "bytes": 3062913,
+      "sha256": "feae9218e64984744bf42381f51d77f5abb5efdac96609c0065c9bb1bf194ee2"
+    },
+    {
+      "path": "assets/book_case_0004.obj",
+      "sourceKey": "files/assets/book_case_0004.obj",
+      "bytes": 1683198,
+      "sha256": "4961bf480b3c1daa1180d35ebffb9c076e05ab6d66be9c3576567e1792fd1a42"
+    },
+    {
+      "path": "assets/book_case_0005.obj",
+      "sourceKey": "files/assets/book_case_0005.obj",
+      "bytes": 453636,
+      "sha256": "cd7be0a3b678abd663c8d4a13692e06a96e116b6c6802c18afabf01611416711"
+    },
+    {
+      "path": "assets/boots_0002.obj",
+      "sourceKey": "files/assets/boots_0002.obj",
+      "bytes": 194846,
+      "sha256": "9811e95896fc58b6b3dc50fcc44c629dfac29359fb32718befcf83e04319fc5a"
+    },
+    {
+      "path": "assets/bowl_0001.obj",
+      "sourceKey": "files/assets/bowl_0001.obj",
+      "bytes": 9301056,
+      "sha256": "95ea2765d190bfc7ff22006d317ddee6e5c87c40e96286864790282b06279e3e"
+    },
+    {
+      "path": "assets/bowl_0003.obj",
+      "sourceKey": "files/assets/bowl_0003.obj",
+      "bytes": 7475395,
+      "sha256": "3b62d7ccb4150e148a2ad491231aee7180c218266712a7591a170e64d97c9445"
+    },
+    {
+      "path": "assets/bowl_0004.obj",
+      "sourceKey": "files/assets/bowl_0004.obj",
+      "bytes": 24423110,
+      "sha256": "98cfb563046dfec8ded7f7cef67915f43da633703648defd1bed03efd0a8752c"
+    },
+    {
+      "path": "assets/bowl_0006.obj",
+      "sourceKey": "files/assets/bowl_0006.obj",
+      "bytes": 72083,
+      "sha256": "f1d00640bcf24ca1090c001c5169b42ddc15757ece5bfed2d6a3a4bd266f19cf"
+    },
+    {
+      "path": "assets/box_0001.obj",
+      "sourceKey": "files/assets/box_0001.obj",
+      "bytes": 3484281,
+      "sha256": "048681e6a80ff5d39483e1435af0f1b2becd8b3f23247543f3c47880ec8d1124"
+    },
+    {
+      "path": "assets/box_0002.obj",
+      "sourceKey": "files/assets/box_0002.obj",
+      "bytes": 111409,
+      "sha256": "2730dc406a796d6f2ac2a945b0020faf3d64fbabc1ca7c083bbd5fc8a163f82a"
+    },
+    {
+      "path": "assets/cabinet_0001.obj",
+      "sourceKey": "files/assets/cabinet_0001.obj",
+      "bytes": 702773,
+      "sha256": "800d9c6b00e93bd405fb2f449c570f7eb2d86e7b0c24f40173b5e7442d443ed5"
+    },
+    {
+      "path": "assets/cabinet_0002.obj",
+      "sourceKey": "files/assets/cabinet_0002.obj",
+      "bytes": 5921561,
+      "sha256": "a538127a1cf623892848295c4484228371ea07745923ea6ed11b72535f183651"
+    },
+    {
+      "path": "assets/cap_0001.obj",
+      "sourceKey": "files/assets/cap_0001.obj",
+      "bytes": 9994703,
+      "sha256": "41430dec6e838066a56953a5c9b5032572dec1c3cf17419c68136ce024edd072"
+    },
+    {
+      "path": "assets/cereal_box_0001.obj",
+      "sourceKey": "files/assets/cereal_box_0001.obj",
+      "bytes": 407754,
+      "sha256": "e0db9728b78ff202178be0c07acf3fedd2433416eb2b7a150f43b5e4c1f26dfa"
+    },
+    {
+      "path": "assets/chair_0002.obj",
+      "sourceKey": "files/assets/chair_0002.obj",
+      "bytes": 3701851,
+      "sha256": "d34b7ffdc300bb886f0e1746fbf58e53dd4a47a336f55e11a321450a70fbd19c"
+    },
+    {
+      "path": "assets/chair_0003.obj",
+      "sourceKey": "files/assets/chair_0003.obj",
+      "bytes": 1987307,
+      "sha256": "ebbd79cdf3fde53f6d365a3d2f641f768f0d11725f98b51db0c65f9a4481494f"
+    },
+    {
+      "path": "assets/chair_0004.obj",
+      "sourceKey": "files/assets/chair_0004.obj",
+      "bytes": 23465969,
+      "sha256": "e06d5ad7016fae4a24b5c41daf47bfa98606feaec0ac4f81495035b4ec0c58e0"
+    },
+    {
+      "path": "assets/chair_0005.obj",
+      "sourceKey": "files/assets/chair_0005.obj",
+      "bytes": 2732125,
+      "sha256": "63cb7cf7729ea2a879999a851e545d74d30b3f7a09b63192ba3a48f50a1cd7fe"
+    },
+    {
+      "path": "assets/chair_0006.obj",
+      "sourceKey": "files/assets/chair_0006.obj",
+      "bytes": 934441,
+      "sha256": "3be3e9e9e81e1cba0d380d44d68be0cf52f193a0ae745515031279887dfc8781"
+    },
+    {
+      "path": "assets/clock_0001.obj",
+      "sourceKey": "files/assets/clock_0001.obj",
+      "bytes": 3124001,
+      "sha256": "f09801e09ebb0ef348834ab8c3f62a9a78b273a99c2d4c3da88477edbe43573f"
+    },
+    {
+      "path": "assets/clock_0003.obj",
+      "sourceKey": "files/assets/clock_0003.obj",
+      "bytes": 1689248,
+      "sha256": "b207fc53852b86b4a5d60c389650bcf16d04eb40e9e2efb7fbe4c1d1ffa84cc3"
+    },
+    {
+      "path": "assets/clock_0007.obj",
+      "sourceKey": "files/assets/clock_0007.obj",
+      "bytes": 1689248,
+      "sha256": "b207fc53852b86b4a5d60c389650bcf16d04eb40e9e2efb7fbe4c1d1ffa84cc3"
+    },
+    {
+      "path": "assets/clock_0008.obj",
+      "sourceKey": "files/assets/clock_0008.obj",
+      "bytes": 1689248,
+      "sha256": "b207fc53852b86b4a5d60c389650bcf16d04eb40e9e2efb7fbe4c1d1ffa84cc3"
+    },
+    {
+      "path": "assets/clock_0009.obj",
+      "sourceKey": "files/assets/clock_0009.obj",
+      "bytes": 1689248,
+      "sha256": "b207fc53852b86b4a5d60c389650bcf16d04eb40e9e2efb7fbe4c1d1ffa84cc3"
+    },
+    {
+      "path": "assets/clock_0010.obj",
+      "sourceKey": "files/assets/clock_0010.obj",
+      "bytes": 1689248,
+      "sha256": "b207fc53852b86b4a5d60c389650bcf16d04eb40e9e2efb7fbe4c1d1ffa84cc3"
+    },
+    {
+      "path": "assets/clock_0011.obj",
+      "sourceKey": "files/assets/clock_0011.obj",
+      "bytes": 1689248,
+      "sha256": "b207fc53852b86b4a5d60c389650bcf16d04eb40e9e2efb7fbe4c1d1ffa84cc3"
+    },
+    {
+      "path": "assets/closet_0005.obj",
+      "sourceKey": "files/assets/closet_0005.obj",
+      "bytes": 1175179,
+      "sha256": "6ce81ad5d9ba2881794c6ecc602eb0bc26b010d5fdf12e3ba862da42f1b70bf7"
+    },
+    {
+      "path": "assets/clothes_0001.obj",
+      "sourceKey": "files/assets/clothes_0001.obj",
+      "bytes": 39983185,
+      "sha256": "d5f26a874900e17e4c2ef637223c7e6ccf91fc571cbc672e8f6ffcdbe71446f7"
+    },
+    {
+      "path": "assets/coffee_machine_0003.obj",
+      "sourceKey": "files/assets/coffee_machine_0003.obj",
+      "bytes": 31676,
+      "sha256": "fd3e0203cdbcb38f5586b3c43f7d64e78f727571910486e5eba90151aec153a4"
+    },
+    {
+      "path": "assets/coffee_mug_0001.obj",
+      "sourceKey": "files/assets/coffee_mug_0001.obj",
+      "bytes": 15484170,
+      "sha256": "ec13af99a488e9b7a1194322770eef1f6e8a01306b50620e39424fad7dff5d97"
+    },
+    {
+      "path": "assets/coffee_mug_0002.obj",
+      "sourceKey": "files/assets/coffee_mug_0002.obj",
+      "bytes": 1848355,
+      "sha256": "c2748c5717d098d1e9b976461baf6861d9d5e4544f101b64d16f2b52d49e90df"
+    },
+    {
+      "path": "assets/coffee_mug_0003.obj",
+      "sourceKey": "files/assets/coffee_mug_0003.obj",
+      "bytes": 4947764,
+      "sha256": "676c514bb8dcba7eb9d1c631549be6e4fe70bdcb3232bf671ade4ff00f515923"
+    },
+    {
+      "path": "assets/coffee_mug_0004.obj",
+      "sourceKey": "files/assets/coffee_mug_0004.obj",
+      "bytes": 5350511,
+      "sha256": "dedb9fb87b68918a52c2a4ddaaf022d8a55f37a759de872464290ec0aa3a8af3"
+    },
+    {
+      "path": "assets/coffee_mug_0005.obj",
+      "sourceKey": "files/assets/coffee_mug_0005.obj",
+      "bytes": 5115692,
+      "sha256": "14408b942d226ec663c1f7938c0e4f6ffe8e81b8336fcd26e72aacfb7f1585d6"
+    },
+    {
+      "path": "assets/coffee_mug_0007.obj",
+      "sourceKey": "files/assets/coffee_mug_0007.obj",
+      "bytes": 177299,
+      "sha256": "8b113fc2d8c1169e9f607d6176933e2f1e2682f3865cc4fe77ca64163e790d63"
+    },
+    {
+      "path": "assets/coffee_mug_0008.obj",
+      "sourceKey": "files/assets/coffee_mug_0008.obj",
+      "bytes": 1139467,
+      "sha256": "b6225d2446b037678a692d94c2f145b674a070579997558c41a0376c27be9212"
+    },
+    {
+      "path": "assets/coffee_table_0001.obj",
+      "sourceKey": "files/assets/coffee_table_0001.obj",
+      "bytes": 6262874,
+      "sha256": "7db93153913fb6103b21a0aa04ff921a2d3e37d8f0b79f783e087fba4e72fc1e"
+    },
+    {
+      "path": "assets/coffee_table_0002.obj",
+      "sourceKey": "files/assets/coffee_table_0002.obj",
+      "bytes": 1511610,
+      "sha256": "69d06d63bb24a767c9573204135a9507183764d21fbaab2b906092bd8a9c87b6"
+    },
+    {
+      "path": "assets/coffee_table_0003.obj",
+      "sourceKey": "files/assets/coffee_table_0003.obj",
+      "bytes": 96357827,
+      "sha256": "0a21530e5a819b18921a7b507022314b46c7479940405ccc563f3ae140d039be"
+    },
+    {
+      "path": "assets/coffee_table_0004.obj",
+      "sourceKey": "files/assets/coffee_table_0004.obj",
+      "bytes": 2383218,
+      "sha256": "64e6a1e703b5af1c1326618ede4f978cba80aec726f1ab7c85f7b8a3d26fd62c"
+    },
+    {
+      "path": "assets/coffee_table_0005.obj",
+      "sourceKey": "files/assets/coffee_table_0005.obj",
+      "bytes": 150285900,
+      "sha256": "bb5d199f0013ab99c4db27a54d879a5462af48146ca504ec6fb4b2c47ae80e85"
+    },
+    {
+      "path": "assets/coffee_table_0006.obj",
+      "sourceKey": "files/assets/coffee_table_0006.obj",
+      "bytes": 9916228,
+      "sha256": "ecacec9cf415b31e1aba792548a7498efb9c5d8b119726cf4c6015094adc591e"
+    },
+    {
+      "path": "assets/coffee_table_0007.obj",
+      "sourceKey": "files/assets/coffee_table_0007.obj",
+      "bytes": 779960,
+      "sha256": "b06617a91bff378b7fe544fec460725a01984f987b873956c693b4ff5ce526bd"
+    },
+    {
+      "path": "assets/coffee_table_0008.obj",
+      "sourceKey": "files/assets/coffee_table_0008.obj",
+      "bytes": 150285900,
+      "sha256": "bb5d199f0013ab99c4db27a54d879a5462af48146ca504ec6fb4b2c47ae80e85"
+    },
+    {
+      "path": "assets/coffee_table_0009.obj",
+      "sourceKey": "files/assets/coffee_table_0009.obj",
+      "bytes": 8403334,
+      "sha256": "104c2e516ed27cae4a0de1fc7989b10ef83278f9c8dc046bbcc5f0eee2c604d5"
+    },
+    {
+      "path": "assets/computer_bag_0001.obj",
+      "sourceKey": "files/assets/computer_bag_0001.obj",
+      "bytes": 3209290,
+      "sha256": "f3ee20380635d6f1f96320f0a236b2b80293c5f70ec97821ddd9ef973e628678"
+    },
+    {
+      "path": "assets/cupboard_0001.obj",
+      "sourceKey": "files/assets/cupboard_0001.obj",
+      "bytes": 1418074,
+      "sha256": "89488314dbe65f6913ef4fb4d1d44da13392fb20132433018aa7d1ff951f2952"
+    },
+    {
+      "path": "assets/cupboard_0002.obj",
+      "sourceKey": "files/assets/cupboard_0002.obj",
+      "bytes": 1300675,
+      "sha256": "08d3de06b5dfd5291cf262a57c1b027c2fa039c33692026eba5956b0018fa73d"
+    },
+    {
+      "path": "assets/cupboard_0003.obj",
+      "sourceKey": "files/assets/cupboard_0003.obj",
+      "bytes": 1909978,
+      "sha256": "c08ff83e41a01db58e695a8ef4da2312aee775775e69fed466e9ad126d132da2"
+    },
+    {
+      "path": "assets/curtain_0001.obj",
+      "sourceKey": "files/assets/curtain_0001.obj",
+      "bytes": 10714517,
+      "sha256": "40fe9421ac1c343df3c8a48ebacdf518e921fc21f7299388293b5fd511cce578"
+    },
+    {
+      "path": "assets/curtain_0002.obj",
+      "sourceKey": "files/assets/curtain_0002.obj",
+      "bytes": 15734398,
+      "sha256": "4c8936151045860e3dbba18771254a56bf82013a61c340d4ab9246f7b2fb053f"
+    },
+    {
+      "path": "assets/curtain_0003.obj",
+      "sourceKey": "files/assets/curtain_0003.obj",
+      "bytes": 43735315,
+      "sha256": "d34d09268b3857af97a2a6f6b99ced29684612bba86a58b9746ef1b4725a4558"
+    },
+    {
+      "path": "assets/curtain_0004.obj",
+      "sourceKey": "files/assets/curtain_0004.obj",
+      "bytes": 27702034,
+      "sha256": "96a24a181ef02e7cdbe28f33c874df1be37c76b26018c59505808afde3be7c25"
+    },
+    {
+      "path": "assets/curtain_0005.obj",
+      "sourceKey": "files/assets/curtain_0005.obj",
+      "bytes": 19355359,
+      "sha256": "b2e37b1333396cc47f9035614570bda18b334844a7a869e6e31b3f1f6df89549"
+    },
+    {
+      "path": "assets/curtain_0006.obj",
+      "sourceKey": "files/assets/curtain_0006.obj",
+      "bytes": 23689754,
+      "sha256": "a49d9e8947af4329ff07a55d79b31ec055628c8a1d08a841078809187964d5cf"
+    },
+    {
+      "path": "assets/curtain_0007.obj",
+      "sourceKey": "files/assets/curtain_0007.obj",
+      "bytes": 13001897,
+      "sha256": "561996d2b7758b7579a8b744e1ffdddca604a71c6b9f191a7dac6edcf7415129"
+    },
+    {
+      "path": "assets/curtain_0008.obj",
+      "sourceKey": "files/assets/curtain_0008.obj",
+      "bytes": 13652078,
+      "sha256": "3c403630be0f48107e92c578cc9f1f964fc635bea59f9ece74a76f967965c753"
+    },
+    {
+      "path": "assets/desk_0001.obj",
+      "sourceKey": "files/assets/desk_0001.obj",
+      "bytes": 16094412,
+      "sha256": "9b8010ce4a4c9b5dc84d91c904e56892427476de5b6f3b9aa49652d0d4c35fb5"
+    },
+    {
+      "path": "assets/desk_0002.obj",
+      "sourceKey": "files/assets/desk_0002.obj",
+      "bytes": 207036,
+      "sha256": "4fc5d4860e3d5f136ec1a0d76c9c6affcf481f350abfae57e16c5f746f4ee46a"
+    },
+    {
+      "path": "assets/desk_0007.obj",
+      "sourceKey": "files/assets/desk_0007.obj",
+      "bytes": 1487866,
+      "sha256": "027cb448d2c2962a0753bcecc08a7bef6570b4478d6b3d3c1721ac5cd42ad8dc"
+    },
+    {
+      "path": "assets/dining_table_0001.obj",
+      "sourceKey": "files/assets/dining_table_0001.obj",
+      "bytes": 987197,
+      "sha256": "997da4f0ed9d84f647fb49e5d52182bb9de85862c7e3bc65c375de73a399eaca"
+    },
+    {
+      "path": "assets/dining_table_0002.obj",
+      "sourceKey": "files/assets/dining_table_0002.obj",
+      "bytes": 358372,
+      "sha256": "8ba91e8ed7ddc45e98b8ac162846b6b96dafe7ae96ff9b9a38bdab120fdfa594"
+    },
+    {
+      "path": "assets/dining_table_0004.obj",
+      "sourceKey": "files/assets/dining_table_0004.obj",
+      "bytes": 7877,
+      "sha256": "544fc8a59e4bdc9c636b37eabc89e89f65ae72fba957b190a3a5030ac91edd47"
+    },
+    {
+      "path": "assets/dining_table_0006.obj",
+      "sourceKey": "files/assets/dining_table_0006.obj",
+      "bytes": 57892,
+      "sha256": "fe3ecbaa441bf364c01123b4588a22c113b6bacb31c41b60bea4278f7fb9c415"
+    },
+    {
+      "path": "assets/door_0001.obj",
+      "sourceKey": "files/assets/door_0001.obj",
+      "bytes": 309565,
+      "sha256": "827e59590dfffc06e2c26f70ca1e97db564acb6ead5740b2537ccede8f415f23"
+    },
+    {
+      "path": "assets/door_0002.obj",
+      "sourceKey": "files/assets/door_0002.obj",
+      "bytes": 315240,
+      "sha256": "e731cd72a2d65f9bd0eac1101e4de4c973796ab9ca52c57f5b984f5da00b8c8c"
+    },
+    {
+      "path": "assets/door_0004.obj",
+      "sourceKey": "files/assets/door_0004.obj",
+      "bytes": 1812821,
+      "sha256": "492f1745ac2445ed917ddf87ef8808f980a3b998bffa41fc3eb24c177bec038e"
+    },
+    {
+      "path": "assets/door_0005.obj",
+      "sourceKey": "files/assets/door_0005.obj",
+      "bytes": 2682879,
+      "sha256": "7aab0ff9bb1d26d4e6b1765563c73628405b7be9d305217d4caab32fff866e11"
+    },
+    {
+      "path": "assets/flute_0001.obj",
+      "sourceKey": "files/assets/flute_0001.obj",
+      "bytes": 3812940,
+      "sha256": "71888aa4407e12e5015d5e83d39832646da02bbf7aa66075a55ce742654c8d05"
+    },
+    {
+      "path": "assets/fridge_0003.obj",
+      "sourceKey": "files/assets/fridge_0003.obj",
+      "bytes": 350375,
+      "sha256": "5755da5e44d3eb1e5e0d621a9bb880fa7620907a2a9c2639faa5b322eea6a807"
+    },
+    {
+      "path": "assets/fridge_0006.obj",
+      "sourceKey": "files/assets/fridge_0006.obj",
+      "bytes": 877186,
+      "sha256": "dc4a57be1058e8e00802c25a4bec1e2be116fbb81621b29f1b03a0368733804d"
+    },
+    {
+      "path": "assets/helmet_0001.obj",
+      "sourceKey": "files/assets/helmet_0001.obj",
+      "bytes": 932923,
+      "sha256": "3493f362fb3e6c44ff9a1bab2cf68001b795121056199010618eca67ed730cc0"
+    },
+    {
+      "path": "assets/helmet_0002.obj",
+      "sourceKey": "files/assets/helmet_0002.obj",
+      "bytes": 577055,
+      "sha256": "653402f9f884d05dc8e5531fc091a183454a218f37343969ff2eac49e14d50a0"
+    },
+    {
+      "path": "assets/helmet_0003.obj",
+      "sourceKey": "files/assets/helmet_0003.obj",
+      "bytes": 617580,
+      "sha256": "4796c6ec89ea19d87f94cf789bab22af1b3a90dbaac358472a0e507759a02299"
+    },
+    {
+      "path": "assets/hot_pot_0001.obj",
+      "sourceKey": "files/assets/hot_pot_0001.obj",
+      "bytes": 3585671,
+      "sha256": "3ec46e272534bc89c97af0b71044abcbe0765fc34894175c4a6736b0dd1f4e62"
+    },
+    {
+      "path": "assets/lamp_0003.obj",
+      "sourceKey": "files/assets/lamp_0003.obj",
+      "bytes": 3167274,
+      "sha256": "e975d1157ff39351bc8eef25d50624cb170a933a4c7ce06b4c66fbcaec31e1ba"
+    },
+    {
+      "path": "assets/lamp_0007.obj",
+      "sourceKey": "files/assets/lamp_0007.obj",
+      "bytes": 83669,
+      "sha256": "3af5a51da3a66635162029deb5651a4f1af70af633d9f3d71fd5507121ad7731"
+    },
+    {
+      "path": "assets/lamp_0008.obj",
+      "sourceKey": "files/assets/lamp_0008.obj",
+      "bytes": 5455560,
+      "sha256": "898d4126f59a5a01169ec50a8b23b526826eb26a663d7fc59fd72aaeddf4d33f"
+    },
+    {
+      "path": "assets/lamp_0009.obj",
+      "sourceKey": "files/assets/lamp_0009.obj",
+      "bytes": 4137394,
+      "sha256": "11d30b77c842b696d5b59ec93153bb357268f6e3f3925a484ccda3d7bd3c8b7b"
+    },
+    {
+      "path": "assets/lamp_0010.obj",
+      "sourceKey": "files/assets/lamp_0010.obj",
+      "bytes": 7070398,
+      "sha256": "6fb2c1cd48b2fbf12e29da6157e6cf5070a21350ca2215cd223ab07fa7f802bb"
+    },
+    {
+      "path": "assets/laptop_0001.obj",
+      "sourceKey": "files/assets/laptop_0001.obj",
+      "bytes": 79068,
+      "sha256": "7c491678dc80ee25ce1e0b1fc61500e2f7a2d0fe449397d34fbbbd2f0b4069d3"
+    },
+    {
+      "path": "assets/microwave_oven_0002.obj",
+      "sourceKey": "files/assets/microwave_oven_0002.obj",
+      "bytes": 10595066,
+      "sha256": "87b1c32e43bd08b051a73a32d370ebc26431c314bd558bbc445d4068116fe9c1"
+    },
+    {
+      "path": "assets/mirror_0001.obj",
+      "sourceKey": "files/assets/mirror_0001.obj",
+      "bytes": 8248,
+      "sha256": "2813cbaef0a08f226551a2fe379a132c87fc65c8e1f335e7e64c4b26efee5219"
+    },
+    {
+      "path": "assets/mirror_0002.obj",
+      "sourceKey": "files/assets/mirror_0002.obj",
+      "bytes": 20876,
+      "sha256": "e7a8f7442c7c035607abd72673dc4cf33269da32aec8c2585ce0d9306ec78a72"
+    },
+    {
+      "path": "assets/night_stand_0004.obj",
+      "sourceKey": "files/assets/night_stand_0004.obj",
+      "bytes": 1226637,
+      "sha256": "7ce376009583803a91554993841e5b7dbb4b08a7a39dfaf85f1ba701623cd370"
+    },
+    {
+      "path": "assets/office_chair_0002.obj",
+      "sourceKey": "files/assets/office_chair_0002.obj",
+      "bytes": 14878306,
+      "sha256": "ae602954a2fdcb5b0d2fcc3d8d5149539bacd7809f78dbe0fff50d4f9d9a7ebb"
+    },
+    {
+      "path": "assets/office_chair_0003.obj",
+      "sourceKey": "files/assets/office_chair_0003.obj",
+      "bytes": 2009484,
+      "sha256": "2cd62c3d9df74077e113215347ece2e3906ce08d74506d4922ba1d8e526590e0"
+    },
+    {
+      "path": "assets/office_chair_0004.obj",
+      "sourceKey": "files/assets/office_chair_0004.obj",
+      "bytes": 8755237,
+      "sha256": "a988279185fcfcb5dfa3d0e71752325a0956d42f9d79d8647c81907d7141e19d"
+    },
+    {
+      "path": "assets/office_chair_0007.obj",
+      "sourceKey": "files/assets/office_chair_0007.obj",
+      "bytes": 1749449,
+      "sha256": "c81fec78012f22d7f288b10cb9d402fa405fb2342e820e634d4b4819e44dd06a"
+    },
+    {
+      "path": "assets/opaque_window_0001.obj",
+      "sourceKey": "files/assets/opaque_window_0001.obj",
+      "bytes": 1267901,
+      "sha256": "d2ea928423cd2480829baa5ed0c899cb7c231cc5600d857d44466a1da7ff7497"
+    },
+    {
+      "path": "assets/opaque_window_0002.obj",
+      "sourceKey": "files/assets/opaque_window_0002.obj",
+      "bytes": 1086761,
+      "sha256": "b73e47f48fd90874406fe0c23faf95dd8a6dff8aa337a5b71e058eb9eda159aa"
+    },
+    {
+      "path": "assets/painting_0001.obj",
+      "sourceKey": "files/assets/painting_0001.obj",
+      "bytes": 13436,
+      "sha256": "2193902805f15efb8d5c7223917e18bd10b30ca10a58089b857589c0ee421694"
+    },
+    {
+      "path": "assets/painting_0002.obj",
+      "sourceKey": "files/assets/painting_0002.obj",
+      "bytes": 2611170,
+      "sha256": "d6554b8a328f62649064c55b035dea68480785f16f200866aaa40fda69919f4b"
+    },
+    {
+      "path": "assets/pillow_0001.obj",
+      "sourceKey": "files/assets/pillow_0001.obj",
+      "bytes": 2651554,
+      "sha256": "49dee22ccecfb2a42de9e085a790b8f99f07005570fa96d0c2e97a7c6540f02f"
+    },
+    {
+      "path": "assets/pillow_0003.obj",
+      "sourceKey": "files/assets/pillow_0003.obj",
+      "bytes": 914551,
+      "sha256": "c619ec4f194e5524bd02aa91b1ea44e1b2bdea204d804c452e793b16739e0600"
+    },
+    {
+      "path": "assets/pillow_0004.obj",
+      "sourceKey": "files/assets/pillow_0004.obj",
+      "bytes": 4577032,
+      "sha256": "778c2132db7bcbb987d9e0f00abad599fb6ae02238a826d7010ea6aa3db68649"
+    },
+    {
+      "path": "assets/plant_0001.obj",
+      "sourceKey": "files/assets/plant_0001.obj",
+      "bytes": 18469652,
+      "sha256": "1fc0ac1116c3293217aab8013c70d59e453128d9afeb89acaeef8ff6b504ffb0"
+    },
+    {
+      "path": "assets/plant_0005.obj",
+      "sourceKey": "files/assets/plant_0005.obj",
+      "bytes": 4826712,
+      "sha256": "4f5a7498142efc8b21c0a24ac47255562894f8ea8ea60451e863dd1f1e4b9936"
+    },
+    {
+      "path": "assets/plant_0008.obj",
+      "sourceKey": "files/assets/plant_0008.obj",
+      "bytes": 17097909,
+      "sha256": "f3461230a0ea27077258c44cb0098d8db6af5af067c03404d803a78d787b8a02"
+    },
+    {
+      "path": "assets/plaque_0001.obj",
+      "sourceKey": "files/assets/plaque_0001.obj",
+      "bytes": 1056955,
+      "sha256": "b24cc4387be3ec90fc18f639bb509e60c64eb427a698b14c59e8a0d5cd2df611"
+    },
+    {
+      "path": "assets/power_outlet_0001.obj",
+      "sourceKey": "files/assets/power_outlet_0001.obj",
+      "bytes": 76674,
+      "sha256": "5dfebcb6e4a5b54c0fd6f578c3bf91ca2b25d3fd98b2cf05261237e8b418ea20"
+    },
+    {
+      "path": "assets/power_outlet_0002.obj",
+      "sourceKey": "files/assets/power_outlet_0002.obj",
+      "bytes": 176996,
+      "sha256": "376e83a8ea43936d9c709099978d335f617567a76ec81d1ccf2cf6075306d8bb"
+    },
+    {
+      "path": "assets/printer_0001.obj",
+      "sourceKey": "files/assets/printer_0001.obj",
+      "bytes": 988912,
+      "sha256": "51d5fdab1641820ea197766988750598e838d94263ba0e322b6cbde2cf1b5571"
+    },
+    {
+      "path": "assets/projector_0002.obj",
+      "sourceKey": "files/assets/projector_0002.obj",
+      "bytes": 3954251,
+      "sha256": "3055dfd81c5d098baef60d39df646ad1992c3522c622e4284baba6295d243377"
+    },
+    {
+      "path": "assets/sink_0001.obj",
+      "sourceKey": "files/assets/sink_0001.obj",
+      "bytes": 4653574,
+      "sha256": "f43abfd3755f1ccab5d58aa78cbbe9e32ca5c126c49ad4f71bf12bcd8408f12d"
+    },
+    {
+      "path": "assets/sink_0002.obj",
+      "sourceKey": "files/assets/sink_0002.obj",
+      "bytes": 4637892,
+      "sha256": "4fa0862a90e819a41c0a4b20ba2e750555a3fb6c8fd3f4f5e6d0192c7e432562"
+    },
+    {
+      "path": "assets/soda_can_0001.obj",
+      "sourceKey": "files/assets/soda_can_0001.obj",
+      "bytes": 128200145,
+      "sha256": "bd34e81c3c41b28f620148692afd4c9b66f40af4aeafc714f30c24d132efc137"
+    },
+    {
+      "path": "assets/soda_can_0002.obj",
+      "sourceKey": "files/assets/soda_can_0002.obj",
+      "bytes": 111843,
+      "sha256": "44fd2c1ce6dad160559061602a0ef8fd5eef0682b256d71b750fe4ca11a1c93d"
+    },
+    {
+      "path": "assets/soda_can_0003.obj",
+      "sourceKey": "files/assets/soda_can_0003.obj",
+      "bytes": 1969065,
+      "sha256": "440ff9c282e65af2a7c15d764a5fc48345fcd981c1a2a95384606215e8e2d70e"
+    },
+    {
+      "path": "assets/soda_can_0004.obj",
+      "sourceKey": "files/assets/soda_can_0004.obj",
+      "bytes": 30809,
+      "sha256": "1152137b6c2021fd2b1cd882765c31bb7a5d4f8f99d7543c1cb04c081dcb5ba9"
+    },
+    {
+      "path": "assets/sofa_0001.obj",
+      "sourceKey": "files/assets/sofa_0001.obj",
+      "bytes": 5126151,
+      "sha256": "49a20cb3977638c0bbdce4773ed13b30933c2d8bba8ddd8886dfad4b01b6b782"
+    },
+    {
+      "path": "assets/sofa_0002.obj",
+      "sourceKey": "files/assets/sofa_0002.obj",
+      "bytes": 2875263,
+      "sha256": "5f2e63c6d525e21051208bb5ebb99637b7c7f1378d6b3e3a72d3877225730784"
+    },
+    {
+      "path": "assets/sofa_0004.obj",
+      "sourceKey": "files/assets/sofa_0004.obj",
+      "bytes": 27336713,
+      "sha256": "3c5687e4d8fbc2316343c0c53e0cea4592545e780e176798661384dbd10c466e"
+    },
+    {
+      "path": "assets/sofa_0005.obj",
+      "sourceKey": "files/assets/sofa_0005.obj",
+      "bytes": 18255849,
+      "sha256": "805aa63380e25fceddb94211281cb155cfe4b9099401943ac9b54a144cfc5b9f"
+    },
+    {
+      "path": "assets/sofa_0006.obj",
+      "sourceKey": "files/assets/sofa_0006.obj",
+      "bytes": 1296600,
+      "sha256": "09267a05bb095474c7a827df2134221e33e265a39a85eb0b9b2e6cf2f20f7a63"
+    },
+    {
+      "path": "assets/sofa_0007.obj",
+      "sourceKey": "files/assets/sofa_0007.obj",
+      "bytes": 2896301,
+      "sha256": "3b06cf5523b9150eacd4f1c5e1947ce40f759f1e341e9fcefb0be90873b8400d"
+    },
+    {
+      "path": "assets/sofa_0008.obj",
+      "sourceKey": "files/assets/sofa_0008.obj",
+      "bytes": 13714017,
+      "sha256": "a658b200be99ffc8e7794ea5038d1d6e3809a21273cd33dea96e4dcc213010d4"
+    },
+    {
+      "path": "assets/sofa_0009.obj",
+      "sourceKey": "files/assets/sofa_0009.obj",
+      "bytes": 1311655,
+      "sha256": "a1285d2e12b8c6066dd72b501b1b4f6e270f4fbf40ac3f50ac4905365f3b8601"
+    },
+    {
+      "path": "assets/sofa_0010.obj",
+      "sourceKey": "files/assets/sofa_0010.obj",
+      "bytes": 3009052,
+      "sha256": "83b45c11f7177b28393f8bc5b6aec939235edd7f67779a43190fa79281b11177"
+    },
+    {
+      "path": "assets/sofa_0011.obj",
+      "sourceKey": "files/assets/sofa_0011.obj",
+      "bytes": 81180339,
+      "sha256": "7a380eeee6f4e9f16e308f74e180324a3ec85e558f4e4540399da0f48a8b5d1b"
+    },
+    {
+      "path": "assets/sofa_0012.obj",
+      "sourceKey": "files/assets/sofa_0012.obj",
+      "bytes": 16026348,
+      "sha256": "8f198950305b6ab28141fd2ecd3ed9c0124346582f2c57839ce45c3f3fbe748c"
+    },
+    {
+      "path": "assets/sofa_0013.obj",
+      "sourceKey": "files/assets/sofa_0013.obj",
+      "bytes": 16905770,
+      "sha256": "98c2fb5e2e7c984fd1b0881f0414c80b017c656e869e422ec22436727813da6d"
+    },
+    {
+      "path": "assets/sofa_0014.obj",
+      "sourceKey": "files/assets/sofa_0014.obj",
+      "bytes": 93588707,
+      "sha256": "7b5c9a191c0b0531279513db8bf2c64ea001580a6eb9983e88528f98f050eb45"
+    },
+    {
+      "path": "assets/sofa_0015.obj",
+      "sourceKey": "files/assets/sofa_0015.obj",
+      "bytes": 84216466,
+      "sha256": "54e760213ba60c8603972175fbbb270dce594a12380e6fa6325d8f3cd0de2c2a"
+    },
+    {
+      "path": "assets/sofa_chair_0002.obj",
+      "sourceKey": "files/assets/sofa_chair_0002.obj",
+      "bytes": 22199044,
+      "sha256": "ef67605db0efff393bce18de67c1f37b676c8c97b33bc2bb5894f39bcc20fe0f"
+    },
+    {
+      "path": "assets/sofa_chair_0003.obj",
+      "sourceKey": "files/assets/sofa_chair_0003.obj",
+      "bytes": 2569310,
+      "sha256": "26e742a53a4477e2cfef6a17baa4fb8c46cd82cbe0ff44a8ccaada1ef3112747"
+    },
+    {
+      "path": "assets/sofa_chair_0004.obj",
+      "sourceKey": "files/assets/sofa_chair_0004.obj",
+      "bytes": 2205062,
+      "sha256": "485cc841259a26745d411c1b6b662e730ca4a676f596a246c803a1b0d3ccddb1"
+    },
+    {
+      "path": "assets/sofa_chair_0006.obj",
+      "sourceKey": "files/assets/sofa_chair_0006.obj",
+      "bytes": 1106535,
+      "sha256": "8f28def0896963d337edbffa77ed09b20995ddf450fe06d4f1fc740f77444b2c"
+    },
+    {
+      "path": "assets/sofa_chair_0010.obj",
+      "sourceKey": "files/assets/sofa_chair_0010.obj",
+      "bytes": 4461168,
+      "sha256": "97e3093c53a7fdc5ef0dc13dbd74e336ff321feeb9f61f425ce7d8fc467fb9ee"
+    },
+    {
+      "path": "assets/sofa_chair_0012.obj",
+      "sourceKey": "files/assets/sofa_chair_0012.obj",
+      "bytes": 7403459,
+      "sha256": "cead6fbbc2acd962eaa0f2e50c3bdb3f5b58d120a3b2b73582524937bcaa9944"
+    },
+    {
+      "path": "assets/sofa_chair_0013.obj",
+      "sourceKey": "files/assets/sofa_chair_0013.obj",
+      "bytes": 9197473,
+      "sha256": "dba74b0b8513a06d3510162ed43274b62a83235eed27d0eded7f5c11779b05cd"
+    },
+    {
+      "path": "assets/sofa_chair_0014.obj",
+      "sourceKey": "files/assets/sofa_chair_0014.obj",
+      "bytes": 56513531,
+      "sha256": "6fa2db910d4dafaefba99e6e3cf24729afc091a22a6331ec3828dc87d7f5a103"
+    },
+    {
+      "path": "assets/speaker_0001.obj",
+      "sourceKey": "files/assets/speaker_0001.obj",
+      "bytes": 351386,
+      "sha256": "32788e7c9e51ea36f966d11a1c184fc1ac48961beb53b317329b13c4f137360a"
+    },
+    {
+      "path": "assets/speaker_0003.obj",
+      "sourceKey": "files/assets/speaker_0003.obj",
+      "bytes": 809787,
+      "sha256": "97c4ad87707eef7a364df82b3a95fafb3fb0f4d297036d8cd0f735b59a14fb46"
+    },
+    {
+      "path": "assets/speaker_0006.obj",
+      "sourceKey": "files/assets/speaker_0006.obj",
+      "bytes": 2694651,
+      "sha256": "9e82f89ffb4cdcf5c71e8936c8844dde09c67b7e5f6842f7ba30b1a8e8444b54"
+    },
+    {
+      "path": "assets/speaker_0007.obj",
+      "sourceKey": "files/assets/speaker_0007.obj",
+      "bytes": 61492266,
+      "sha256": "12db63544096b5b668fe064f6c5ac3ebb172898e3b35751b7a34b09a00cab1bf"
+    },
+    {
+      "path": "assets/stand_0001.obj",
+      "sourceKey": "files/assets/stand_0001.obj",
+      "bytes": 811845,
+      "sha256": "0f3894078a41b8b54371dea62a3867f18a29b236aec20c2c33224a61cdf0f629"
+    },
+    {
+      "path": "assets/switch_0001.obj",
+      "sourceKey": "files/assets/switch_0001.obj",
+      "bytes": 96277,
+      "sha256": "bf4d3934716803dc252a3bec87a32f14dadd4eae19c23c3e19618ea00a35b83e"
+    },
+    {
+      "path": "assets/switch_0002.obj",
+      "sourceKey": "files/assets/switch_0002.obj",
+      "bytes": 83142,
+      "sha256": "a7a42ce06d86c3215c4b3113b863ba3d6e9fdfe28087c14c0015d521975cbe2f"
+    },
+    {
+      "path": "assets/table_0001.obj",
+      "sourceKey": "files/assets/table_0001.obj",
+      "bytes": 987197,
+      "sha256": "997da4f0ed9d84f647fb49e5d52182bb9de85862c7e3bc65c375de73a399eaca"
+    },
+    {
+      "path": "assets/table_0002.obj",
+      "sourceKey": "files/assets/table_0002.obj",
+      "bytes": 358372,
+      "sha256": "8ba91e8ed7ddc45e98b8ac162846b6b96dafe7ae96ff9b9a38bdab120fdfa594"
+    },
+    {
+      "path": "assets/table_0004.obj",
+      "sourceKey": "files/assets/table_0004.obj",
+      "bytes": 7877,
+      "sha256": "544fc8a59e4bdc9c636b37eabc89e89f65ae72fba957b190a3a5030ac91edd47"
+    },
+    {
+      "path": "assets/table_0006.obj",
+      "sourceKey": "files/assets/table_0006.obj",
+      "bytes": 57892,
+      "sha256": "fe3ecbaa441bf364c01123b4588a22c113b6bacb31c41b60bea4278f7fb9c415"
+    },
+    {
+      "path": "assets/telephone_0001.obj",
+      "sourceKey": "files/assets/telephone_0001.obj",
+      "bytes": 836082,
+      "sha256": "da6168572ce652b2b0135d39728bff130380bc7c183baf08bb1a15ecc8436e2f"
+    },
+    {
+      "path": "assets/telephone_0002.obj",
+      "sourceKey": "files/assets/telephone_0002.obj",
+      "bytes": 36261625,
+      "sha256": "31fc6d1e7e395f1f63b42c9e09738219e04bbcaafc052a15b97d3b796f0a59f1"
+    },
+    {
+      "path": "assets/telephone_0004.obj",
+      "sourceKey": "files/assets/telephone_0004.obj",
+      "bytes": 3222367,
+      "sha256": "0cc368bceaba6b2993dd2d2fb0882d3262d21962ed59568339241990cf36f920"
+    },
+    {
+      "path": "assets/telephone_0005.obj",
+      "sourceKey": "files/assets/telephone_0005.obj",
+      "bytes": 895524,
+      "sha256": "4393ae1c2f23d29f1b2bf58f1c951463e3646247ae4d37d6fdefcb9c097f5e51"
+    },
+    {
+      "path": "assets/telephone_0006.obj",
+      "sourceKey": "files/assets/telephone_0006.obj",
+      "bytes": 3316912,
+      "sha256": "af35d91fb3195a6ddb26799cf9b3803e42a47a8ffa3e666abc5a566d91b17afa"
+    },
+    {
+      "path": "assets/toilet_0001.obj",
+      "sourceKey": "files/assets/toilet_0001.obj",
+      "bytes": 1921258,
+      "sha256": "4526f162baa3e2a23e8a004a33d8de088ae80c44410741c3c190ec163e5db889"
+    },
+    {
+      "path": "assets/toilet_paper_0001.obj",
+      "sourceKey": "files/assets/toilet_paper_0001.obj",
+      "bytes": 434218,
+      "sha256": "2a9eca93a152a151fd42471efeb8e975cd9d2c5f3a699a49b7b0c8d2c32274ff"
+    },
+    {
+      "path": "assets/toilet_paper_0002.obj",
+      "sourceKey": "files/assets/toilet_paper_0002.obj",
+      "bytes": 3309951,
+      "sha256": "f695d05c4483feaff2c1a5cc5f9b1e482645d48b85ad994cc670b78f91b78b57"
+    },
+    {
+      "path": "assets/towel_0001.obj",
+      "sourceKey": "files/assets/towel_0001.obj",
+      "bytes": 1481677,
+      "sha256": "b6eb9c728b9bb2cd59374084f21941c46711711addf2be7603936a8b30cd3b2c"
+    },
+    {
+      "path": "assets/towel_0002.obj",
+      "sourceKey": "files/assets/towel_0002.obj",
+      "bytes": 5088173,
+      "sha256": "e966575533ae7d90778b15d8daab40e2b3455a0a17fc93ef8f3c5d365732018a"
+    },
+    {
+      "path": "assets/trash_bin_0001.obj",
+      "sourceKey": "files/assets/trash_bin_0001.obj",
+      "bytes": 500471,
+      "sha256": "7f23daf6656e74964319ffbc1b282e3eeab4095d69bb673cd5b91a0f27d66d78"
+    },
+    {
+      "path": "assets/trash_bin_0002.obj",
+      "sourceKey": "files/assets/trash_bin_0002.obj",
+      "bytes": 562385,
+      "sha256": "fab3d279b4bced2b2f181fe15cdd38d348fcf0bfc18b17addfba48999c0312eb"
+    },
+    {
+      "path": "assets/trash_bin_0003.obj",
+      "sourceKey": "files/assets/trash_bin_0003.obj",
+      "bytes": 4209480,
+      "sha256": "404f790a2ede435fbc0401bd19e1478493703c4a7f8079ec42aca9a85c500090"
+    },
+    {
+      "path": "assets/trash_can_0001.obj",
+      "sourceKey": "files/assets/trash_can_0001.obj",
+      "bytes": 500471,
+      "sha256": "7f23daf6656e74964319ffbc1b282e3eeab4095d69bb673cd5b91a0f27d66d78"
+    },
+    {
+      "path": "assets/trash_can_0002.obj",
+      "sourceKey": "files/assets/trash_can_0002.obj",
+      "bytes": 247914,
+      "sha256": "f636b599483f31b4199f4cb72506d09cc4070f4f281681c605a3115dbc543f02"
+    },
+    {
+      "path": "assets/trash_can_0003.obj",
+      "sourceKey": "files/assets/trash_can_0003.obj",
+      "bytes": 246447,
+      "sha256": "f5b8e54a623d6654c4023cf72bb01ee1af913035214fd4a263e366f1c2664ab5"
+    },
+    {
+      "path": "assets/trash_can_0004.obj",
+      "sourceKey": "files/assets/trash_can_0004.obj",
+      "bytes": 142961,
+      "sha256": "31de1881e4a868cf0c39ba48730b10b9d635a76a9f6814ee5433e499549c09d1"
+    },
+    {
+      "path": "assets/trash_can_0005.obj",
+      "sourceKey": "files/assets/trash_can_0005.obj",
+      "bytes": 3007266,
+      "sha256": "ab0268395b8835048917580b0ecd54d3b74a17358879b59a43607f22baab65ca"
+    },
+    {
+      "path": "assets/tv_0001.obj",
+      "sourceKey": "files/assets/tv_0001.obj",
+      "bytes": 11054380,
+      "sha256": "f83970cbbe340f46e89aec7a469eec02965690d87389b634d0c2a5e6de970272"
+    },
+    {
+      "path": "assets/tv_0002.obj",
+      "sourceKey": "files/assets/tv_0002.obj",
+      "bytes": 5740694,
+      "sha256": "a95b71f4f659221e8b135b4ebb77fa3d224294d89b3087e392985429631bea2a"
+    },
+    {
+      "path": "assets/tv_0003.obj",
+      "sourceKey": "files/assets/tv_0003.obj",
+      "bytes": 2651986,
+      "sha256": "ebb82b8f2a8f85d5104ae33d5de0deec4d877e3b6ca929e6b0bb17fafe9fd5b6"
+    },
+    {
+      "path": "assets/tv_0004.obj",
+      "sourceKey": "files/assets/tv_0004.obj",
+      "bytes": 2968587,
+      "sha256": "28a978a0a6b391534fd5f34f0c73561ef54bad472bf8be785be609e1583a6c9a"
+    },
+    {
+      "path": "assets/tv_stand_0001.obj",
+      "sourceKey": "files/assets/tv_stand_0001.obj",
+      "bytes": 248344,
+      "sha256": "570315f2b4045abd544d4e0c5ecfcb9afe47998f60efc51ba0580859f1e1e4e4"
+    },
+    {
+      "path": "assets/wall_0001.obj",
+      "sourceKey": "files/assets/wall_0001.obj",
+      "bytes": 2043643,
+      "sha256": "162ef58cbe95a9308237906b6068ea37c1655fc78c8f4ff16c1f655df71a8c86"
+    },
+    {
+      "path": "assets/wall_0002.obj",
+      "sourceKey": "files/assets/wall_0002.obj",
+      "bytes": 2029882,
+      "sha256": "0981ef09652f6b941083e2da386bc3daf396b4bc83a8d69d3d6f95b8396aead3"
+    },
+    {
+      "path": "assets/window_0001.obj",
+      "sourceKey": "files/assets/window_0001.obj",
+      "bytes": 17515,
+      "sha256": "e733e5c0586aacb16e650857449a9a7988be60c273bd0707dd22fb988c938800"
+    },
+    {
+      "path": "assets/window_0002.obj",
+      "sourceKey": "files/assets/window_0002.obj",
+      "bytes": 3203884,
+      "sha256": "b40dc950005b5f62254535b17c69f1f45a3b7609a72a0e8c3e40fdb26b6f0c32"
+    },
+    {
+      "path": "assets/window_0003.obj",
+      "sourceKey": "files/assets/window_0003.obj",
+      "bytes": 142276,
+      "sha256": "318d9398d4761cd3fc23fe723c60281040edd1d63c095d6aa73e1f2cbed5b83b"
+    },
+    {
+      "path": "data/object_colors.csv",
+      "sourceKey": "files/data/object_colors.csv",
+      "bytes": 5731241,
+      "sha256": "ed285291370b080388155bde99847acb119afeb937b2e8b99a6dc8a8910404c1"
+    },
+    {
+      "path": "data/object_sizes_manual.csv",
+      "sourceKey": "files/data/object_sizes_manual.csv",
+      "bytes": 2312,
+      "sha256": "4ee2ba32be35fa4026c96b09d84d9ab988333a04ad7e4e1b42b62a5f7a5f007b"
+    },
+    {
+      "path": "data/triplets.csv",
+      "sourceKey": "files/data/triplets.csv",
+      "bytes": 80377244,
+      "sha256": "8174680031fa71a2fddfb5a2162e9298cee574a159179777e26756dce3b0b7d1"
+    },
+    {
+      "path": "data/working-combos-refined.csv",
+      "sourceKey": "files/data/working-combos-refined.csv",
+      "bytes": 1671907,
+      "sha256": "847b7090490b11270bd67e48de17981f6112238ef10872e96a1ed6581aa5e950"
+    },
+    {
+      "path": "data/working-combos-bedroom.csv",
+      "sourceKey": "files/data/working-combos-bedroom.csv",
+      "bytes": 387039,
+      "sha256": "2541d5598d8a467fcabdf42f457b27ab907a7190aa06f99bf2fd956d523a4822"
+    },
+    {
+      "path": "data/working-combos-livingroom.csv",
+      "sourceKey": "files/data/working-combos-livingroom.csv",
+      "bytes": 851059,
+      "sha256": "1eaa80bc57a79ebffb2e8b39209f82af88cce0078d3ee9ce80016ae35a1e0a52"
+    },
+    {
+      "path": "data/working-combos-kitchen.csv",
+      "sourceKey": "files/data/working-combos-kitchen.csv",
+      "bytes": 117385,
+      "sha256": "656db73159b3aaa1344b8ee67496808ca64c9eb0049867d55e584f70de8b6f37"
+    },
+    {
+      "path": "data/working-combos-bathroom.csv",
+      "sourceKey": "files/data/working-combos-bathroom.csv",
+      "bytes": 30,
+      "sha256": "c773dadf96668f6a349f4b77c44a549f6dce2ff2061f8b63a24d86771e0d92c7"
+    }
+  ]
+}

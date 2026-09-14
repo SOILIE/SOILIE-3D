@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from serverless.common.engine import RequestError, open_runtime, public_catalog_document, validate_request
+from serverless.common.model_version import MODEL_VERSION
 
 
 RUNTIME = Path(os.environ.get("SOILIE_RUNTIME_DB", ".codex/runtime/relations.sqlite3"))
@@ -16,6 +17,10 @@ class EngineBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.db = open_runtime(RUNTIME)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
 
     def request(self, **overrides):
         payload = {
@@ -34,7 +39,10 @@ class EngineBoundaryTests(unittest.TestCase):
     def test_catalog_identifies_original_v4(self):
         document = public_catalog_document(self.db)
         self.assertEqual(
-            {"name": "SOILIE-3D V4", "version": "24.07.05", "implementation": "original"},
+            {
+                "name": "SOILIE-3D V4", "version": MODEL_VERSION, "implementation": "original",
+                "sourceCommit": "local", "assetManifestSha256": "local", "channel": "publication-2026",
+            },
             document["model"],
         )
         self.assertTrue(document["objects"])

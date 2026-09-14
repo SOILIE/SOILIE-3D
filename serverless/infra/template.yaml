@@ -9,6 +9,18 @@ Parameters:
   VisitorHmacSecret:
     Type: String
     NoEcho: true
+  ModelVersion:
+    Type: String
+    Default: 4.0.1
+  SourceCommit:
+    Type: String
+    Default: local
+  AssetManifestSha256:
+    Type: String
+    Default: local
+  ImplementationChannel:
+    Type: String
+    Default: main
 
 Resources:
   JobTable:
@@ -183,6 +195,10 @@ Resources:
           GALLERY_AUTH_BUCKET: !Ref GalleryAuthBucket
           # Signed AI invitations only; no route supports human enrollment.
           STUDY_PILOT_ENABLED: "false"
+          SOILIE_MODEL_VERSION: !Ref ModelVersion
+          SOILIE_SOURCE_COMMIT: !Ref SourceCommit
+          SOILIE_ASSET_MANIFEST_SHA256: !Ref AssetManifestSha256
+          SOILIE_IMPLEMENTATION_CHANNEL: !Ref ImplementationChannel
       Tags:
         - Key: Project
           Value: SOILIE-3D
@@ -212,6 +228,10 @@ Resources:
           OUTPUT_BASE_URL: https://soilie3d.com/data
           V4_RUNTIME_DIR: /var/task/v4
           BLENDER_PATH: /opt/blender/blender
+          SOILIE_MODEL_VERSION: !Ref ModelVersion
+          SOILIE_SOURCE_COMMIT: !Ref SourceCommit
+          SOILIE_ASSET_MANIFEST_SHA256: !Ref AssetManifestSha256
+          SOILIE_IMPLEMENTATION_CHANNEL: !Ref ImplementationChannel
       Tags:
         - Key: Project
           Value: SOILIE-3D

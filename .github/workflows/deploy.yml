@@ -1,0 +1,76 @@
+name: Deploy SOILIE-3D engine
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: soilie3d-engine-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ca-central-1
+  SOILIE_RUNTIME_BUCKET: soilie3d-data
+
+jobs:
+  test-build-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: aws-actions/configure-aws-credentials@v6.2.4
+        with:
+          aws-region: ca-central-1
+          role-to-assume: arn:aws:iam::204357388741:role/soilie3d-github-deploy
+          role-session-name: soilie3d-${{ github.run_id }}
+          allowed-account-ids: "204357388741"
+
+      - name: Hydrate immutable V4 runtime data
+        run: bash serverless/scripts/hydrate-runtime.sh
+
+      - name: Install version tooling
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          python -m pip install --disable-pip-version-check -r serverless/requirements-ci.txt
+
+      - name: Run unit tests and compile runtime metadata
+        run: |
+          npm run test:version
+          python -m serverless.compiler.build_runtime --repository . --output .codex/runtime
+          python -m unittest discover -s serverless/tests -v
+
+      - name: Build renderer for Blender asset smoke test
+        run: docker build --platform linux/amd64 --provenance=false -f serverless/renderer/Dockerfile -t soilie3d-renderer-smoke .
+
+      - name: Container-smoke all selectable V4 assets
+        run: >-
+          docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
+          --background --python /var/task/serverless/renderer/asset_smoke.py -- /var/task/v4
+
+      - name: Push immutable images and deploy CloudFormation
+        id: deploy
+        run: |
+          endpoint="$(bash serverless/scripts/deploy-ci.sh | tail -n 1)"
+          echo "endpoint=${endpoint}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify catalog and live generation paths
+        run: >-
+          python serverless/scripts/live-smoke.py
+          --endpoint "${{ steps.deploy.outputs.endpoint }}"
+          --version "$(node -p "require('./package.json').version")"
+          --commit "$GITHUB_SHA"

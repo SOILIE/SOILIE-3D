@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from serverless.common.model_version import model_document
+
 
 ROOM_TYPES = ("bedroom", "living_room", "kitchen", "bathroom")
 MODES = ("random", "objects", "room_type")
@@ -228,7 +230,7 @@ def public_catalog_document(connection: sqlite3.Connection) -> dict[str, Any]:
     }
     return {
         "schemaVersion": 2,
-        "model": {"name": "SOILIE-3D V4", "version": "24.07.05", "implementation": "original"},
+        "model": model_document(),
         "objects": catalog(connection),
         "roomTypes": list(ROOM_TYPES),
         "presets": presets,

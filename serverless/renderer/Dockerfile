@@ -17,7 +17,12 @@ RUN dnf install -y \
 RUN pip install --no-cache-dir numpy==1.26.4 pandas==2.1.4 Pillow==10.4.0
 
 COPY serverless /var/task/serverless
-COPY .codex/runtime/v4 /var/task/v4
+COPY package.json /var/task/package.json
+COPY modules /var/task/v4/modules
+COPY assets /var/task/v4/assets
+COPY data /var/task/v4/data
+COPY suggested_setup.blend /var/task/v4/suggested_setup.blend
+COPY .codex/runtime/v4-provenance.json /var/task/v4/v4-provenance.json
 
 ENV BLENDER_PATH=/opt/blender/blender
 ENV V4_RUNTIME_DIR=/var/task/v4

@@ -11,7 +11,7 @@ from serverless.common.v4_runtime import generate_v4_inputs
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runtime", type=Path, default=Path(".codex/runtime/v4"))
+    parser.add_argument("--runtime", type=Path, default=Path("."))
     parser.add_argument("--objects", nargs="+", default=["telephone", "office_chair", "bed"])
     parser.add_argument("--seed", type=int, default=41021)
     parser.add_argument("--output", type=Path, required=True)

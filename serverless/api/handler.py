@@ -26,6 +26,7 @@ from serverless.common.engine import (
     public_catalog_document,
     validate_request,
 )
+from serverless.common.model_version import model_document
 
 
 TABLE_NAME = os.environ["JOB_TABLE"]
@@ -159,6 +160,7 @@ def _job_response(job_id: str, expires_at: int, replayed: bool = False) -> dict[
         "statusUrl": f"/generations/{job_id}",
         "expiresAt": datetime.fromtimestamp(expires_at, UTC).isoformat().replace("+00:00", "Z"),
         "managementToken": _management_token(job_id),
+        "model": model_document(),
         "retention": {"mode": "temporary", "expiresAt": datetime.fromtimestamp(expires_at, UTC).isoformat().replace("+00:00", "Z")},
         "replayed": replayed,
     }
@@ -333,6 +335,7 @@ def _status(job_id: str) -> dict[str, Any]:
         "status": meta["status"]["S"],
         "request": json.loads(meta["requestJson"]["S"]),
         "scenes": scenes,
+        "model": model_document(),
         "expiresAt": datetime.fromtimestamp(int(meta.get("resultExpiresAt", meta["expiresAt"])["N"]), UTC).isoformat().replace("+00:00", "Z"),
     }
     if "errorJson" in meta:
@@ -396,7 +399,10 @@ def _gallery_record(item: dict[str, Any]) -> dict[str, Any]:
         "seed": int(item["seed"]["N"]),
         "mode": item["mode"]["S"],
         "artifacts": json.loads(item["artifactsJson"]["S"]),
-        "model": {"name": "SOILIE-3D V4", "implementation": item["modelImplementation"]["S"]},
+        "model": json.loads(item["modelJson"]["S"]) if "modelJson" in item else {
+            "name": "SOILIE-3D V4", "implementation": item["modelImplementation"]["S"],
+            "version": "4.0.0", "channel": "legacy",
+        },
     }
     if "roomType" in item:
         record["roomType"] = item["roomType"]["S"]
@@ -560,6 +566,7 @@ def _publish_scene(
         "mode": {"S": request["mode"]},
         "artifactsJson": {"S": json_dumps(artifacts)},
         "modelImplementation": {"S": "original"},
+        "modelJson": {"S": json_dumps(result["model"])},
     }
     if request.get("roomType"):
         item["roomType"] = {"S": request["roomType"]}

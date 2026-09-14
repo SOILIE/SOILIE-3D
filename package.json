@@ -1,0 +1,20 @@
+{
+  "name": "soilie-3d",
+  "version": "4.0.1",
+  "private": true,
+  "description": "SOILIE-3D research model, benchmark, and serverless deployment tooling.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soilie/SOILIE-3D.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "test:version": "node --test serverless/tests/version-hook.test.mjs"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

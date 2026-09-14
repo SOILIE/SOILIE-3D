@@ -153,8 +153,9 @@ def validate_public_rate_card(card):
 
 def evidence(attempts, rate_card):
     validate_public_rate_card(rate_card)
-    complete = sum(row["status"] == "complete" for row in attempts)
-    seconds = sum(row["generationSeconds"] for row in attempts)
+    completed_rows = [row for row in attempts if row["status"] == "complete"]
+    complete = len(completed_rows)
+    seconds = sum(row["generationSeconds"] for row in completed_rows)
     aws = rate_card["lambda"]
     available = monthly_lambda_budget(600,30,10240,10240,aws,400000,1000000)
     exhausted = monthly_lambda_budget(600,30,10240,10240,aws)
@@ -163,8 +164,9 @@ def evidence(attempts, rate_card):
             "question":"Can lower compute cost compensate for slower layout generation?",
             "finding":"SOILIE can have lower layout-generation charges under explicit runtime and token-budget assumptions. The conditional bounds below show when that follows from the prices; they do not establish measured savings or an advantage over every LLM.",
             "scope":"Layout generation only; image rendering, animation, training, data preparation, storage, transfer and API orchestration are separate costs.",
-            "measuredLocal":{"completed":complete, "allAttemptSeconds":seconds,
-                             "secondsPerCompletedScene":seconds/complete if complete else None,
+            "measuredLocal":{"completed":complete, "successfulGenerationSeconds":seconds,
+                              "secondsPerCompletedScene":seconds/complete if complete else None,
+                              "failedAttemptsExcludedFromTiming":sum(row["status"] != "complete" for row in attempts),
                              "moneyAvailable":False, "reason":"Local electricity and hardware costs were not metered. This is not zero-cost compute."},
             "layoutgpt":{"moneyAvailable":False, "reason":"Official parsed layout files omit full few-shot messages, usage receipts, rejected requests and billable retries."},
             "lambda":{"moneyAvailable":False, "reason":"No closed, version-matched Lambda billing ledger is part of this local placement benchmark."},

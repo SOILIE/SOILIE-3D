@@ -9,6 +9,10 @@ import json
 import csv
 import random
 import copy
+try:
+    from collision_resolution import Box, choose_recovery_move, overlapping_pairs
+except ImportError:  # Package imports outside Blender resolve through modules.
+    from .collision_resolution import Box, choose_recovery_move, overlapping_pairs
 
 SIZE_MAP = {'xsmall': 0, 'small': 1, 'medium': 2, 'large': 3, 'xlarge': 4}
 SYNONYMS = {'light':'lamp'}
@@ -669,8 +673,10 @@ def move_obj_to_fit_on_top(obj_to_move, base_obj):
     bpy.context.view_layer.update()
 
 
-def move_objects_apart(objA, objB, directions_to_skip={}):
+def move_objects_apart(objA, objB, directions_to_skip=None):
     '''Move objA away from objB in the smallest direction that is still surrounded by walls'''
+    if directions_to_skip is None:
+        directions_to_skip = {}
     # Find walls so we know our boundaries
     walls = [obj for obj in bpy.context.scene.objects if "Wall" in obj.name]
 
@@ -694,48 +700,43 @@ def move_objects_apart(objA, objB, directions_to_skip={}):
     # Sort shifts from smallest to largest
     shifts = dict(sorted(shifts.items(),key=lambda item: item[1]))
 
-    # Try shifting in only one direction, then break out of the loop
-    continueLoop = True
-    while continueLoop:
-        directions_attempted = 0
-        for direction,shift in shifts.items():
-            skip = objA.name in directions_to_skip and direction==directions_to_skip[objA.name]
-            # Object must be indoors after the shift, otherwise try next smallest shift
-            if direction=='front' and not skip and is_indoors(objA, shift_vector=Vector((shift,0,0))):
-                objA.location.x += shift # shift forward
-                # Skip opposite direction next time to avoid moving it back to its original location
-                directions_to_skip[objA.name] = 'back'
-                print('---| Move ' + objA.name, direction)
-                continueLoop=False
-                break
-            elif direction=='back' and not skip and is_indoors(objA, shift_vector=Vector((-shift,0,0))):
-                objA.location.x -= shift # shift back
-                directions_to_skip[objA.name] = 'front'
-                print('---| Move ' + objA.name, direction)
-                continueLoop=False
-                break
-            elif direction=='left' and not skip and is_indoors(objA, shift_vector=Vector((0,shift,0))):
-                objA.location.y += shift # shift left
-                directions_to_skip[objA.name] = 'right'
-                print('---| Move ' + objA.name, direction)
-                continueLoop=False
-                break
-            elif direction=='right' and not skip and is_indoors(objA, shift_vector=Vector((0,-shift,0))):
-                objA.location.y -= shift # shift right
-                directions_to_skip[objA.name] = 'left'
-                print('---| Move ' + objA.name, direction)
-                continueLoop=False
-                break
-            directions_attempted+=1
-            if directions_attempted==len(shifts.keys()):
-                # All directions result in objA going outside of wall boundaries
-                print('expand')
-                expand_floor(0.2,0.3) # Expand out the walls again, but only slightly
+    # Try the original direction order once. If provisional walls block every
+    # direction, the whole-scene recovery below can move the object and expand
+    # only the room side that actually needs space.
+    for direction,shift in shifts.items():
+        skip = objA.name in directions_to_skip and direction==directions_to_skip[objA.name]
+        if direction=='front' and not skip and is_indoors(objA, shift_vector=Vector((shift,0,0))):
+            objA.location.x += shift
+            directions_to_skip[objA.name] = 'back'
+            print('---| Move ' + objA.name, direction)
+            bpy.context.view_layer.update()
+            return True
+        elif direction=='back' and not skip and is_indoors(objA, shift_vector=Vector((-shift,0,0))):
+            objA.location.x -= shift
+            directions_to_skip[objA.name] = 'front'
+            print('---| Move ' + objA.name, direction)
+            bpy.context.view_layer.update()
+            return True
+        elif direction=='left' and not skip and is_indoors(objA, shift_vector=Vector((0,shift,0))):
+            objA.location.y += shift
+            directions_to_skip[objA.name] = 'right'
+            print('---| Move ' + objA.name, direction)
+            bpy.context.view_layer.update()
+            return True
+        elif direction=='right' and not skip and is_indoors(objA, shift_vector=Vector((0,-shift,0))):
+            objA.location.y -= shift
+            directions_to_skip[objA.name] = 'left'
+            print('---| Move ' + objA.name, direction)
+            bpy.context.view_layer.update()
+            return True
 
     bpy.context.view_layer.update()
+    return False
 
 
-def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_skip={}):
+def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_skip=None):
+    if directions_to_skip is None:
+        directions_to_skip = {}
 
     # Define list of objects with surfaces
     surface_objs = ['bed','bookcase','cabinet','coffee_table','cupboard','desk','dining_table',
@@ -760,7 +761,7 @@ def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_s
     # Check if objects overlap
     overlap_percentage = calculate_overlap_percentage(objA, objB)
     if overlap_percentage == 0:
-        return  # No overlap, no action needed
+        return False  # No overlap, no action needed
 
     print('---|',round(overlap_percentage,2))
     print('---|',directions_to_skip)
@@ -774,19 +775,121 @@ def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_s
         # Move objA on top of objB
         move_obj_on_top(objA, objB)
         move_obj_to_fit_on_top(objA, objB)
+        moved = True
     elif rankB < rankA and objA_has_surface and not objB_is_grounded:
         # Move objB on top of objA
         move_obj_on_top(objB, objA)
         move_obj_to_fit_on_top(objB, objA)
+        moved = True
     else:
         # Same size, grounded, or no surface
         # Move the smaller object away from the larger one
         if rankA <= rankB:
-            move_objects_apart(objA, objB, directions_to_skip)
+            moved = move_objects_apart(objA, objB, directions_to_skip)
         else:
-            move_objects_apart(objB, objA, directions_to_skip)
+            moved = move_objects_apart(objB, objA, directions_to_skip)
     #bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     bpy.context.view_layer.update()
+    return moved
+
+
+def _collision_box(name, obj):
+    corners = get_bbox_corners(obj)
+    return Box(
+        name,
+        min(corner.x for corner in corners), max(corner.x for corner in corners),
+        min(corner.y for corner in corners), max(corner.y for corner in corners),
+        min(corner.z for corner in corners), max(corner.z for corner in corners),
+    )
+
+
+def _room_bounds():
+    walls = {
+        name:get_bbox_corners(bpy.data.objects[name])
+        for name in ('Left Wall','Right Wall','Front Wall','Back Wall')
+    }
+    return (
+        max(corner.x for corner in walls['Back Wall']),
+        min(corner.x for corner in walls['Front Wall']),
+        max(corner.y for corner in walls['Right Wall']),
+        min(corner.y for corner in walls['Left Wall']),
+    )
+
+
+def expand_room_to_contain_objects(inputs, clearance=0.01):
+    '''Expand deficient room sides around final object bounds without shrinking.'''
+    floor = bpy.data.objects['Floor']
+    current_min_x, current_max_x, current_min_y, current_max_y = _room_bounds()
+    architecture = _fixed_collision_objects(inputs)
+    boxes = [
+        _collision_box(name, values['blender_obj'])
+        for name,values in inputs.items() if name not in architecture
+    ]
+    required_min_x = min(box.min_x for box in boxes)-clearance
+    required_max_x = max(box.max_x for box in boxes)+clearance
+    required_min_y = min(box.min_y for box in boxes)-clearance
+    required_max_y = max(box.max_y for box in boxes)+clearance
+    min_x = min(current_min_x, required_min_x)
+    max_x = max(current_max_x, required_max_x)
+    min_y = min(current_min_y, required_min_y)
+    max_y = max(current_max_y, required_max_y)
+
+    # Move the measured interior faces directly. Re-deriving them indirectly
+    # from the floor origin can drift because imported Blender origins are not
+    # guaranteed to coincide with their world-space bounding-box centres.
+    walls = {name:bpy.data.objects[name] for name in ('Left Wall','Right Wall','Front Wall','Back Wall')}
+    walls['Back Wall'].location.x += min_x-current_min_x
+    walls['Front Wall'].location.x += max_x-current_max_x
+    walls['Right Wall'].location.y += min_y-current_min_y
+    walls['Left Wall'].location.y += max_y-current_max_y
+    walls['Left Wall'].dimensions.x = walls['Right Wall'].dimensions.x = max_x-min_x
+    walls['Front Wall'].dimensions.y = walls['Back Wall'].dimensions.y = max_y-min_y
+
+    floor.dimensions.x = max_x-min_x
+    floor.dimensions.y = max_y-min_y
+    bpy.context.view_layer.update()
+    floor_centre = get_centroid(floor)
+    floor.location.x += (min_x+max_x)/2-floor_centre.x
+    floor.location.y += (min_y+max_y)/2-floor_centre.y
+    bpy.context.view_layer.update()
+
+
+def _fixed_collision_objects(sorted_objects):
+    '''Windows and their coverings share architecture space intentionally.'''
+    return frozenset(
+        name for name in sorted_objects
+        if name.split('.')[0].lower() in {'window','blinds','curtain'}
+    )
+
+
+def _resolve_collision_cycle(sorted_objects, original_centres):
+    '''Resolve a repeated pairwise state using whole-scene collision awareness.'''
+    print('---| Object-aware collision recovery activated')
+    fixed = _fixed_collision_objects(sorted_objects)
+    movable_order = list(reversed(list(sorted_objects)))
+    seen = set()
+    while True:
+        boxes = {
+            name:_collision_box(name, values['blender_obj'])
+            for name,values in sorted_objects.items()
+        }
+        collisions = overlapping_pairs(boxes, fixed)
+        if not collisions:
+            return
+        state = tuple(
+            (name, round(box.min_x,9), round(box.max_x,9), round(box.min_y,9), round(box.max_y,9))
+            for name,box in boxes.items()
+        )
+        if state in seen:
+            raise RuntimeError('Object-aware collision recovery repeated a geometric state')
+        seen.add(state)
+        move = choose_recovery_move(boxes, movable_order, original_centres, _room_bounds(), fixed)
+        obj = sorted_objects[move.name]['blender_obj']
+        obj.location.x += move.dx
+        obj.location.y += move.dy
+        bpy.context.view_layer.update()
+        print('---| Object-aware move', move.name, round(move.dx,4), round(move.dy,4),
+              'overlap', round(move.overlap_before,6), 'to', round(move.overlap_after,6))
 
 
 def adjust_overlapping_objects(inputs):
@@ -795,16 +898,30 @@ def adjust_overlapping_objects(inputs):
         sorted(inputs.items(),
         key=lambda item: (SIZE_MAP[item[1]['size']['category']])|int(item[1]['size']['diameter']*10000),
         reverse=True))
-    # Store walls in a list
-    walls = [obj for obj in bpy.context.scene.objects if "Wall" in obj.name]
+    original_centres = {
+        name:(values['blender_obj'].location.x, values['blender_obj'].location.y)
+        for name,values in sorted_objects.items()
+    }
     # Repeat operation until no overlaps remain across all objects
     locs_before = [Vector((0,0,0))]
     locs_after = [Vector((1,1,1))]
     directions_to_skip = {}
+    seen_states = set()
+    recovery_activated = False
+    boundary_repair_required = False
+    architecture = _fixed_collision_objects(sorted_objects)
     while locs_before!=locs_after:
         # Keep adjusting until all objects stop moving
-        locs_before = [obj.location for obj in bpy.context.scene.objects]
+        locs_before = [obj.location.copy() for obj in bpy.context.scene.objects]
+        state = tuple((obj.name, round(obj.location.x,9), round(obj.location.y,9), round(obj.location.z,9))
+                      for obj in bpy.context.scene.objects)
+        if state in seen_states:
+            _resolve_collision_cycle(sorted_objects, original_centres)
+            recovery_activated = True
+            break
+        seen_states.add(state)
         pairs_checked = []
+        recovery_required = False
         for obj_nameA,valsA in sorted_objects.items():
             objA = valsA['blender_obj']
             obj_size_catA = valsA['size']['category']
@@ -815,10 +932,31 @@ def adjust_overlapping_objects(inputs):
                 print(obj_nameA,'--',obj_nameB)
                 objB = valsB['blender_obj']
                 obj_size_catB = valsB['size']['category']
-                separate_objects(objA, objB, obj_size_catA, obj_size_catB, directions_to_skip)
+                any_overlap = calculate_overlap_percentage(objA, objB) > 0
+                had_overlap = obj_nameA not in architecture and obj_nameB not in architecture and any_overlap
+                moved = separate_objects(objA, objB, obj_size_catA, obj_size_catB, directions_to_skip)
                 pairs_checked.append({obj_nameA,obj_nameB})
-        locs_after = [obj.location for obj in bpy.context.scene.objects]
+                if any_overlap and not moved:
+                    boundary_repair_required = True
+                if had_overlap and not moved:
+                    recovery_required = True
+                    break
+            if recovery_required:
+                break
+        if recovery_required:
+            _resolve_collision_cycle(sorted_objects, original_centres)
+            recovery_activated = True
+            break
+        locs_after = [obj.location.copy() for obj in bpy.context.scene.objects]
         bpy.context.view_layer.update()
+
+    boxes = {name:_collision_box(name, values['blender_obj']) for name,values in sorted_objects.items()}
+    if overlapping_pairs(boxes, _fixed_collision_objects(sorted_objects)):
+        _resolve_collision_cycle(sorted_objects, original_centres)
+        recovery_activated = True
+    if recovery_activated or boundary_repair_required:
+        print('---| Room containment repair activated')
+        expand_room_to_contain_objects(inputs)
 
 
 def adjust_windows_to_walls(chisel_walls=True):
@@ -1169,6 +1307,13 @@ def visualize(inputs):
     # Do a final adjustment of windows, blinds, and curtain to walls
     adjust_windows_to_walls()
 
+    # The web room request is deliberately downstream of all V4 object
+    # placement. It redraws only the enclosing floor and walls.
+    room_fit_result = None
+    if os.environ.get('SOILIE_ROOM_REQUEST'):
+        from room_fit import apply_serverless_room_fit
+        room_fit_result = apply_serverless_room_fit()
+
     # Add light for any lamps, if present
     lights, max_lum_lamp, max_lum_window = add_light_to_lamps_and_windows()
 
@@ -1281,30 +1426,31 @@ def visualize(inputs):
             'dim_x':sx,'dim_y':sy,'dim_z':sz,
             'sizecat':sizecat})
 
-    ## Remove all objects from scene
-    for obj in bpy.context.scene.objects:
-        if obj==None:
-            continue
-        if obj.name.lower() not in {'camera', 'light'}:
-            obj.select_set(True)
-        else:
-            obj.select_set(False) # Deselect camera and light objects
-        bpy.ops.object.delete() # Delete all selected objects
-        # Remove all mesh data blocks
-        for mesh in bpy.data.meshes:
-            bpy.data.meshes.remove(mesh)
-        # Remove all material data blocks
-        for material in bpy.data.materials:
-            bpy.data.materials.remove(material)
-        bpy.context.view_layer.update()
-
-    ## Print output to return it to triggering script
+    ## Prepare output before cleaning the in-memory scene
     result_dict = {
         "status": "success",
         "path": os.path.join(os.getcwd(),'output',curr_out_folder),
         "filename":filename,
         "data": output}
+    if room_fit_result is not None:
+        result_dict['room'] = room_fit_result
     result_json = json.dumps(result_dict)
+
+    ## Remove generated objects so repeated local generations remain safe
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in list(bpy.context.scene.objects):
+        if obj.name.lower() not in {'camera', 'light'}:
+            obj.select_set(True)
+    bpy.ops.object.delete()
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+    for material in list(bpy.data.materials):
+        if material.users == 0:
+            bpy.data.materials.remove(material)
+    bpy.context.view_layer.update()
+
+    ## Print output to return it to triggering script
     print(result_json) # Print the JSON string to stdout
 
 

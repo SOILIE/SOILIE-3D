@@ -12,16 +12,21 @@ from serverless.tests import test_benchmark_parity as parity_fixtures
 
 
 class EvidenceTests(unittest.TestCase):
-    def test_generation_timing_excludes_gaps_but_discloses_actual_failed_work(self):
-        rows = [{'status':'complete','startedAt':'2026-09-14T00:00:00Z','generationSeconds':10,'observationSeconds':3},
+    def test_generation_timing_excludes_gaps_and_arbitrary_failure_cutoffs(self):
+        rows = [{'status':'complete','startedAt':'2026-09-14T00:00:00Z','generationSeconds':10,'observationSeconds':3,
+                 'collisionRecoveryActivated':True,'collisionRecoveryMoves':2},
                 {'status':'failed','startedAt':'2026-09-14T12:00:00Z','generationSeconds':900,'errorCode':'TIMEOUT'},
                 {'status':'failed','startedAt':'2026-09-14T15:00:00Z','generationSeconds':5}]
         result = generation_breakdown(rows)
-        self.assertEqual(915,result['totalSeconds'])
+        self.assertEqual(10,result['totalSeconds'])
         self.assertEqual(10,result['completedSeconds'])
-        self.assertEqual(905,result['failedSeconds'])
-        self.assertEqual(900,result['timeoutSecondsWithinFailures'])
+        self.assertEqual(2,result['failedAttempts'])
+        self.assertEqual({'TIMEOUT':1,'UNCLASSIFIED_FAILURE':1},result['failureCounts'])
+        self.assertEqual(6,result['successfulLayoutsPerMinute'])
         self.assertEqual(3,result['excludedObservationSeconds'])
+        self.assertEqual(1,result['collisionCyclesDetected'])
+        self.assertEqual(2,result['collisionRecoveryMoves'])
+        self.assertEqual(0,result['boundaryContainmentRepairs'])
         with self.assertRaises(ValueError):
             generation_breakdown([{'status':'running','generationSeconds':30}])
 
