@@ -216,12 +216,36 @@ apply; the existence of an LLM alone does not imply a nonzero API bill.
 
 `publish_comparison.py` generates `comparison.json` and `measured-scenes.json`
 from checkpoint artifacts, the LayoutGPT import, the checked rate card and
-`selection-audit.json`. The latter replays the older duplicate-disabled sampler
-calls and explains all 14 shorter selections; it is not a quality score.
-The compact `selection-fixture.json` preserves those historical inputs and
-selections without retaining the retired preliminary score reports. Replay it
+`selection-audit.json`. The latter replays the registered duplicate-disabled
+sampler calls and explains all 14 shorter selections; it is not a quality score.
+The compact `selection-fixture.json` preserves those inputs and selections.
+Replay it
 with `PYTHONHASHSEED=0 python -m serverless.benchmark.audit_selection`, supplying
 `--runtime`, `--source` and `--output`; the output records the fixture checksum.
+
+The publication also derives four direct pass rates from the same final scene
+measurements: no oriented furniture-envelope intersection, full footprint
+containment, both conditions together, and no occupied-mesh intersection where
+closed evaluated meshes are available. Cross-model rates are calculated only
+inside shared room-type, object-count and density strata, with each shared
+stratum receiving equal weight. A missing mesh result is unavailable rather
+than a pass. Pass/fail classification allows at most 0.0001% (one part per
+million) numerical contact. Raw overlap and boundary distributions retain the
+unrounded values, so this tolerance does not hide the measured amount.
+
+SOILIE's final placement is additionally compared with its measured relational
+proposal. The report gives horizontal object displacement in centimetres,
+absolute pair-distance change in centimetres, and pair-direction change in
+degrees. These values answer how much collision handling altered the proposed
+relations; they are not presented as cross-model scores because released
+baseline layouts do not contain an equivalent intermediate proposal. The
+number of distinct duplicate-aware object combinations and the most frequent
+combination's share describe sampler breadth without claiming spatial quality.
+The same diagnostic counts proposals with intersecting oriented furniture
+envelopes and reports the fraction for which V4's ordinary separation stage
+removes every such intersection. This correction rate is paired with the
+relation-change distances rather than presented as evidence of plausibility by
+itself.
 
 Each run's `generationBreakdown` separates completed-attempt time, failed-attempt
 time, and the timeout subset of failures. Their total equals the sum of model

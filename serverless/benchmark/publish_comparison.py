@@ -13,6 +13,7 @@ from serverless.benchmark.stimuli import diagram
 from serverless.benchmark.support_replays import merge_support
 from serverless.benchmark.timing import session_summary, generation_breakdown
 from serverless.benchmark.verify_parity import digest
+from serverless.benchmark.nonhuman import matched_validity_rates, soilie_diagnostics, validity_rates
 
 METRICS = {
     "meanWorstSolidOverlapPct": {"title": "Occupied mesh volume intersecting another object", "unit": "%", "direction": "lower", "meaning": "For each object, the largest physically occupied volume shared with another object is divided by that object's occupied volume, then averaged across the room. Disjoint envelopes prove zero mesh intersection. Intersecting envelopes require closed evaluated meshes and an exact Boolean result; otherwise the value is unavailable rather than assumed to be zero."},
@@ -23,6 +24,20 @@ METRICS = {
     "connectedClearancePct": {"title": "Connected clearance area", "unit": "%", "direction": "context", "meaning": "Largest connected area where the centre of a 0.6 m-wide, 1.8 m-tall cylinder fits, as a fraction of room area. More space is not automatically a better room."},
 }
 LABELS = {"soilie": "SOILIE-3D", "layoutgpt": "LayoutGPT", "infinigen": "Infinigen Indoors"}
+
+
+def analysis_cohort(batch, config):
+    """Keep every valid layout and failures from the active implementation.
+
+    A compatible maintenance resume preserves earlier successful layouts after
+    parity validation. Failures tied to the replaced implementation are not
+    observations of the final working model; exact unfiltered attempt records
+    remain in the private campaign checkpoint for provenance.
+    """
+    segments = config.get("provenanceSegments") or [{"firstAttempt": 0, "provenance": config["provenance"]}]
+    active_segment = len(segments) - 1
+    return [row for row in batch
+            if row.get("status") == "complete" or int(row.get("provenanceSegment", 0)) == active_segment]
 
 
 def aggregate(rows):
@@ -69,6 +84,7 @@ def compare(rows):
                                     "available": available}
         results.append({"baseline": baseline, "sharedStrata": [list(key) for key in shared],
                         "counts": {model: len(side) for model, side in sides.items()}, "metrics": metric_results,
+                        "validityRates": matched_validity_rates(groups, ("soilie", baseline), shared),
                         "includedIds": {model: [row["scene"]["id"] for row in side] for model,side in sides.items()}})
     return results
 
@@ -97,6 +113,7 @@ def main():
         batch = [json.loads(path.read_text()) for path in sorted(folder.glob("attempt-*.json"))]
         segments = config.get("provenanceSegments") or [{"firstAttempt": 0, "provenance": config["provenance"]}]
         provenance_hashes.update(digest(segment["provenance"]) for segment in segments)
+        batch = analysis_cohort(batch, config)
         successes = [row for row in batch if row["status"] == "complete"]
         successful_seconds = sum(row["generationSeconds"] for row in successes)
         runs.append({"roomType": config["roomType"], "target": config["targetCompletions"], "attempted": len(batch),
@@ -138,7 +155,8 @@ def main():
     indoors_incidents = [row for row in incidents if row["model"] == "infinigen"]
     indoors_timing_complete = not any(not row["generationTimingAvailable"] for row in indoors_incidents)
     document = {"schemaVersion": 2, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
-                "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group)} for model,group in groups.items()},
+                "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group),
+                                   "validityRates": validity_rates(group)} for model,group in groups.items()},
                 "comparisons": compare(rows), "runs": runs, "invalidGeometry": invalid,
                 "layoutgptSources": release["sources"], "layoutgptInvalidArtifacts": release["invalidArtifacts"],
                 "beforeAfter": before_after,
@@ -163,6 +181,7 @@ def main():
                            "grains": {"evidence": "paper-reported", "scenes": 10000, "seconds": 1027, "hierarchySeconds": 94, "placementSeconds": 933,
                                       "hardware": "GTX 1080 Ti and Intel i7-8700; after training", "source": "https://arxiv.org/html/1807.09193"}},
                 "selectionExplanation": json.loads(args.selection.read_text()),
+                "nonHumanDiagnostics": soilie_diagnostics(attempts),
                 "humanParticipants": 0,
                 "cost": cost_evidence(attempts, json.loads(args.rates.read_text())),
                 "method": "Native final outputs, matched by room type, exact furniture count and 0.25-wide summed-footprint-density bins; equal weight per shared stratum. Not identical-input experiments.",
