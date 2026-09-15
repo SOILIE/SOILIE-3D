@@ -23,7 +23,7 @@ V4_0_2_MAINTENANCE = {
     "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
     "modules/working_combos.py": "8dff9d87bd9c26334c48afe07510fa9325692b82cc9602d734b0bdbd4e61b956",
     "modules/prepare_data.py": "98c4fa9509ced827b97173710d7a27d4bfb28956832649d42dcaf495de57c517",
-    "modules/render.py": "d2070d7eec8d7d5d28df1b120d8a8085b2702830a735c7f19ef4f6ee2a3e69c1",
+    "modules/render.py": "64b3f156b6c9dfb2c95c248ab5706808c08b98988f61aff8f2576826dc4aecf5",
 }
 
 

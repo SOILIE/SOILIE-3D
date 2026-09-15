@@ -95,7 +95,8 @@ def main():
         if config.get("full"):
             raise ValueError("Full-render parity runs cannot enter placement-only timing results")
         batch = [json.loads(path.read_text()) for path in sorted(folder.glob("attempt-*.json"))]
-        provenance_hashes.add(digest(config["provenance"]))
+        segments = config.get("provenanceSegments") or [{"firstAttempt": 0, "provenance": config["provenance"]}]
+        provenance_hashes.update(digest(segment["provenance"]) for segment in segments)
         successes = [row for row in batch if row["status"] == "complete"]
         successful_seconds = sum(row["generationSeconds"] for row in successes)
         runs.append({"roomType": config["roomType"], "target": config["targetCompletions"], "attempted": len(batch),

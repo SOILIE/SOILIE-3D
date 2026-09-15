@@ -63,6 +63,66 @@ def write_json(path, data):
     temporary.replace(path)
 
 
+def runtime_implementation(runtime):
+    """Capture the exact code used by an attempt without charging benchmark time."""
+    package = json.loads((runtime/"package.json").read_text(encoding="utf-8"))
+    render_path = runtime/"modules"/"render.py"
+    commit = "local"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(runtime), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        )
+        commit = result.stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return {
+        "modelVersion": str(package["version"]),
+        "sourceCommit": commit,
+        "renderSha256": hashlib.sha256(render_path.read_bytes()).hexdigest(),
+    }
+
+
+def _without_provenance(config):
+    return {key: value for key, value in config.items() if key not in {"provenance", "provenanceSegments"}}
+
+
+def _compatible_render_maintenance(previous, current):
+    """Allow only a render-module repair within the same model release."""
+    if any(previous.get(key) != current.get(key) for key in ("model", "version", "channel")):
+        return False
+    first = json.loads(json.dumps(previous))
+    second = json.loads(json.dumps(current))
+    for value in (first, second):
+        value.pop("baselineCommit", None)
+        value.pop("totalBytes", None)
+        value.get("files", {}).pop("modules/render.py", None)
+    return first == second
+
+
+def prepare_manifest(manifest, config, rows, compatible_maintenance=False):
+    """Validate a resume and record the exact implementation from each boundary."""
+    if not manifest.exists():
+        config["provenanceSegments"] = [{"firstAttempt": 0, "provenance": config["provenance"]}]
+        write_json(manifest, config)
+        return config, 0
+
+    previous = json.loads(manifest.read_text())
+    if _without_provenance(previous) != _without_provenance(config):
+        raise RuntimeError("Resume configuration differs; use a new output directory")
+    segments = previous.get("provenanceSegments") or [
+        {"firstAttempt": 0, "provenance": previous["provenance"]}
+    ]
+    if segments[-1]["provenance"] != config["provenance"]:
+        if not compatible_maintenance or not _compatible_render_maintenance(segments[-1]["provenance"], config["provenance"]):
+            raise RuntimeError("Resume implementation differs; use a new output directory")
+        segments.append({"firstAttempt": len(rows), "provenance": config["provenance"]})
+        previous["provenance"] = config["provenance"]
+    previous["provenanceSegments"] = segments
+    write_json(manifest, previous)
+    return previous, len(segments)-1
+
+
 def terminate_tree(process):
     if os.name == "posix":
         os.killpg(process.pid, signal.SIGKILL)
@@ -118,15 +178,13 @@ def batch(args):
         # bedroom throughput run. Hash the inputs, not a machine-specific path.
         config.update(cohort='diversity', requestPlanSha256=hashlib.sha256(args.request_plan.read_bytes()).hexdigest(),
                       plannedAttempts=len(plan), targetCompletions=len(plan),roomType='mixed',allowDuplicates='per-request')
-    if manifest.exists():
-        previous = json.loads(manifest.read_text())
-        if previous != config:
-            raise RuntimeError("Resume configuration differs; use a new output directory")
-    else:
-        write_json(manifest, config)
     rows = checkpoint_rows(args.output)
+    config, provenance_segment = prepare_manifest(
+        manifest, config, rows, args.compatible_maintenance_resume,
+    )
     completed = sum(row["status"] == "complete" for row in rows)
     attempted = len(rows)
+    implementation = runtime_implementation(args.runtime)
     while (attempted < len(plan) if plan else completed < args.target) and (not args.max_attempts or attempted < args.max_attempts):
         if shutil.disk_usage(args.output).free < 15*1024**3:
             raise RuntimeError("Paused before disk space falls below 15 GiB; checkpoint is resumable")
@@ -152,6 +210,8 @@ def batch(args):
         room_type = request.get('roomType', 'unspecified')
         identity = f"soilie-diversity-{index:05d}-{request['seed']}" if plan else f"soilie-{args.room_type}-{request['seed']}"
         row = {"id": identity, "attempt": index, "request": request,
+               "implementation": implementation,
+               "provenanceSegment": provenance_segment,
                "startedAt": datetime.now(UTC).isoformat(), "status": "failed"}
         if plan:
             row['cohort'] = 'diversity'
@@ -248,6 +308,8 @@ def main():
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--support", action="store_true")
     parser.add_argument("--solid-mesh-overlap", action="store_true")
+    parser.add_argument("--compatible-maintenance-resume", action="store_true",
+                        help="Resume only when provenance differs by modules/render.py within the same version")
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--work", type=Path)
     args = parser.parse_args()
