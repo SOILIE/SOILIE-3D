@@ -22,6 +22,7 @@ if (!level) process.exit(0);
 const packagePath = resolve(root, 'package.json');
 const lockPath = resolve(root, 'package-lock.json');
 const readmePath = resolve(root, 'README.md');
+const infrastructurePath = resolve(root, 'serverless', 'infra', 'template.yaml');
 const packageDocument = JSON.parse(readFileSync(packagePath, 'utf8'));
 const nextVersion = calculateNextVersion(packageDocument.version, level);
 
@@ -36,7 +37,12 @@ const readme = readFileSync(readmePath, 'utf8').replace(
   `**Current model version: ${nextVersion}**`,
 );
 writeFileSync(readmePath, readme);
+const infrastructure = readFileSync(infrastructurePath, 'utf8').replace(
+  /(ModelVersion:\r?\n\s+Type: String\r?\n\s+Default:)\s+[^\r\n]+/,
+  `$1 ${nextVersion}`,
+);
+writeFileSync(infrastructurePath, infrastructure);
 
-git(['add', 'package.json', 'package-lock.json', 'README.md']);
+git(['add', 'package.json', 'package-lock.json', 'README.md', 'serverless/infra/template.yaml']);
 git(['commit', '--amend', '--no-edit', '--no-verify'], { stdio: 'inherit' });
 process.stdout.write(`SOILIE-3D version bumped to ${nextVersion}.\n`);

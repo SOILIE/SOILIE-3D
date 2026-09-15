@@ -12,13 +12,13 @@ def discussion(comparison, pilot):
         if not counts.get('soilie') or not counts.get(result['baseline']):
             continue
         lines += [f"SOILIE contributes {counts['soilie']} layouts and {baseline} contributes {counts[result['baseline']]} across {len(result['sharedStrata'])} shared room-type, furniture-count and density groups. Each group has equal weight; these are not identical-input scene pairs.", '']
-        for key,label in [('meanWorstOverlapPct','Object overlap'),('meanOutsideFootprintPct','Outside-room footprint')]:
+        for key,label in [('meanWorstSolidOverlapPct','Occupied mesh overlap'),('meanWorstEnvelopeOverlapPct','Object-envelope overlap'),('meanOutsideFootprintPct','Outside-room footprint')]:
             metric = result['metrics'][key]
             if metric['available']:
                 a,b = metric['means']['soilie'],metric['means'][result['baseline']]
                 direction = 'lower' if a < b else 'higher' if a > b else 'equal'
                 lines += [f"- {label}: {a:.2f}% for SOILIE versus {b:.2f}% for {baseline}. SOILIE has {direction} measured intrusion in this shared subset."]
-        lines += ['', 'Overlap is each object’s largest intersection with another object divided by its own box volume, averaged within scenes and then across groups. It is a bounding-box proxy, not solid-mesh collision. Outside-room footprint measures how much of an object’s plan-view area lies beyond the room.', '']
+        lines += ['', 'Occupied mesh overlap uses exact evaluated solids when those solids are available. Object-envelope overlap is the separate cross-source diagnostic that remains possible for box-only releases. Outside-room footprint measures how much of an object’s plan-view area lies beyond the room.', '']
     stages = comparison.get('beforeAfter',[])
     if stages:
         averages = {key:statistics.fmean(v[key] for v in stages) for key in ('beforeSeparation','afterSeparation','final')}

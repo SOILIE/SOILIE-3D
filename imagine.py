@@ -190,12 +190,18 @@ if __name__=="__main__":
 
             if variable_objs:
                 num_objs=0
-                while num_objs<3:
+                supported_selection = False
+                while num_objs<3 or not supported_selection:
                     num_objs = random.randint(3,8)
                     objects = working_combos.load(num_objs,filepath=f"./data/working-combos-{combo_set}.csv")
                     if not allow_multiples:
-                        objects = list(set(objects))
+                        # A working combination is ordered around its first
+                        # relational pair. Remove repeated instances without
+                        # scrambling that order, or coordinate construction can
+                        # lose the triplet it was selected from.
+                        objects = list(dict.fromkeys(objects))
                     num_objs = len(objects)
+                    supported_selection = allow_multiples or working_combos.supports_coordinate_construction(objects)
 
             coords = None
             attempt_count = 1

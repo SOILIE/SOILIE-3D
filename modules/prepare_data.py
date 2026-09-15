@@ -305,7 +305,7 @@ def retrieve_realistic_object_color(df_obj_cols,obj_name):
     return color
 
 
-def calculateCoords(objects,method='sampling',working_combos_precalculated=True,print_debug=False,progbar_prefix='',prev_text_len=[]):
+def calculateCoords(objects,method='sampling',working_combos_precalculated=True,print_debug=False,progbar_prefix='',prev_text_len=0):
     '''Calculate the coordinates of a list of objects
     based on angles and distances between triplets
     objects: a list of the object names

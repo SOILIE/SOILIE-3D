@@ -19,8 +19,8 @@ class GeometryTests(unittest.TestCase):
 
     def test_half_overlap_and_containment(self):
         result = measure(scene(item("a", [1,1,.5]), item("b", [1.5,1,.5])))
-        self.assertAlmostEqual(50, result["meanWorstOverlapPct"])
-        self.assertAlmostEqual(100, measure(scene(item("a", [2,2,1], (2,2,2)), item("b", [2,2,1])))["maxOverlapPct"])
+        self.assertAlmostEqual(50, result["meanWorstEnvelopeOverlapPct"])
+        self.assertAlmostEqual(100, measure(scene(item("a", [2,2,1], (2,2,2)), item("b", [2,2,1])))["maxEnvelopeOverlapPct"])
 
     def test_rotated_and_tilted_boxes(self):
         a = Box(item("a", [0,0,0], yaw=45))
@@ -31,7 +31,7 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(2*math.sqrt(2)-2, intersection_volume(Box(tilted),b), places=7)
 
     def test_stacked_not_collision(self):
-        self.assertEqual(0, measure(scene(item("a", [1,1,.5]), item("b", [1,1,1.5])))["meanWorstOverlapPct"])
+        self.assertEqual(0, measure(scene(item("a", [1,1,.5]), item("b", [1,1,1.5])))["meanWorstEnvelopeOverlapPct"])
 
     def test_sheared_world_transform_does_not_take_upright_shortcut(self):
         original = item('a',[0,0,0],(2,2,2))
@@ -55,7 +55,7 @@ class GeometryTests(unittest.TestCase):
     def test_assembly_and_architecture_exclusions(self):
         a, b = item("a", [1,1,.5]), item("b", [1,1,.5])
         a["assemblyId"] = b["assemblyId"] = "one-chair"
-        self.assertEqual(0, measure(scene(a,b))["meanWorstOverlapPct"])
+        self.assertEqual(0, measure(scene(a,b))["meanWorstEnvelopeOverlapPct"])
         b["label"] = "window"
         self.assertEqual(1, measure(scene(a,b))["objectCount"])
 
@@ -92,6 +92,24 @@ class GeometryTests(unittest.TestCase):
         layout["room"]["holes"] = [[[1,1],[3,1],[3,3],[1,3]]]
         self.assertEqual(100,measure(layout)["meanOutsideFootprintPct"])
         self.assertEqual(12,measure(layout)["roomArea"])
+
+    def test_solid_mesh_evidence_is_strict_and_separate_from_envelopes(self):
+        layout = scene(item("a", [1,1,.5]), item("b", [3,3,.5]))
+        layout["solidMeshOverlap"] = {
+            "method": "evaluated-solid-mesh-boolean-v1", "objectCount": 2,
+            "complete": True, "meanWorstOverlapPct": 0, "maxOverlapPct": 0,
+            "overlapPairs": [], "unavailablePairs": [],
+        }
+        result = measure(layout)
+        self.assertEqual(0, result["meanWorstSolidOverlapPct"])
+        self.assertEqual(0, result["meanWorstEnvelopeOverlapPct"])
+        self.assertNotIn("solidOverlap", result["unavailable"])
+
+        layout["solidMeshOverlap"]["complete"] = False
+        layout["solidMeshOverlap"]["unavailablePairs"] = [{"a": "a", "b": "b", "reason": "open mesh"}]
+        result = measure(layout)
+        self.assertIsNone(result["meanWorstSolidOverlapPct"])
+        self.assertIn("solidOverlap", result["unavailable"])
 
 
 if __name__ == "__main__":

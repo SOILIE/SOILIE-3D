@@ -1,8 +1,9 @@
 """Shared final-placement measurements, independent of any generator's solver.
 
-World-space box corners are authoritative: rotations are not discarded by
-turning every box into a world-axis-aligned box. No measurement moves objects.
-The metrics concern bounding volumes, not solid mesh intersections.
+World-space box corners remain a cross-source envelope diagnostic: rotations
+are not discarded by turning every box into a world-axis-aligned box. Sources
+with evaluated Blender meshes can additionally provide an exact solid-overlap
+observation. No measurement moves objects.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from scipy.spatial import ConvexHull, QhullError
 from shapely.geometry import MultiPoint, Polygon
 from shapely.ops import unary_union
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ARCHITECTURE = frozenset({"wall", "floor", "ceiling", "door", "window", "blinds", "curtain", "opaque_window", "wooden_wall", "power_outlet", "switch"})
 WALL_MOUNTED = ARCHITECTURE | {"picture", "painting", "mirror", "clock"}
 
@@ -113,24 +114,46 @@ def measure(scene):
     metric = {
         "objectCount": len(items), "roomArea": room.area,
         "furnitureDensity": sum(box.footprint.area for box in boxes)/room.area,
-        "meanWorstOverlapPct": statistics.fmean(worst)*100,
-        "maxOverlapPct": max(worst)*100,
+        "meanWorstEnvelopeOverlapPct": statistics.fmean(worst)*100,
+        "maxEnvelopeOverlapPct": max(worst)*100,
         "meanOutsideFootprintPct": statistics.fmean(outside)*100,
         "maxOutsideFootprintPct": max(outside)*100,
-        "overlapPairs": pairs,
-        "objects": [{"id": item["id"], "worstOverlapPct": worst[i]*100, "outsideFootprintPct": outside[i]*100}
+        "envelopeOverlapPairs": pairs,
+        "objects": [{"id": item["id"], "worstEnvelopeOverlapPct": worst[i]*100, "outsideFootprintPct": outside[i]*100}
                     for i, item in enumerate(items)],
+        "meanWorstSolidOverlapPct": None, "maxSolidOverlapPct": None,
+        "solidOverlapPairs": [], "solidOverlapMethod": None,
         "connectedClearancePct": None, "supportGapCm": None, "belowFloorCm": None,
         "unavailable": {},
     }
+    solid = scene.get("solidMeshOverlap")
+    if solid is None:
+        metric["unavailable"]["solidOverlap"] = "The source artifact does not contain evaluated solid-mesh evidence."
+    else:
+        if solid.get("method") != "evaluated-solid-mesh-boolean-v1":
+            raise ValueError("Unknown solid-overlap measurement method")
+        if solid.get("objectCount") != len(items):
+            raise ValueError("Solid-overlap evidence does not cover the measured furniture set")
+        metric["solidOverlapMethod"] = solid["method"]
+        if solid.get("complete"):
+            for key in ("meanWorstOverlapPct", "maxOverlapPct"):
+                value = solid.get(key)
+                if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 100:
+                    raise ValueError("Solid-overlap percentage must be finite and between zero and 100")
+            metric["meanWorstSolidOverlapPct"] = solid["meanWorstOverlapPct"]
+            metric["maxSolidOverlapPct"] = solid["maxOverlapPct"]
+            metric["solidOverlapPairs"] = solid.get("overlapPairs", [])
+        else:
+            count = len(solid.get("unavailablePairs", []))
+            metric["unavailable"]["solidOverlap"] = f"{count} intersecting-envelope pair(s) lacked valid closed solids."
     if scene["units"] == "m":
         floor_z = scene["room"]["floorZ"]
         if not isinstance(floor_z, (int,float)) or not math.isfinite(floor_z):
             raise ValueError("Physical floor elevation must be finite")
         # Configuration-space clearance for a 0.6 m-wide, 1.8 m-tall cylinder.
-        obstacles = [box.footprint.buffer(0.3, resolution=16) for box in boxes
+        obstacles = [box.footprint.buffer(0.3, quad_segs=16) for box in boxes
                      if box.high[2] > floor_z and box.low[2] < floor_z+1.8]
-        free = room.buffer(-0.3, resolution=16).difference(unary_union(obstacles))
+        free = room.buffer(-0.3, quad_segs=16).difference(unary_union(obstacles))
         components = list(free.geoms) if hasattr(free, "geoms") else [free]
         metric["connectedClearancePct"] = max((part.area for part in components), default=0)/room.area*100
         # Version 1 used only nine XY rays, which can miss narrow feet and
@@ -149,12 +172,14 @@ def measure(scene):
                 if values:
                     metric[target] = statistics.fmean(values)*100
             if metric["supportGapCm"] is None:
-                metric["unavailable"]["support"] = "No real supporting surface was hit by the probes; no gap can be assigned."
+                metric["unavailable"]["supportGap"] = "No real supporting surface was hit by the probes; no gap can be assigned."
         else:
-            metric["unavailable"]["support"] = "Validated mesh support samples were not provided; boxes or superseded sparse probes cannot establish physical support."
+            metric["unavailable"]["supportGap"] = "Validated mesh support samples were not provided; boxes or superseded sparse probes cannot establish physical support."
+            metric["unavailable"]["belowFloor"] = "Evaluated mesh vertices were not provided, so depth below the floor cannot be measured."
     else:
         metric["unavailable"]["clearance"] = "The released layout uses pixels without verified physical scale."
-        metric["unavailable"]["support"] = "Physical units and real mesh support samples are unavailable."
+        metric["unavailable"]["supportGap"] = "Physical units and real mesh support samples are unavailable."
+        metric["unavailable"]["belowFloor"] = "Physical units and real mesh vertices are unavailable."
     return metric
 
 

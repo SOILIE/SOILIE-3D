@@ -12,7 +12,9 @@ import sys
 import pickle
 import random
 import pandas as pd
-from itertools import combinations
+from functools import lru_cache
+from itertools import combinations, permutations
+from pathlib import Path
 from modules import progress_bar
 from modules.timer import *
 
@@ -171,3 +173,27 @@ def load(n,filepath="./data/working-combos-refined.csv",sampling_method='weighte
     elif sampling_method=='weighted':
         sample = weighted_random_selection(df,n)
     return sample
+
+
+@lru_cache(maxsize=None)
+def _coordinate_triplets(filepath):
+    df = pd.read_csv(filepath, usecols=['objectA','objectB','objectC'])
+    return frozenset(map(tuple, df.drop_duplicates().itertuples(index=False, name=None)))
+
+
+def supports_coordinate_construction(objects, filepath="./data/triplets.csv"):
+    '''Return whether the distinct objects retain one complete V4 triplet basis.
+
+    Working-combination rows are valid before duplicate removal. When repeated
+    labels are removed, the remaining objects may no longer share the ordered
+    A/B pair required by calculateCoords. Checking that condition lets the
+    existing selection loop draw another original row instead of failing later.
+    '''
+    objects = list(dict.fromkeys(objects))
+    if len(objects) < 3:
+        return False
+    triplets = _coordinate_triplets(str(Path(filepath).resolve()))
+    return any(
+        all(obj in (objA,objB) or (objA,objB,obj) in triplets for obj in objects)
+        for objA,objB in permutations(objects, 2)
+    )

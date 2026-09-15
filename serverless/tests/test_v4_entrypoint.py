@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import os
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "ca-central-1")
@@ -10,9 +14,24 @@ os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 os.environ.setdefault("JOB_TABLE", "test-jobs")
 
 from serverless.renderer.handler import _parse_v4_result, _validate_room_boundary_result  # noqa: E402
+from serverless.common.v4_runtime import select_v4_objects  # noqa: E402
 
 
 class V4EntrypointTests(unittest.TestCase):
+    def test_duplicate_disabled_selection_preserves_relational_order(self):
+        combinations = SimpleNamespace(
+            load=lambda *_args, **_kwargs: ["chair", "chair", "blinds", "table"],
+            supports_coordinate_construction=lambda objects: objects == ["chair", "blinds", "table"],
+        )
+        request = {
+            "mode": "room_type", "roomType": "bedroom", "objectCount": 4,
+            "seed": 17, "allowDuplicates": False, "sameObjectsAcrossScenes": True,
+        }
+        with patch("serverless.common.v4_runtime._load_original_modules", return_value=(None, combinations, None)), \
+             patch("serverless.common.v4_runtime._v4_working_directory", return_value=nullcontext()), \
+             patch("serverless.common.v4_runtime.seed_v4"):
+            self.assertEqual(["chair", "blinds", "table"], select_v4_objects(Path("."), request, 0))
+
     def test_result_parser_ignores_blender_shutdown_output(self):
         result = {"status": "complete", "filename": "bed_lamp", "path": "/tmp/output", "data": []}
         stdout = f"Blender 3.6\n{json.dumps(result, separators=(',', ':'))}\nBlender quit\n"

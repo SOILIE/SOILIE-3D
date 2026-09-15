@@ -6,9 +6,26 @@ import unittest
 from serverless.benchmark.diversity import coverage_sample, freeze
 from serverless.benchmark.run_batch import load_request_plan
 from serverless.common.v4_runtime import ROOM_COMBINATION_FILES
+from modules.working_combos import supports_coordinate_construction
 
 
 class DiversityTests(unittest.TestCase):
+    def test_duplicate_removal_requires_a_shared_ordered_triplet_basis(self):
+        base = Path(__file__).parents[2]/'.codex/tests'
+        base.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as folder:
+            triplets = Path(folder)/'triplets.csv'
+            triplets.write_text(
+                'objectA,objectB,objectC\nchair,table,lamp\nchair,table,plant\n',
+                encoding='utf-8',
+            )
+            self.assertTrue(supports_coordinate_construction(
+                ['chair','chair','table','lamp','plant'], triplets,
+            ))
+            self.assertFalse(supports_coordinate_construction(
+                ['chair','lamp','plant'], triplets,
+            ))
+
     def test_sampling_covers_rare_labels_without_seeing_quality(self):
         candidates = [('bed','chair','desk'),('bed','chair','lamp'),('sink','toilet','towel')]
         chosen = coverage_sample(candidates,3,42)

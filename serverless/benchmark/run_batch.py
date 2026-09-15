@@ -90,6 +90,8 @@ def worker(args):
         cmd.append("--full")
     if args.support:
         cmd.append("--support")
+    if args.solid_mesh_overlap:
+        cmd.append("--solid-mesh-overlap")
     result = subprocess.run(supervised(cmd), cwd=args.work)
     if result.returncode:
         raise RuntimeError(f"Blender exited {result.returncode}")
@@ -107,7 +109,8 @@ def batch(args):
     config = {"schemaVersion": 1, "model": "soilie", "runtime": str(args.runtime), "seed": args.seed,
               "roomType": args.room_type, "allowDuplicates": not args.no_duplicates, "objectCounts": [args.object_count] if args.object_count else [3,4,5,6],
               "timeoutSeconds": args.timeout, "targetCompletions": args.target, "blender": str(args.blender),
-              "full": args.full, "support": args.support, "pythonVersion": platform.python_version(),
+              "full": args.full, "support": args.support, "solidMeshOverlap": args.solid_mesh_overlap,
+              "pythonVersion": platform.python_version(),
               "hardware": platform.platform(), "cpu": platform.processor(), "cpuThreadsAvailable": os.cpu_count(),
               "roomFitIncluded": False, "provenance": load_v4_provenance(args.runtime)}
     if plan:
@@ -143,6 +146,8 @@ def batch(args):
             command.append("--full")
         if args.support:
             command.append("--support")
+        if args.solid_mesh_overlap:
+            command.append("--solid-mesh-overlap")
         started = time.perf_counter()
         room_type = request.get('roomType', 'unspecified')
         identity = f"soilie-diversity-{index:05d}-{request['seed']}" if plan else f"soilie-{args.room_type}-{request['seed']}"
@@ -242,6 +247,7 @@ def main():
     parser.add_argument("--no-duplicates", action="store_true")
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--support", action="store_true")
+    parser.add_argument("--solid-mesh-overlap", action="store_true")
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--work", type=Path)
     args = parser.parse_args()

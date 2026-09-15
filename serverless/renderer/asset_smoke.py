@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ def main() -> None:
     runtime = Path(sys.argv[separator + 1])
     sys.path.insert(0, str(runtime / "modules"))
     from blender_names import blender_copy_index, blender_source_name
+    from render import load_rotations
 
     if (
         blender_copy_index("cupboard_0002") != 0
@@ -23,7 +25,20 @@ def main() -> None:
     ):
         raise RuntimeError("Blender duplicate-object suffix selection is unavailable")
     with (runtime / "assets" / "asset_rotations.csv").open(newline="", encoding="utf-8-sig") as source:
-        assets = sorted({row["asset_name"] for row in csv.DictReader(source)})
+        rotation_rows = list(csv.DictReader(source))
+    assets = sorted({row["asset_name"] for row in rotation_rows})
+    previous = Path.cwd()
+    try:
+        os.chdir(runtime)
+        rotations = load_rotations()
+    finally:
+        os.chdir(previous)
+    missing_rotations = [
+        row["asset_name"] for row in rotation_rows
+        if row["asset_name"] not in rotations.get(row["object_name"].lower(), {})
+    ]
+    if missing_rotations:
+        raise RuntimeError("V4 rotation lookup cannot resolve: " + ", ".join(missing_rotations))
     imported = []
     for name in assets:
         bpy.ops.object.select_all(action="SELECT")

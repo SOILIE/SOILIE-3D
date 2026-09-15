@@ -58,6 +58,10 @@ def load_rotations():
         next(reader)  # Skip the header if there is one
         for row in reader:
             obj_name, asset_name, x, y, z = row
+            # Object identifiers are canonicalized to lowercase everywhere
+            # else. The published table contains one legacy `Box` row; without
+            # normalization a valid box_0001 selection raises a KeyError.
+            obj_name = obj_name.lower()
             if obj_name not in rotations:
                 rotations[obj_name] = {}
             r = (int(x) if x!='' else 0,
@@ -829,6 +833,8 @@ def expand_room_to_contain_objects(inputs, clearance=0.01):
         _collision_box(name, values['blender_obj'])
         for name,values in inputs.items() if name not in architecture
     ]
+    if not boxes:
+        return False
     required_min_x = min(box.min_x for box in boxes)-clearance
     required_max_x = max(box.max_x for box in boxes)+clearance
     required_min_y = min(box.min_y for box in boxes)-clearance
@@ -837,6 +843,12 @@ def expand_room_to_contain_objects(inputs, clearance=0.01):
     max_x = max(current_max_x, required_max_x)
     min_y = min(current_min_y, required_min_y)
     max_y = max(current_max_y, required_max_y)
+    changed = any(abs(first-second) > 1e-9 for first,second in zip(
+        (min_x,max_x,min_y,max_y),
+        (current_min_x,current_max_x,current_min_y,current_max_y),
+    ))
+    if not changed:
+        return False
 
     # Move the measured interior faces directly. Re-deriving them indirectly
     # from the floor origin can drift because imported Blender origins are not
@@ -856,6 +868,7 @@ def expand_room_to_contain_objects(inputs, clearance=0.01):
     floor.location.x += (min_x+max_x)/2-floor_centre.x
     floor.location.y += (min_y+max_y)/2-floor_centre.y
     bpy.context.view_layer.update()
+    return True
 
 
 def _fixed_collision_objects(sorted_objects):
@@ -1307,6 +1320,13 @@ def visualize(inputs):
 
     # Translate overlapping objects
     adjust_overlapping_objects(inputs)
+
+    # Walls are created before V4 rotates objects toward walls and one another.
+    # A rotated corner can therefore extend past the room even in a scene that
+    # never entered collision recovery. This final, deterministic containment
+    # pass changes only the floor and wall envelope, never object placement.
+    if expand_room_to_contain_objects(inputs):
+        print('---| Room containment repair activated (final envelope)')
 
     # Do a final adjustment of windows, blinds, and curtain to walls
     adjust_windows_to_walls()
