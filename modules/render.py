@@ -13,6 +13,10 @@ try:
     from collision_resolution import Box, choose_recovery_move, overlapping_pairs
 except ImportError:  # Package imports outside Blender resolve through modules.
     from .collision_resolution import Box, choose_recovery_move, overlapping_pairs
+try:
+    from blender_names import blender_copy_index, blender_source_name
+except ImportError:  # Package imports outside Blender resolve through modules.
+    from .blender_names import blender_copy_index, blender_source_name
 
 SIZE_MAP = {'xsmall': 0, 'small': 1, 'medium': 2, 'large': 3, 'xlarge': 4}
 SYNONYMS = {'light':'lamp'}
@@ -200,7 +204,7 @@ def load_assets(inputs,params):
         asset_name = os.path.splitext(asset_name)[0]
         matching_objects = [obj.name for obj in bpy.data.objects if obj.name.startswith(asset_name)]
         if len(matching_objects)>1:
-            asset_name = sorted(matching_objects, key=lambda s: int(re.search(r'(\d+)$', s).group(1)) if re.search(r'(\d+)$', s) else 0)[-1]
+            asset_name = max(matching_objects, key=blender_copy_index)
         obj = bpy.data.objects.get(asset_name)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
@@ -247,7 +251,7 @@ def transform_objects(inputs):
         obj.scale.z *= obj_size
         bpy.context.view_layer.update()
         # Rotate object so that "front" is aligned with X
-        x_rot,y_rot,z_rot = rotations[obj_name.split('.')[0]][asset_name+'.obj']
+        x_rot,y_rot,z_rot = rotations[obj_name.split('.')[0]][blender_source_name(asset_name)+'.obj']
         x_rot_rad = math.radians(x_rot)
         y_rot_rad = math.radians(y_rot)
         z_rot_rad = math.radians(z_rot)

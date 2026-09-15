@@ -13,6 +13,15 @@ import bpy
 def main() -> None:
     separator = sys.argv.index("--")
     runtime = Path(sys.argv[separator + 1])
+    sys.path.insert(0, str(runtime / "modules"))
+    from blender_names import blender_copy_index, blender_source_name
+
+    if (
+        blender_copy_index("cupboard_0002") != 0
+        or blender_copy_index("cupboard_0002.001") != 1
+        or blender_source_name("cupboard_0002.001") != "cupboard_0002"
+    ):
+        raise RuntimeError("Blender duplicate-object suffix selection is unavailable")
     with (runtime / "assets" / "asset_rotations.csv").open(newline="", encoding="utf-8-sig") as source:
         assets = sorted({row["asset_name"] for row in csv.DictReader(source)})
     imported = []
