@@ -175,6 +175,43 @@ def subtract_overlap(obj_a, obj_b):
     bpy.ops.object.modifier_apply(modifier=boolean_modifier.name)
 
 
+def cut_window_opening(window, wall, inset=0.02):
+    '''Cut one stable rectangular opening inside an imported window frame.'''
+    window_bounds = get_bbox_corners(window)
+    wall_bounds = get_bbox_corners(wall)
+    window_min = Vector((min(point[i] for point in window_bounds) for i in range(3)))
+    window_max = Vector((max(point[i] for point in window_bounds) for i in range(3)))
+    wall_min = Vector((min(point[i] for point in wall_bounds) for i in range(3)))
+    wall_max = Vector((max(point[i] for point in wall_bounds) for i in range(3)))
+    dimensions = window_max-window_min
+    centre = (window_min+window_max)/2
+
+    # Imported window meshes often contain disconnected panes and trim. Using
+    # that compound mesh as a Boolean cutter repeatedly can create geometry
+    # beyond the source wall. A single inset cuboid represents the opening the
+    # frame surrounds and crosses the wall completely on its normal axis.
+    if 'front' in wall.name.lower() or 'back' in wall.name.lower():
+        dimensions.x = wall_max.x-wall_min.x+2*inset
+        dimensions.y = max(dimensions.y-2*inset, inset)
+        centre.x = (wall_min.x+wall_max.x)/2
+    else:
+        dimensions.x = max(dimensions.x-2*inset, inset)
+        dimensions.y = wall_max.y-wall_min.y+2*inset
+        centre.y = (wall_min.y+wall_max.y)/2
+    dimensions.z = max(dimensions.z-2*inset, inset)
+
+    bpy.ops.mesh.primitive_cube_add(size=1, location=centre)
+    cutter = bpy.context.object
+    cutter.name = '_SOILIE_Window_Opening'
+    cutter.dimensions = dimensions
+    bpy.context.view_layer.update()
+    try:
+        subtract_overlap(cutter, wall)
+    finally:
+        bpy.data.objects.remove(cutter, do_unlink=True)
+    bpy.context.view_layer.update()
+
+
 ### FOR INITIAL OBJECT PLACEMENT
 
 def load_variables(inputs):
@@ -1005,8 +1042,11 @@ def adjust_windows_to_walls(chisel_walls=True):
         bpy.context.view_layer.update()
         obj.location.z = 1.3
         bpy.context.view_layer.update()
-        if chisel_walls:
-            subtract_overlap(obj, nearest_wall)
+        # The window defines the opening. Curtains and blinds intentionally
+        # share that opening, so subtracting each overlapping covering from the
+        # wall can make Blender's Boolean result extend beyond the source wall.
+        if chisel_walls and obj_name == 'window':
+            cut_window_opening(obj, nearest_wall)
             bpy.context.view_layer.update()
 
 

@@ -62,6 +62,11 @@ jobs:
           docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
           --background --python /var/task/serverless/renderer/asset_smoke.py -- /var/task/v4
 
+      - name: Verify window assemblies cut one wall opening
+        run: >-
+          docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
+          --background --python /var/task/serverless/tests/blender_window_chisel_fixtures.py
+
       - name: Push immutable images and deploy CloudFormation
         id: deploy
         run: |
