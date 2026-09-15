@@ -22,11 +22,22 @@ is staged, byte-checked, by the existing runtime compiler.
 
 ## Shared geometry policy
 
-`geometry.py` uses eight world-space oriented-box corners per object instance.
-For each furniture object it finds the largest intersection with a different
-object and divides that volume by its own box volume. The mean of those object
-fractions is the scene score. This is a bounding-volume proxy; empty space
-inside a chair or a bed's enclosing box is not solid furniture.
+`solid_overlap.py` observes evaluated Blender triangle meshes without moving the
+scene. Disjoint world-space bounds prove that two meshes cannot intersect. If
+the bounds intersect, exact occupied-volume percentages are emitted only when
+both operands and their Boolean intersection are closed manifold solids. Open
+or otherwise invalid source topology is reported as unavailable, never as a
+zero-volume collision. Run the Blender fixtures with:
+
+```bash
+blender --background --factory-startup --python-exit-code 2 \
+  --python serverless/tests/blender_solid_overlap_fixtures.py
+```
+
+`geometry.py` also keeps a separate cross-source envelope diagnostic using
+eight world-space oriented-box corners per object instance. That diagnostic is
+available for LayoutGPT's box-only release, but it is never described as a
+solid-mesh collision measurement.
 
 Boundary intrusion is the outside portion of each object's projected footprint,
 averaged per scene. The original room polygon is used, not a newly fitted room.
@@ -105,6 +116,11 @@ a separate directory. Pass that directory as `--support-replays` to the
 publisher. Every request, selection, and placement stage must match exactly
 before support samples can be attached. The replay neither adds scenes nor
 changes generation timings. Failed seed replays remain in the parity accounting.
+
+The main SOILIE campaign uses `--solid-mesh-overlap`. Its read-only observation
+time is recorded separately and subtracted from model generation timing.
+Support remains a predetermined parity-checked replay because sampling every
+object in 10,000 scenes would add observation work without changing placement.
 
 The original model can fail even on supported selections. Error traces and
 every attempt remain in checkpoint files, including the first 10,000 attempts.

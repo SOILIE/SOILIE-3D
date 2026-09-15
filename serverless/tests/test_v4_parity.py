@@ -8,8 +8,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 BASELINE = {
-    "imagine.py": "251681fbf568c250075d6a725e6d2c0c6d2ccfe0d51a4b481d47dcc5649f98ba",
-    "modules/working_combos.py": "2f682d3d6c17b8c9592f2cbc5490cad9571b6e794f755333b02e5273e8548eba",
     "modules/png2gif.py": "e90d6273047540d7964a6210cb4cdd24bfb2d47fc8e26eb24b54a4372fc5e6c2",
     "modules/progress_bar.py": "6422be7d2d9636f108b4b49d51ef1f72b81ccd0e4a9fc4a4ae4526e4e66e694a",
     "modules/timer.py": "eae6e389f0859d25a33cd8d04429bcde6310003f9e2a7c4b1d160c2cf3c46f9d",
@@ -19,11 +17,13 @@ BASELINE = {
 }
 
 # These files intentionally differ from publication-2025. Pinning their patched
-# bytes keeps the V4.0.1 maintenance surface explicit instead of weakening the
+# bytes keeps the V4.0.2 maintenance surface explicit instead of weakening the
 # original-file parity check whenever a regression repair touches V4 code.
-V4_0_1_MAINTENANCE = {
-    "modules/prepare_data.py": "082d684e7cf4fe07dbf81976ea3d8c648b89bb2d9175904d1aa76ddf7d33af72",
-    "modules/render.py": "fdc5ed9379f63392669c0cca5d3838f595124d8e1b1aad780a330e605dac4564",
+V4_0_2_MAINTENANCE = {
+    "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
+    "modules/working_combos.py": "8dff9d87bd9c26334c48afe07510fa9325692b82cc9602d734b0bdbd4e61b956",
+    "modules/prepare_data.py": "98c4fa9509ced827b97173710d7a27d4bfb28956832649d42dcaf495de57c517",
+    "modules/render.py": "d2070d7eec8d7d5d28df1b120d8a8085b2702830a735c7f19ef4f6ee2a3e69c1",
 }
 
 
@@ -35,12 +35,12 @@ class V4ParityTests(unittest.TestCase):
         }
         self.assertEqual(BASELINE, observed)
 
-    def test_v4_0_1_maintenance_files_match_reviewed_patch_bytes(self):
+    def test_v4_0_2_maintenance_files_match_reviewed_patch_bytes(self):
         observed = {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-            for name in V4_0_1_MAINTENANCE
+            for name in V4_0_2_MAINTENANCE
         }
-        self.assertEqual(V4_0_1_MAINTENANCE, observed)
+        self.assertEqual(V4_0_2_MAINTENANCE, observed)
 
     def test_runtime_records_the_exact_repository_source(self):
         provenance_path = ROOT / ".codex" / "runtime" / "v4-provenance.json"

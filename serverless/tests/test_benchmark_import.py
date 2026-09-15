@@ -38,7 +38,7 @@ class LayoutImportTests(unittest.TestCase):
         layout["object_list"] *= 2
         scene = normalize(layout, "bedroom", 0, "fixture")
         self.assertEqual(2, len({obj["id"] for obj in scene["objects"]}))
-        self.assertEqual(100, measure(scene)["meanWorstOverlapPct"])
+        self.assertEqual(100, measure(scene)["meanWorstEnvelopeOverlapPct"])
 
     def test_invalid_geometry_or_altered_source_rejected(self):
         bad = self.layout()

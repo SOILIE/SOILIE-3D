@@ -17,7 +17,14 @@ import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-ARCHITECTURE = {"window", "blinds", "curtain", "wall", "door", "floor", "ceiling", "switch", "power_outlet"}
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+ARCHITECTURE = {
+    "window", "opaque_window", "blinds", "curtain", "wall", "wooden_wall",
+    "door", "floor", "ceiling", "switch", "power_outlet",
+}
 WALL_MOUNTED = ARCHITECTURE | {"clock", "picture", "painting", "mirror"}
 
 
@@ -27,7 +34,6 @@ def corners(obj):
 
 def support_samples(obj, others, floor_z):
     """Observe support using real mesh feet as well as sparse lower-surface rays."""
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from serverless.benchmark.mesh_support import sample_support
     def tree(mesh):
         evaluated = mesh.evaluated_get(bpy.context.evaluated_depsgraph_get())
@@ -43,7 +49,7 @@ def support_samples(obj, others, floor_z):
     return sample_support(points, own, supporting, floor_z)
 
 
-def snapshot(inputs, stage, measure_support=False):
+def snapshot(inputs, stage, measure_support=False, measure_solids=False):
     objects = []
     meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
     floor = bpy.data.objects["Floor"]
@@ -54,6 +60,7 @@ def snapshot(inputs, stage, measure_support=False):
     xmax = min(v[0] for v in wall_bounds["Front Wall"])
     ymin = max(v[1] for v in wall_bounds["Right Wall"])
     ymax = min(v[1] for v in wall_bounds["Left Wall"])
+    solid_objects = []
     for identifier, data in inputs.items():
         obj = data["blender_obj"]
         label = identifier.split(".")[0].lower()
@@ -66,9 +73,25 @@ def snapshot(inputs, stage, measure_support=False):
             if support:
                 row["support"] = support
         objects.append(row)
-    return {"schemaVersion": 1, "stage": stage, "units": "m", "objects": objects,
+        if label not in ARCHITECTURE:
+            solid_objects.append((identifier, obj))
+    result = {"schemaVersion": 2, "stage": stage, "units": "m", "objects": objects,
             "room": {"polygon": [[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]], "floorZ": floor_z,
                      "boundarySource": "original V4 interior wall faces, before cutaway or optional room fitting"}}
+    if stage == "final":
+        tolerance = 1e-6
+        outside = [row["id"] for row in objects if row["kind"] == "furniture" and (
+            min(point[0] for point in row["corners"]) < xmin-tolerance
+            or max(point[0] for point in row["corners"]) > xmax+tolerance
+            or min(point[1] for point in row["corners"]) < ymin-tolerance
+            or max(point[1] for point in row["corners"]) > ymax+tolerance
+        )]
+        if outside:
+            raise RuntimeError("Final V4 room does not contain furniture: " + ", ".join(outside))
+    if measure_solids:
+        from serverless.benchmark.solid_overlap import measure
+        result["solidMeshOverlap"] = measure(solid_objects)
+    return result
 
 
 class LayoutCaptured(Exception):
@@ -82,6 +105,7 @@ def main():
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--support", action="store_true")
+    parser.add_argument("--solid-mesh-overlap", action="store_true")
     args = parser.parse_args(sys.argv[sys.argv.index("--")+1:])
     if os.environ.get("SOILIE_ROOM_REQUEST"):
         raise RuntimeError("Model benchmarks must not enable the website room-size extension")
@@ -97,7 +121,8 @@ def main():
     def observe(inputs, stage):
         nonlocal observation_seconds
         before = time.perf_counter()
-        stages[stage] = snapshot(inputs, stage, args.support and stage == "final")
+        stages[stage] = snapshot(inputs, stage, args.support and stage == "final",
+                                 args.solid_mesh_overlap and stage == "final")
         observation_seconds += time.perf_counter()-before
 
     def overlap(inputs):

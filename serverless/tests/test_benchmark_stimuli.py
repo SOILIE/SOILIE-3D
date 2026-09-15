@@ -21,7 +21,7 @@ class StimulusTests(unittest.TestCase):
         selected = select_pairs(rows)
         changed = deepcopy(rows)
         for row in changed:
-            row["metrics"]["meanWorstOverlapPct"] = 99
+            row["metrics"]["meanWorstEnvelopeOverlapPct"] = 99
         self.assertEqual(selected,select_pairs(changed))
         self.assertEqual(12,len(selected))
         self.assertEqual(12,len({pair[2]["id"] for pair in selected}))

@@ -84,7 +84,9 @@ def select_v4_objects(runtime_root: Path, request: dict[str, Any], scene_index: 
     if request["mode"] == "room_type":
         filename = ROOM_COMBINATION_FILES[request["roomType"]]
 
-    # This loop is the terminal interface's existing duplicate-removal loop.
+    # This is the terminal interface's duplicate-removal loop. V4.0.2 keeps
+    # the selected combination order because the first pair anchors its stored
+    # triplets; set-based removal could turn a supported row into a failure.
     # There is deliberately no substitute catalog or fallback selection path.
     with _v4_working_directory(runtime_root):
         while True:
@@ -93,8 +95,9 @@ def select_v4_objects(runtime_root: Path, request: dict[str, Any], scene_index: 
                 filepath=str(runtime_root / "data" / filename),
             )
             if not request.get("allowDuplicates", False):
-                objects = list(set(objects))
-            if len(objects) >= 3:
+                objects = list(dict.fromkeys(objects))
+            supported = request.get("allowDuplicates", False) or working_combos.supports_coordinate_construction(objects)
+            if len(objects) >= 3 and supported:
                 return objects
 
 

@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import statistics
 
-from serverless.benchmark.geometry import measure, stratum, summarize
+from serverless.benchmark.geometry import Box, measure, stratum, summarize
 from serverless.benchmark.cost import evidence as cost_evidence
 from serverless.benchmark.stimuli import diagram
 from serverless.benchmark.support_replays import merge_support
@@ -15,7 +15,8 @@ from serverless.benchmark.timing import session_summary, generation_breakdown
 from serverless.benchmark.verify_parity import digest
 
 METRICS = {
-    "meanWorstOverlapPct": {"title": "Typical object's worst overlap", "unit": "%", "direction": "lower", "meaning": "For each object, the largest shared box volume divided by its own box volume; averaged across the room. A bounding-box proxy, not a solid-mesh collision test."},
+    "meanWorstSolidOverlapPct": {"title": "Occupied mesh volume intersecting another object", "unit": "%", "direction": "lower", "meaning": "For each object, the largest physically occupied volume shared with another object is divided by that object's occupied volume, then averaged across the room. Disjoint envelopes prove zero mesh intersection. Intersecting envelopes require closed evaluated meshes and an exact Boolean result; otherwise the value is unavailable rather than assumed to be zero."},
+    "meanWorstEnvelopeOverlapPct": {"title": "Object-envelope intrusion", "unit": "%", "direction": "lower", "meaning": "A cross-source diagnostic based on oriented enclosing boxes. It is available for releases that do not include meshes, but it measures crowded envelopes rather than physical material collision."},
     "meanOutsideFootprintPct": {"title": "Furniture footprint outside the room", "unit": "%", "direction": "lower", "meaning": "The fraction of each furniture footprint outside the original boundary, averaged across the room. Auto-built rooms and fixed input rooms remain different tasks."},
     "supportGapCm": {"title": "Sampled gap to a supporting surface", "unit": "cm", "direction": "lower", "meaning": "Smallest vertical gap from actual lowest mesh vertices and sampled lower surfaces to a real supporting mesh, averaged over measured objects. Probes can miss contacts; a positive gap is not proof of floating, and contact is not proof of stability."},
     "belowFloorCm": {"title": "Depth below the floor", "unit": "cm", "direction": "lower", "meaning": "Object depth below the floor, averaged over measured objects."},
@@ -25,7 +26,11 @@ LABELS = {"soilie": "SOILIE-3D", "layoutgpt": "LayoutGPT", "infinigen": "Infinig
 
 
 def aggregate(rows):
-    return {name: summarize([row["metrics"].get(name) for row in rows]) for name in METRICS}
+    result = {name: summarize([row["metrics"].get(name) for row in rows]) for name in METRICS}
+    result["unavailableReasons"] = dict(Counter(
+        reason for row in rows for reason in row["metrics"].get("unavailable", {}).values()
+    ))
+    return result
 
 
 def measured_rows(scenes):
@@ -110,7 +115,7 @@ def main():
             continue
         scenes.append(row["stages"]["final"])
         try:
-            before_after.append({"id": row["id"], **{stage: measure(value)["meanWorstOverlapPct"] for stage,value in row["stages"].items()}})
+            before_after.append({"id": row["id"], **{stage: measure(value)["meanWorstEnvelopeOverlapPct"] for stage,value in row["stages"].items()}})
         except ValueError:
             pass # Invalid geometry is separately recorded below, not a zero.
     release = json.loads(args.layoutgpt.read_text())
@@ -131,7 +136,7 @@ def main():
     incidents = json.loads(args.incidents.read_text())["incidents"]
     indoors_incidents = [row for row in incidents if row["model"] == "infinigen"]
     indoors_timing_complete = not any(not row["generationTimingAvailable"] for row in indoors_incidents)
-    document = {"schemaVersion": 1, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
+    document = {"schemaVersion": 2, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
                 "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group)} for model,group in groups.items()},
                 "comparisons": compare(rows), "runs": runs, "invalidGeometry": invalid,
                 "layoutgptSources": release["sources"], "layoutgptInvalidArtifacts": release["invalidArtifacts"],
@@ -168,8 +173,8 @@ def main():
             continue
         # Deliberately show a problem case, explicitly not a representative
         # random sample. This selection never feeds the blinded pilot sampler.
-        sample = max(group,key=lambda row: row["metrics"]["meanWorstOverlapPct"])
-        pairs = sample["metrics"]["overlapPairs"]
+        sample = max(group,key=lambda row: row["metrics"]["meanWorstEnvelopeOverlapPct"])
+        pairs = sample["metrics"]["envelopeOverlapPairs"]
         if not pairs:
             continue
         pair = max(pairs,key=lambda pair: max(pair["fractions"]))
@@ -178,14 +183,21 @@ def main():
         directory = args.output/"illustrations"
         directory.mkdir(exist_ok=True)
         (directory/filename).write_text(svg,encoding="utf-8")
+        item_labels = {item["id"]: item["label"].replace("_", " ") for item in sample["scene"]["objects"]}
+        first_volume = Box(next(item for item in sample["scene"]["objects"] if item["id"] == pair["a"])).volume
+        second_volume = Box(next(item for item in sample["scene"]["objects"] if item["id"] == pair["b"])).volume
+        highlighted_pair = {**pair,
+            "labels": [item_labels[pair["a"]], item_labels[pair["b"]]],
+            "equalVolume": abs(first_volume-second_volume) <= max(first_volume, second_volume)*1e-9,
+        }
         illustrations.append({"model":model,"sceneId":sample["scene"]["id"],"image":"benchmarks/illustrations/"+filename,
-                              "meanWorstOverlapPct":sample["metrics"]["meanWorstOverlapPct"],
-                              "highlightedPair":pair,"selection":"Largest recorded scene-average box intrusion in this native-output sample; illustrative, not typical"})
+                              "meanWorstEnvelopeOverlapPct":sample["metrics"]["meanWorstEnvelopeOverlapPct"],
+                              "highlightedPair":highlighted_pair,"selection":"Largest recorded scene-average box intrusion in this native-output sample; illustrative, not typical"})
     document["illustrations"] = illustrations
     packed = json.dumps(document, separators=(",", ":"))
     document["evidenceDigest"] = hashlib.sha256(packed.encode()).hexdigest()
     (args.output/"comparison.json").write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
-    (args.output/"measured-scenes.json").write_text(json.dumps({"schemaVersion":1,"rows":rows}, separators=(",", ":")), encoding="utf-8")
+    (args.output/"measured-scenes.json").write_text(json.dumps({"schemaVersion":2,"rows":rows}, separators=(",", ":")), encoding="utf-8")
     print(json.dumps({"measuredScenes":len(rows), "invalidGeometry":len(invalid), "output":str(args.output)}))
 
 

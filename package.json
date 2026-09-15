@@ -1,6 +1,6 @@
 {
   "name": "soilie-3d",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "private": true,
   "description": "SOILIE-3D research model, benchmark, and serverless deployment tooling.",
   "repository": {

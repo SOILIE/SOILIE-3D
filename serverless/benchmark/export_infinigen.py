@@ -22,6 +22,7 @@ from shapely.ops import unary_union
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from serverless.benchmark.infinigen_metadata import asset_label, generated_instances, vertically_supported
 from serverless.benchmark.mesh_support import sample_support
+from serverless.benchmark.solid_overlap import measure as measure_solid_overlap
 from infinigen.core import tagging, tags
 
 
@@ -113,11 +114,17 @@ def main():
     room_points, room_faces = evaluated_mesh(room_object)
     room_tree = BVHTree.FromPolygons([Vector(point) for point in room_points], room_faces)
     roots = {record["obj"] for _,record in instances}
-    objects, geometry = [], {}
+    objects, geometry, solid_sources = [], {}, []
     for identifier, record in instances:
         root = bpy.data.objects[record["obj"]]
         corners, points, faces, parts = instance_geometry(root,roots)
         geometry[identifier] = (points, BVHTree.FromPolygons([Vector(p) for p in points],faces))
+        mesh = bpy.data.meshes.new("__benchmark_"+identifier)
+        mesh.from_pydata(points.tolist(), [], faces)
+        mesh.update()
+        solid = bpy.data.objects.new("__benchmark_"+identifier, mesh)
+        bpy.context.scene.collection.objects.link(solid)
+        solid_sources.append((identifier, solid))
         objects.append({"id":identifier,"assemblyId":identifier,"label":asset_label(record),"kind":"furniture",
                         "corners":corners,"transform":[list(row) for row in root.matrix_world],"meshParts":parts,
                         "sourceTags":record["tags"],"supportEligible":vertically_supported(record)})
@@ -127,13 +134,21 @@ def main():
             sampled = sample_support(points,own,[room_tree]+[tree for key,(_,tree) in geometry.items() if key != obj["id"]],room["floorZ"])
             if sampled:
                 obj["support"] = sampled
-    scene = {"schemaVersion":1,"model":"infinigen","id":args.id,"roomType":args.room_type,
-             "stage":"original-final-coarse","units":"m","room":room,"objects":objects,
-             "provenance":{"stateSha256":hashlib.sha256(args.state.read_bytes()).hexdigest(),
-                           "roomId":room_id,"blenderVersion":bpy.app.version_string,
-                           "geometryPolicy":"One root-oriented envelope of all evaluated mesh parts per original semantic instance"}}
-    args.output.write_text(json.dumps(scene,separators=(",",":")),encoding="utf-8")
-    print(json.dumps({"id":args.id,"instances":len(objects),"roomId":room_id}))
+    try:
+        scene = {"schemaVersion":2,"model":"infinigen","id":args.id,"roomType":args.room_type,
+                 "stage":"original-final-coarse","units":"m","room":room,"objects":objects,
+                 "solidMeshOverlap":measure_solid_overlap(solid_sources),
+                 "provenance":{"stateSha256":hashlib.sha256(args.state.read_bytes()).hexdigest(),
+                               "roomId":room_id,"blenderVersion":bpy.app.version_string,
+                               "geometryPolicy":"One root-oriented envelope and one evaluated triangle assembly per original semantic instance"}}
+        args.output.write_text(json.dumps(scene,separators=(",",":")),encoding="utf-8")
+        print(json.dumps({"id":args.id,"instances":len(objects),"roomId":room_id}))
+    finally:
+        for _, obj in solid_sources:
+            mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
 
 
 if __name__ == "__main__":

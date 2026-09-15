@@ -48,7 +48,7 @@ def stages(args):
         ('living-room', python('run_batch', *common, '--output', args.output/'soilie-living-room',
                               '--target', 200, '--seed', 30260913, '--room-type', 'living_room')),
         ('bedroom-10000', python('run_batch', *common, '--output', args.output/'soilie-bedroom',
-                                '--target', 10000, '--seed', 20260913)),
+                                '--target', 10000, '--seed', 20260913, '--solid-mesh-overlap')),
         ('infinigen-40', python('run_infinigen', *indoors, '--output', run, '--per-room', 20)),
         ('infinigen-final-export', python('import_infinigen', *indoors, '--run', run, '--output', imported)),
     ]
