@@ -30,6 +30,7 @@ from itertools import permutations
 
 from modules.timer import *
 from modules import progress_bar
+from modules.coordinate_transform import transformed_appended_coordinate
 
 
 def gatherTriplets():
@@ -468,15 +469,10 @@ def calculateCoords(objects,method='sampling',working_combos_precalculated=True,
         coords = np.array(pts,np.float32) # and re-apply the transformation so the
         coordsNew = transform(coords)     # current triplet lines up with the base triplet
 
-        # determine the outlier - these are the coordinates for objC
-        isNear = lambda p1,p2: sum((x1 - x2)**2 for x1, x2 in zip(p1, p2)) < 0.0001
-        corresp = [] # stores all coords from coordsNew which mapped to a baseCoord
-        for coord in coordsNew.tolist():
-            for baseCoord in baseCoords.tolist():
-                if isNear(coord,baseCoord):
-                    corresp.append(coord)
-                    break
-        finalCoords[triplet[2]] = [x for x in coordsNew.tolist() if x not in corresp][0]
+        # objC was appended after the four transform anchors, so its transformed
+        # coordinate is always the final row. The old approximate outlier search
+        # could classify every row as an anchor and then index an empty list.
+        finalCoords[triplet[2]] = transformed_appended_coordinate(coordsNew)
 
     # Add these to pass color to blender - locations will be determined in blender
     finalCoords['WALL'] = tuple()
