@@ -22,11 +22,25 @@ PROFILES = {
     "room_function": "Pay particular attention to whether the arrangement serves its stated room type.",
     "overall": "Consider the arrangement as a whole, balancing visible spatial problems rather than one issue alone.",
 }
-RUBRIC = ("Inspect both the plan and oblique views. These are bounding-box diagrams of final placements, not photographs or solid meshes. "
-          "Choose the more plausible indoor arrangement, or tie if there is no defensible preference. "
+RUBRIC = ("Choose the more plausible indoor arrangement from the evidence provided, or tie if there is no defensible preference. "
           "Use the same overall plausibility criterion regardless of your inspection emphasis. "
-          "Mark which side has obvious spatial problems, give confidence 1 (very uncertain) to 5 (very confident), and a short visual rationale. "
+          "Mark which side has obvious spatial problems, give confidence 1 (very uncertain) to 5 (very confident), and a short evidence-based rationale. "
           "Do not infer hidden geometry, method identity, or unavailable details. Do not consult other reviewers or numerical benchmark scores.")
+EVIDENCE_RUBRICS = {
+    "visual_only": (" Use only the method-blind plan, oblique, and 3D bird's-eye views. "
+                    "Judge visible layout geometry; do not infer mesh detail or compare absolute scale between independently fitted panels."),
+    "metrics_only": (" Use only the method-blind per-room measurements. Lower is better for intrusion, boundary, support-gap, and floor-penetration values. "
+                     "Connected clearance is contextual rather than universally better. Treat unavailable as unknown, never as zero, and do not infer visual appearance."),
+    "combined": (" Use both the method-blind plan, oblique, and 3D bird's-eye views and the per-room measurements. Consider visible functional arrangement and measured spatial validity separately, "
+                 "then explain which evidence determined your overall choice and any disagreement between them."),
+}
+
+
+def review_instructions(document):
+    mode = document.get("evidenceMode", "visual_only")
+    if mode not in EVIDENCE_RUBRICS:
+        raise ValueError("Unknown study evidence mode")
+    return RUBRIC + EVIDENCE_RUBRICS[mode]
 
 
 class StudyError(Exception):
@@ -90,6 +104,8 @@ class StudyService:
                 assignments.append({"caseId": case["id"], "title": case["title"],
                                     "leftImage": case["comparisonImage"] if flip else case["relationImage"],
                                     "rightImage": case["relationImage"] if flip else case["comparisonImage"],
+                                    "leftMetrics": case.get("comparisonMetrics", []) if flip else case.get("relationMetrics", []),
+                                    "rightMetrics": case.get("relationMetrics", []) if flip else case.get("comparisonMetrics", []),
                                     "leftCondition": case["comparisonCondition"] if flip else "soilie",
                                     "rightCondition": "soilie" if flip else case["comparisonCondition"],
                                     "comparisonCondition": case["comparisonCondition"], "repeatOf": None})
@@ -98,11 +114,13 @@ class StudyService:
             for index, original in enumerate(assignments[:2]):
                 repeat = dict(original, caseId=self.signature(session_id+f":repeat:{index}")[:20], repeatOf=original["caseId"])
                 repeat["leftImage"], repeat["rightImage"] = original["rightImage"], original["leftImage"]
+                repeat["leftMetrics"], repeat["rightMetrics"] = original["rightMetrics"], original["leftMetrics"]
                 repeat["leftCondition"], repeat["rightCondition"] = original["rightCondition"], original["leftCondition"]
                 assignments.append(repeat)
             session = {"sessionId": session_id, "respondentType": "ai_pilot", **claims,
+                       "evidenceMode": self.document.get("evidenceMode", "visual_only"),
                        "expiresAt": int(self.clock())+7*86400, "createdAt": int(self.clock()),
-                       "promptHash": hashlib.sha256((RUBRIC+PROFILES[claims["promptProfile"]]).encode()).hexdigest(),
+                       "promptHash": hashlib.sha256((review_instructions(self.document)+PROFILES[claims["promptProfile"]]).encode()).hexdigest(),
                        "assignments": assignments}
             self.store.create(session_id, session)
             session = self.store.get(session_id)
@@ -111,12 +129,18 @@ class StudyService:
     def public_session(self, session):
         # An assignment can outlive a deployment. Never silently change the
         # instructions under which an existing reviewer is completing it.
-        prompt_hash = hashlib.sha256((RUBRIC+PROFILES[session["promptProfile"]]).encode()).hexdigest()
+        instructions = RUBRIC + EVIDENCE_RUBRICS[session.get("evidenceMode", "visual_only")]
+        prompt_hash = hashlib.sha256((instructions+PROFILES[session["promptProfile"]]).encode()).hexdigest()
         if not hmac.compare_digest(session["promptHash"], prompt_hash):
             raise StudyError(409, "STUDY_PROTOCOL_CHANGED", "This session's original review instructions are no longer available. Contact the study organizer.")
-        public_fields = ("caseId", "title", "leftImage", "rightImage")
+        mode = session.get("evidenceMode", "visual_only")
+        public_fields = ["caseId", "title"]
+        if mode in {"visual_only", "combined"}:
+            public_fields.extend(("leftImage", "rightImage"))
+        if mode in {"metrics_only", "combined"}:
+            public_fields.extend(("leftMetrics", "rightMetrics"))
         return {"sessionId": session["sessionId"], "studyVersion": session["studyVersion"], "respondentType": "ai_pilot",
-                "rubric": RUBRIC, "emphasis": PROFILES[session["promptProfile"]],
+                "evidenceMode":mode, "rubric": instructions, "emphasis": PROFILES[session["promptProfile"]],
                 "cases": [{key: case[key] for key in public_fields} for case in session["assignments"]],
                 "completedCaseIds": [row["caseId"] for row in self.store.responses(session["sessionId"])]}
 
@@ -152,7 +176,7 @@ class StudyService:
         row.update({"note":note.strip(), "respondentType":"ai_pilot", "reviewerId":session["reviewerId"],
                     "recordedAt":int(self.clock()),
                     "promptProfile":session["promptProfile"], "model":session["model"], "promptHash":session["promptHash"],
-                    "studyVersion":session["studyVersion"], "leftCondition":case["leftCondition"],
+                    "studyVersion":session["studyVersion"], "evidenceMode":session.get("evidenceMode", "visual_only"), "leftCondition":case["leftCondition"],
                     "rightCondition":case["rightCondition"], "comparisonCondition":case["comparisonCondition"],
                     "repeatOf":case["repeatOf"]})
         saved = self.store.save_response(session_id, row)

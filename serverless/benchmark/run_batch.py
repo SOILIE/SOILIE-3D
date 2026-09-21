@@ -164,7 +164,8 @@ def batch(args):
     from serverless.common.v4_runtime import load_v4_provenance
 
     args.output.mkdir(parents=True, exist_ok=True)
-    plan = load_request_plan(args.request_plan) if args.request_plan else None
+    plan_document = load_request_plan(args.request_plan) if args.request_plan else None
+    plan = plan_document["requests"] if plan_document else None
     manifest = args.output/"run.json"
     config = {"schemaVersion": 1, "model": "soilie", "runtime": str(args.runtime), "seed": args.seed,
               "roomType": args.room_type, "allowDuplicates": not args.no_duplicates, "objectCounts": [args.object_count] if args.object_count else [3,4,5,6],
@@ -174,10 +175,15 @@ def batch(args):
               "hardware": platform.platform(), "cpu": platform.processor(), "cpuThreadsAvailable": os.cpu_count(),
               "roomFitIncluded": False, "provenance": load_v4_provenance(args.runtime)}
     if plan:
-        # A distinct finite exploration workload, never mixed into the fixed
+        # Finite evaluation workloads remain separate from the controlled
         # bedroom throughput run. Hash the inputs, not a machine-specific path.
-        config.update(cohort='diversity', requestPlanSha256=hashlib.sha256(args.request_plan.read_bytes()).hexdigest(),
-                      plannedAttempts=len(plan), targetCompletions=len(plan),roomType='mixed',allowDuplicates='per-request')
+        config.update(cohort=plan_document['cohort'],
+                      requestPlanSha256=hashlib.sha256(args.request_plan.read_bytes()).hexdigest(),
+                      plannedAttempts=len(plan), targetCompletions=len(plan),
+                      roomType=plan_document.get('roomType', 'mixed'), allowDuplicates='per-request')
+        if plan_document['cohort'] == 'paired_comparison':
+            config['baseline'] = plan_document['baseline']
+            config['baselineSceneIds'] = plan_document['baselineSceneIds']
     rows = checkpoint_rows(args.output)
     config, provenance_segment = prepare_manifest(
         manifest, config, rows, args.compatible_maintenance_resume,
@@ -207,14 +213,17 @@ def batch(args):
         if args.solid_mesh_overlap:
             command.append("--solid-mesh-overlap")
         started = time.perf_counter()
-        room_type = request.get('roomType', 'unspecified')
-        identity = f"soilie-diversity-{index:05d}-{request['seed']}" if plan else f"soilie-{args.room_type}-{request['seed']}"
+        room_type = request.get('roomType', config['roomType'] if plan else args.room_type)
+        identity = (f"soilie-{config['cohort'].replace('_', '-')}-{index:05d}-{request['seed']}"
+                    if plan else f"soilie-{args.room_type}-{request['seed']}")
         row = {"id": identity, "attempt": index, "request": request,
                "implementation": implementation,
                "provenanceSegment": provenance_segment,
                "startedAt": datetime.now(UTC).isoformat(), "status": "failed"}
         if plan:
-            row['cohort'] = 'diversity'
+            row['cohort'] = config['cohort']
+            if config['cohort'] == 'paired_comparison':
+                row['baselineSceneId'] = config['baselineSceneIds'][index]
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = "0"
         environment.pop("SOILIE_ROOM_REQUEST", None)
@@ -266,8 +275,15 @@ def batch(args):
 def load_request_plan(path):
     document = json.loads(path.read_text())
     rows = document.get('requests')
-    if document.get('schemaVersion') != 1 or document.get('cohort') != 'diversity' or not rows:
-        raise ValueError('Expected a nonempty frozen diversity request plan')
+    cohort = document.get('cohort')
+    if document.get('schemaVersion') != 1 or cohort not in {'diversity', 'paired_comparison'} or not rows:
+        raise ValueError('Expected a nonempty frozen evaluation request plan')
+    if cohort == 'paired_comparison':
+        if document.get('roomType') not in {'bedroom', 'living_room'} or document.get('baseline') != 'layoutgpt':
+            raise ValueError('Paired comparison plans require a supported room type and baseline')
+        baseline_ids = document.get('baselineSceneIds')
+        if not isinstance(baseline_ids, list) or len(baseline_ids) != len(rows) or len(set(baseline_ids)) != len(rows):
+            raise ValueError('Paired comparison plans require one unique baseline scene per request')
     for row in rows:
         allowed = {'mode','roomType','objectCount','objects','seed','allowDuplicates','sameObjectsAcrossScenes'}
         if set(row)-allowed or type(row.get('seed')) is not int or not 0 <= row['seed'] < 2**32:
@@ -289,7 +305,9 @@ def load_request_plan(path):
                 raise ValueError('Duplicate policy must be explicit')
         else:
             raise ValueError('Unknown generation mode')
-    return rows
+    if cohort == 'paired_comparison' and any(row.get('mode') != 'objects' for row in rows):
+        raise ValueError('Paired comparisons use explicit object inventories only')
+    return document
 
 
 def main():

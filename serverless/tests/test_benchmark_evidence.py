@@ -91,6 +91,7 @@ class EvidenceTests(unittest.TestCase):
         from serverless.benchmark.publish_comparison import main
         argv = ['publish_comparison', '--runs', str(self.root/'missing'),
                 '--layoutgpt', 'unused.json', '--rates', 'unused.json',
+                '--layoutgpt-cost-profile', 'unused-cost-profile.json',
                 '--selection', 'unused.json', '--output', str(self.root/'output')]
         with patch('sys.argv', argv), self.assertRaises(FileNotFoundError):
             main()

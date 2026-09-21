@@ -1,8 +1,9 @@
-"""Cost accounting keeps observed usage, tariffs and hypothetical inputs separate.
+"""Cost accounting for one completed layout from each compared method.
 
-Desktop seconds are not Lambda billed seconds. Parsed LayoutGPT boxes are not
-the complete few-shot prompt or token-usage receipt. Neither is silently priced
-as if it were the missing billing evidence.
+Desktop seconds are not Lambda billed seconds and the released LayoutGPT file
+does not contain API receipts. The public comparison therefore combines a
+reconstructed LayoutGPT token profile with an explicitly labelled SOILIE cloud
+runtime-transfer scenario. Neither estimate is presented as a paid invoice.
 """
 from __future__ import annotations
 
@@ -18,7 +19,6 @@ from serverless.benchmark.hosting import evidence as hosting_evidence
 
 AWS_URL = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSLambda/current/ca-central-1/index.json"
 GPT4_URL = "https://developers.openai.com/api/docs/models/gpt-4"
-NANO_URL = "https://developers.openai.com/api/docs/models/gpt-5-nano"
 AWS_PRICING_URL = "https://aws.amazon.com/lambda/pricing/"
 
 
@@ -57,37 +57,89 @@ def lambda_charge(receipts, rates):
             "basis": "Billed invocation usage priced at public on-demand rates, before credits, discounts or taxes"}
 
 
-def conditional_bound(llm, aws, minimum_output_tokens=250, maximum_worker_seconds=30,
-                      maximum_invocations=1, memory_mb=10240, storage_mb=10240):
-    """An LLM-favouring lower bound against an explicitly assumed worker ceiling.
+def percentile(values, fraction):
+    values = sorted(nonnegative(value) for value in values)
+    if not values:
+        return None
+    return values[round((len(values) - 1) * fraction)]
 
-    The token minimum is an assumption, not inferred from parsed layouts. The
-    worker ceiling includes all billable attempt time per newly completed scene,
-    not just a successful attempt. It is NOT measured Lambda performance.
+
+def worker_scenario(seconds, aws, memory_mb=4096, storage_mb=10240):
+    """Price one successful invocation using a transferred local runtime.
+
+    The duration is an observed local placement duration, not a Lambda result.
+    This helper prices the explicit counterfactual in which the same duration is
+    achieved by the planned worker allocation.
     """
-    if type(maximum_invocations) is not int or maximum_invocations < 1:
-        raise ValueError("At least one billable worker invocation must be budgeted")
-    lower = token_charge(0, minimum_output_tokens, llm)
-    seconds = nonnegative(maximum_worker_seconds)
-    if seconds > 900*maximum_invocations:
-        raise ValueError("The assumed worker duration exceeds the invocation budget")
-    memory, storage = nonnegative(memory_mb)/1024, max(0,nonnegative(storage_mb)/1024-.5)
-    per_second = memory*aws["computeUsdPerGbSecond"]+storage*aws["storageUsdPerGbSecond"]
-    upper = seconds*per_second + maximum_invocations*aws["requestUsd"]
-    return {"evidence":"conditional-bound", "model":llm["model"], "minimumOutputTokens":minimum_output_tokens,
-            "inputChargeAssumedUsd":0, "llmOutputChargeFloorUsd":lower,
-            "maximumWorkerSecondsPerCompletedScene":seconds, "maximumInvocationsPerCompletedScene":maximum_invocations,
-            "lambdaMemoryMb":memory_mb,"lambdaEphemeralStorageMb":storage_mb,
-            "soilieWorkerCostCeilingUsd":upper, "cheaperUnderAssumptions":upper < lower,
-            "minimumSavingPct":(1-upper/lower)*100 if upper < lower else None,
-            "breakEvenWorkerSeconds":max(0,lower-maximum_invocations*aws["requestUsd"])/per_second,
-            "source":llm["source"],
-            "scope":"Marginal paid layout-generation charges only, excluding free allowances, discounts, rendering, serving and storage on both sides",
-            "assumptions":["The LLM emits at least the stated number of billable output tokens for each completed scene",
-                           "LLM input is treated as free and no additional reasoning, retries or tool charges are counted",
-                           "All SOILIE invocation time, including cold starts and failed attempts, fits within the stated per-completion time and request budgets",
-                           "The SOILIE runtime ceiling and LLM output minimum are hypothetical, not benchmark measurements",
-                           "The compared methods' scene quality must be assessed separately"]}
+    seconds = nonnegative(seconds)
+    memory = nonnegative(memory_mb) / 1024
+    storage = max(0, nonnegative(storage_mb) / 1024 - .5)
+    total = seconds * (memory * aws["computeUsdPerGbSecond"] +
+                       storage * aws["storageUsdPerGbSecond"]) + aws["requestUsd"]
+    return {"seconds": seconds, "usd": total, "memoryMb": memory_mb,
+            "ephemeralStorageMb": storage_mb, "invocations": 1}
+
+
+def validate_layoutgpt_profile(profile):
+    allowed = {"schemaVersion", "evidence", "model", "configuration", "sourceRepository",
+               "sourceCommit", "sourceFile", "releasedLayouts", "releasedLayoutsSha256",
+               "tokenizer", "tokenAccounting", "sampling", "inputTokens", "outputTokens",
+               "limitations"}
+    if not isinstance(profile, dict) or set(profile) - allowed:
+        raise ValueError("Unexpected LayoutGPT cost-profile fields")
+    if profile.get("evidence") != "reconstructed-official-prompt-token-estimate":
+        raise ValueError("LayoutGPT cost evidence must identify its reconstructed basis")
+    if profile.get("model") != "gpt-4" or profile.get("releasedLayouts", 0) <= 0:
+        raise ValueError("LayoutGPT cost profile must describe the released GPT-4 layouts")
+    for name in ("inputTokens", "outputTokens"):
+        values = profile.get(name)
+        if not isinstance(values, dict) or set(values) != {"p10", "median", "p90", "configuredMaximum"}:
+            raise ValueError("LayoutGPT token summaries require p10, median, p90 and configuredMaximum")
+        ordered = [nonnegative(values[key]) for key in ("p10", "median", "p90", "configuredMaximum")]
+        if ordered != sorted(ordered):
+            raise ValueError("LayoutGPT token summaries must be ordered")
+
+
+def per_room_comparison(attempts, rate_card, profile):
+    """Compare equivalent layout stages with evidence attached to every price."""
+    validate_layoutgpt_profile(profile)
+    completed = [row for row in attempts if row["status"] == "complete"]
+    seconds = [row["generationSeconds"] for row in completed]
+    llm = rate_card["gpt4"]
+    aws = rate_card["lambda"]
+    layoutgpt = []
+    for key, label in (("p10", "10th percentile"), ("median", "Median"), ("p90", "90th percentile")):
+        input_tokens = profile["inputTokens"][key]
+        output_tokens = profile["outputTokens"][key]
+        layoutgpt.append({"id": key, "label": label, "inputTokens": input_tokens,
+                          "outputTokens": output_tokens, "usd": token_charge(input_tokens, output_tokens, llm)})
+    maximum = token_charge(profile["inputTokens"]["configuredMaximum"],
+                           profile["outputTokens"]["configuredMaximum"], llm)
+    soilie = []
+    if seconds:
+        for key, label, value in (
+            ("median", "Median", percentile(seconds, .5)),
+            ("mean", "Mean", sum(seconds) / len(seconds)),
+            ("p95", "95th percentile", percentile(seconds, .95)),
+        ):
+            soilie.append(dict(worker_scenario(value, aws), id=key, label=label))
+    layout_median = next(row["usd"] for row in layoutgpt if row["id"] == "median")
+    soilie_median = next((row["usd"] for row in soilie if row["id"] == "median"), None)
+    return {
+        "scope": "One completed furniture-layout proposal. Image rendering, animation, storage, transfer and API orchestration are excluded for both methods.",
+        "layoutgpt": {
+            "rows": layoutgpt, "configuredMaximumUsd": maximum, "profile": profile,
+            "basis": "Reconstructed token counts for the official GPT-4 bedroom configuration with eight in-context examples, priced at the current published GPT-4 tariff.",
+            "receiptAvailable": False,
+        },
+        "soilie": {
+            "rows": soilie, "completed": len(completed), "failedAttemptsExcluded": sum(row["status"] != "complete" for row in attempts),
+            "basis": "Observed successful local placement durations priced as one 4 GB Lambda invocation with 10 GB temporary storage. This is a runtime-transfer scenario, not measured Lambda billing.",
+            "receiptAvailable": False,
+        },
+        "medianCostRatio": layout_median / soilie_median if soilie_median else None,
+        "medianSavingPct": (1 - soilie_median / layout_median) * 100 if soilie_median else None,
+    }
 
 
 def monthly_lambda_budget(invocations, seconds_each, memory_mb, storage_mb, aws,
@@ -141,7 +193,7 @@ def validate_public_rate_card(card):
         fields(aws["skus"], {"computeUsdPerGbSecond", "storageUsdPerGbSecond", "requestUsd"})
         for identifiers in aws["skus"].values():
             fields(identifiers, {"sku", "rateCode"})
-    for key, source in (("gpt4", GPT4_URL), ("gpt5nano", NANO_URL)):
+    for key, source in (("gpt4", GPT4_URL),):
         tariff = card[key]
         fields(tariff, {"model", "inputUsdPerMillion", "outputUsdPerMillion",
                         "source", "verifiedOn", "verification"})
@@ -151,35 +203,39 @@ def validate_public_rate_card(card):
         nonnegative(tariff["outputUsdPerMillion"])
 
 
-def evidence(attempts, rate_card):
+def evidence(attempts, rate_card, layoutgpt_profile):
     validate_public_rate_card(rate_card)
     completed_rows = [row for row in attempts if row["status"] == "complete"]
     complete = len(completed_rows)
     seconds = sum(row["generationSeconds"] for row in completed_rows)
     aws = rate_card["lambda"]
-    available = monthly_lambda_budget(600,30,10240,10240,aws,400000,1000000)
-    exhausted = monthly_lambda_budget(600,30,10240,10240,aws)
+    successful_mean = seconds / complete if complete else 0
+    available = monthly_lambda_budget(600,successful_mean,4096,10240,aws,400000,1000000)
+    exhausted = monthly_lambda_budget(600,successful_mean,4096,10240,aws)
+    comparison = per_room_comparison(attempts, rate_card, layoutgpt_profile)
     return {"currency":"USD", "rateCard":rate_card,
             "hosting":hosting_evidence(available,exhausted,AWS_PRICING_URL),
-            "question":"Can lower compute cost compensate for slower layout generation?",
-            "finding":"SOILIE can have lower layout-generation charges under explicit runtime and token-budget assumptions. The conditional bounds below show when that follows from the prices; they do not establish measured savings or an advantage over every LLM.",
-            "scope":"Layout generation only; image rendering, animation, training, data preparation, storage, transfer and API orchestration are separate costs.",
+            "question":"What is the estimated cost of one completed furniture layout from each evaluated method?",
+            "finding":("Under the stated runtime-transfer and reconstructed-token assumptions, the median SOILIE layout is estimated at "
+                       f"{comparison['medianCostRatio']:.0f} times less than the median official LayoutGPT GPT-4 call. This is a scoped estimate, not a cloud invoice or a claim about newer LLM substitutions." if comparison["medianCostRatio"] else
+                       "The per-room cost comparison is unavailable until successful SOILIE timing exists."),
+            "scope":comparison["scope"],
+            "perCompletedRoom":comparison,
             "measuredLocal":{"completed":complete, "successfulGenerationSeconds":seconds,
                               "secondsPerCompletedScene":seconds/complete if complete else None,
                               "failedAttemptsExcludedFromTiming":sum(row["status"] != "complete" for row in attempts),
                              "moneyAvailable":False, "reason":"Local electricity and hardware costs were not metered. This is not zero-cost compute."},
-            "layoutgpt":{"moneyAvailable":False, "reason":"Official parsed layout files omit full few-shot messages, usage receipts, rejected requests and billable retries."},
+            "layoutgpt":{"moneyAvailable":False, "reason":"Official parsed layout files omit API usage receipts and rejected requests; the published value is a reproducible prompt reconstruction."},
             "lambda":{"moneyAvailable":False, "reason":"No closed, version-matched Lambda billing ledger is part of this local placement benchmark."},
-            "conditionalBounds":[conditional_bound(rate_card[key],aws) for key in ("gpt4","gpt5nano")],
             "freeTier":{"evidence":"hypothetical-monthly-budget", "source":AWS_PRICING_URL,
                         "accountUsageIncluded":False,
                         "monthlyDurationAllowanceGbSeconds":400000,"monthlyRequestAllowance":1000000,
-                        "assumptions":"Illustrative workload: 600 completed layouts, one 30-second invocation each, 10 GB memory and 10 GB temporary storage; no retries. These are generic scenario inputs, not observed deployment settings or measured renderer performance.",
+                        "assumptions":f"Illustrative workload: 600 completed layouts, one {successful_mean:.2f}-second invocation each, 4 GB memory and 10 GB temporary storage; no retries. Duration is the successful local mean transferred to Lambda, not measured renderer performance there.",
                         "allowanceAvailable":available,
                         "allowanceExhausted":exhausted,
                         "interpretation":"With the full account-wide allowance still available, this hypothetical workload has no compute or request charge, but extra temporary storage still has a small charge. This is a hosting subsidy, not proof of universally cheaper model computation.",
                         "exclusions":"S3 results, CloudWatch, API Gateway, queues, database operations, traffic, taxes and any extra invocation time are not included. LLM free quotas or credits can likewise remove API charges."},
-            "exclusions":["Per-scene conditional bounds exclude credits; the separate monthly scenario considers the shared free tier", "Taxes and negotiated discounts are excluded", "No inference calls were purchased for this cost analysis", "The legacy GPT-4 rate is not a price claim about all current LLMs"]}
+            "exclusions":["Per-room estimates exclude credits; the separate monthly scenario considers the shared Lambda free tier", "Taxes and negotiated discounts are excluded", "No inference calls were purchased for this cost analysis", "A cheaper or newer LLM is not LayoutGPT until its layout quality is rerun and evaluated"]}
 
 
 def main():
@@ -205,9 +261,7 @@ def main():
                 "lambda":dict(rates,region="ca-central-1",architecture="x86_64",source=AWS_URL,
                               offerPublishedAt=offer["publicationDate"],sha256=hashlib.sha256(raw).hexdigest(),skus=skus),
                 "gpt4":{"model":"gpt-4", "inputUsdPerMillion":30.0, "outputUsdPerMillion":60.0,
-                        "source":GPT4_URL, "verifiedOn":"2026-09-13", "verification":"Official model documentation; standard text-token rates"},
-                "gpt5nano":{"model":"gpt-5-nano", "inputUsdPerMillion":.05, "outputUsdPerMillion":.4,
-                            "source":NANO_URL,"verifiedOn":"2026-09-14", "verification":"Official model documentation; standard text-token rates; price sensitivity only, not a room-generation evaluation"}}
+                        "source":GPT4_URL, "verifiedOn":datetime.now(UTC).date().isoformat(), "verification":"Official model documentation; standard text-token rates"}}
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(document,indent=2),encoding="utf-8")
     print(json.dumps({"rateCard":str(args.output), "regionalRates":rates}))

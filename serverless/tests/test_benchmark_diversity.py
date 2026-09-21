@@ -57,7 +57,7 @@ class DiversityTests(unittest.TestCase):
             self.assertIn('sink',plan['explicitClasses'])
             self.assertNotIn('unavailable_asset',plan['explicitClasses'])
             (root/'plan.json').write_text(json.dumps(plan))
-            requests = load_request_plan(root/'plan.json')
+            requests = load_request_plan(root/'plan.json')['requests']
             self.assertEqual({'objects','room_type','random'},{v['mode'] for v in requests})
             self.assertEqual({3,4,5,6},{v['objectCount'] for v in requests if 'objectCount' in v})
             self.assertEqual({False,True},{v['allowDuplicates'] for v in requests if 'allowDuplicates' in v})

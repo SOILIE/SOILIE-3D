@@ -5,7 +5,7 @@ SOILIE-only relation diagnostics compare its measured relational proposal with
 the final placement, so they quantify how much collision handling changed the
 proposal without inventing target relations for another model.
 """
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import combinations
 import math
 
@@ -18,6 +18,7 @@ from serverless.benchmark.geometry import canonical_label, furniture, measure, s
 # or footprint as numerical contact. Continuous distributions retain the raw
 # value, so this tolerance cannot erase the amount-of-overlap evidence.
 NUMERICAL_TOLERANCE_PCT = 1e-4
+MIN_COOCCURRENCE_CONDITIONAL_PCT = 5.0
 
 
 def _rate(flags):
@@ -170,7 +171,106 @@ def overlap_resolution(attempts):
     }
 
 
-def soilie_diagnostics(attempts):
+def _conditional_occurrence(rows):
+    """Return P(second present | first present) for category-presence rows.
+
+    Repeated instances count once because this diagnostic asks which object
+    categories co-occur, matching the category-level question used by GRAINS.
+    """
+    anchors, pairs = Counter(), Counter()
+    for row, weight in rows:
+        labels = set(row)
+        for first in labels:
+            anchors[first] += weight
+            for second in labels - {first}:
+                pairs[first, second] += weight
+    return anchors, {pair: value / anchors[pair[0]] for pair, value in pairs.items()}
+
+
+def cooccurrence_fidelity(attempts, source_combinations):
+    """Compare generated selections with V4's bedroom combination catalog.
+
+    The controlled campaign requests 3, 4, 5 and 6 objects in rotation. Every
+    source row has six labels, so V4's published weighting expression assigns
+    every row the same weight; a request takes the corresponding row prefix.
+    We compare each requested count separately and give those four strata equal
+    weight. This is a sampler-fidelity check, not an independent quality score.
+    """
+    completed = [row for row in attempts if row.get("status") == "complete"]
+    counts = (3, 4, 5, 6)
+    source_by_count = {
+        count: [(tuple(canonical_label(label) for label in row[:count]), 1.0)
+                for row in source_combinations]
+        for count in counts
+    }
+    generated_by_count = {
+        count: [(tuple(canonical_label(label) for label in attempt.get("selection", [])), 1.0)
+                for attempt in completed if attempt.get("request", {}).get("objectCount") == count]
+        for count in counts
+    }
+    strata = []
+    for count in counts:
+        source_anchors, source_pairs = _conditional_occurrence(source_by_count[count])
+        generated_anchors, generated_pairs = _conditional_occurrence(generated_by_count[count])
+        labels = sorted(source_anchors)
+        weighted_error = weight_total = 0.0
+        pair_count = 0
+        for first in labels:
+            # Weight a conditional by how often its anchor category appears in
+            # the source catalog. This keeps very rare anchors from dominating.
+            anchor_weight = source_anchors[first] / len(source_by_count[count])
+            for second in labels:
+                if first == second:
+                    continue
+                expected = source_pairs.get((first, second), 0.0)
+                observed = generated_pairs.get((first, second), 0.0)
+                if max(expected, observed) * 100 < MIN_COOCCURRENCE_CONDITIONAL_PCT:
+                    continue
+                error_pp = abs(observed - expected) * 100
+                weighted_error += error_pp * anchor_weight
+                weight_total += anchor_weight
+                pair_count += 1
+        strata.append({
+            "requestedObjects": count,
+            "sourceRows": len(source_by_count[count]),
+            "completedScenes": len(generated_by_count[count]),
+            "sourceCategories": len(labels),
+            "generatedSourceCategoryCoveragePct": 100 * len(set(labels) & set(generated_anchors)) / len(labels),
+            "qualifyingDirectedCategoryPairs": pair_count,
+            "meanAbsoluteConditionalDifferencePercentagePoints": (
+                weighted_error / weight_total if weight_total else None
+            ),
+            "generatedAnchorCategories": len(generated_anchors),
+        })
+    values = [row["meanAbsoluteConditionalDifferencePercentagePoints"] for row in strata
+              if row["meanAbsoluteConditionalDifferencePercentagePoints"] is not None]
+    return {
+        "available": bool(source_combinations) and len(values) == len(counts),
+        "completedScenes": len(completed),
+        "strata": strata,
+        "equalCountMeanAbsoluteDifferencePercentagePoints": (
+            sum(values) / len(values) if values else None
+        ),
+        "direction": "lower",
+        "minimumConditionalProbabilityPct": MIN_COOCCURRENCE_CONDITIONAL_PCT,
+        "definition": (
+            "For every ordered category pair, calculate how often the second category is present "
+            "when the first is present. Compare generated selections with the corresponding prefix "
+            "of the published bedroom combination catalog, then average absolute differences in "
+            "percentage points with equal weight for requested counts 3 through 6. Category pairs "
+            "below 5% in both distributions are omitted so thousands of zero-versus-zero pairs do not "
+            "make the result look artificially accurate."
+        ),
+        "interpretation": (
+            "This measures whether the implemented sampler reproduces the object-category associations "
+            "encoded by its own source catalog. It is analogous to the category co-occurrence check "
+            "reported by GRAINS, but the datasets and category vocabularies differ, so it is not a "
+            "head-to-head score and does not measure placement quality or generalization."
+        ),
+    }
+
+
+def soilie_diagnostics(attempts, source_combinations=None):
     completed = [attempt for attempt in attempts if attempt.get("status") == "complete"]
     drift = [relation_drift(attempt) for attempt in completed]
     combinations_seen = Counter(tuple(sorted(canonical_label(label) for label in attempt.get("selection", [])))
@@ -196,6 +296,11 @@ def soilie_diagnostics(attempts):
             "mostFrequentCombinationPct": (100 * max(combinations_seen.values()) / len(completed)) if completed else None,
             "interpretation": "Distinct duplicate-aware object combinations observed in the controlled bedroom campaign. This describes sampler breadth, not spatial quality.",
         },
+        "catalogCooccurrenceFidelity": (
+            cooccurrence_fidelity(completed, source_combinations)
+            if source_combinations is not None
+            else {"available": False, "reason": "No source combination catalog was supplied."}
+        ),
     }
 
 

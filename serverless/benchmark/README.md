@@ -13,9 +13,11 @@ is staged, byte-checked, by the existing runtime compiler.
   `fc31954962553e5b65bf267a904a6930d50b1f5e`. Native pixel geometry is preserved.
   Inference timing, complete token usage and physical mesh support are absent.
 - Infinigen Indoors: initial Indoors release
-  `fb7991e06580639202a4687937082cb63e931eb0`, original single-room `coarse` task,
-  without `fast_solve`. This includes procedural mesh construction and scene
-  serialization, not just a bounding-box proposal and not image rendering.
+  `fb7991e06580639202a4687937082cb63e931eb0`. The original single-room `coarse`
+  task without `fast_solve` is the full-quality reference. A separately labelled
+  matched-furniture profile uses the release's documented `fast_solve.gin`, skips
+  shelf-trinket population, and narrows tags to room-scale furniture. Neither
+  profile is only a bounding-box proposal or an image-rendering benchmark.
 - GRAINS: the paper's 1,027 seconds for 10,000 bedrooms remains a published,
   different-hardware reference. Removed pretrained weights prevent a new run;
   screenshots are not reconstructed as geometry.
@@ -122,18 +124,24 @@ time is recorded separately and subtracted from model generation timing.
 Support remains a predetermined parity-checked replay because sampling every
 object in 10,000 scenes would add observation work without changing placement.
 
-The original model can fail even on supported selections. Error traces and
-every attempt remain in checkpoint files, including the first 10,000 attempts.
-Do not rename failed attempts as successful replacements or change source
-code to make a benchmark finish. Preserve a record of concurrent workload and
-machine state when interpreting desktop throughput.
+Every failed supported selection retains its error trace and attempt record.
+A maintenance fix may continue a checkpoint only when fixed-seed parity proves
+that previously successful scenes are unchanged and the affected failure is an
+unintended edge case rather than an alternate placement method. The next session
+records the new source provenance, and final accounting reports only failures
+that remain active under the published maintenance version. Preserve concurrent
+workload and machine-state records when interpreting desktop throughput.
 
 For Infinigen use the documented standalone-Blender installation when the old
 `bpy` wheel is unavailable. `run_infinigen.py` accepts its repository, Blender,
-Python site-packages and an output directory. It attempts 20 seeded bedrooms
-and 20 living rooms by default. A missing runtime dependency is a setup failure,
-not a successful zero-quality scene. Geometry export must be validated against
-its final scene before results are published.
+Python site-packages, output directory, and a frozen profile. `default` preserves
+the original solver. `tutorial-fast` uses the release's documented reduced-
+iteration configuration. `matched-furniture-fast` additionally disables small
+shelf items and restricts the workload to room-scale objects. Profile identity
+and exact Gin overrides are checkpoint provenance and cannot change on resume.
+A missing dependency, timeout, or unfinished population stage is a failure, not
+a zero-quality scene. Geometry export must be validated against the final scene
+before results are published.
 
 `run_campaign.py` sequences the long local work after any existing Infinigen run
 releases its OS lock: first-40 support replays and their parity check, the first
@@ -157,7 +165,7 @@ Lost timing stays unavailable instead of silently improving campaign throughput.
 `cost.py` snapshots AWS's public **Canada Central x86 on-demand** rate card and
 records the source checksum, offer version and rate identifiers. The separate
 GPT-4 tariff snapshot links to official model documentation. All amounts are
-USD; conditional per-scene bounds exclude credits, while the monthly hosting
+USD. The per-room comparison excludes credits, while the monthly hosting
 scenarios explicitly show standard allowances available and exhausted.
 
 `lambda_charge` prices a complete billed-invocation ledger, including failed
@@ -166,21 +174,21 @@ means cost per completed scene is unavailable, not free. Desktop elapsed time
 is never silently converted into Lambda billed time. Parsed LayoutGPT objects
 are not complete prompts or billing receipts.
 
-The website's cost bounds use an explicitly assumed minimum output length.
-Their break-even durations are budget thresholds, not measured savings or a
-claim that SOILIE is cheaper than all current LLMs. Layout generation, image
-rendering, animation, data preparation, training and serving costs must remain
-separately labelled.
+The direct per-room comparison reconstructs the evaluated LayoutGPT GPT-4 call
+from its official 3D-bedroom configuration: eight retrieved examples, the
+released prompt template, the released room descriptions and the released
+parsed layouts. It reports prompt-length percentiles against the checked GPT-4
+tariff. The released outputs do not include billing receipts, the exact
+retrieved examples, retries or provider-side token counts, so this remains a
+reproducible estimate rather than an observed invoice.
 
-`conditional_bound` also tests an LLM-favouring output-charge floor against an
-explicit SOILIE worker-cost ceiling. Its default assumptions are at least 250
-billable output tokens, zero input charge, and at most one 30-second, 10 GB
-Lambda invocation per newly completed scene. Neither the output minimum nor
-the Lambda runtime ceiling is an observed benchmark result. At the recorded
-standard GPT-4 tariff those assumptions imply lower SOILIE worker charges;
-at the GPT-5 nano tariff they do not. The latter is price sensitivity only,
-not an evaluation of its room-generation quality. This is not a claim that
-all LLMs cost more, that retries are free, or that scene quality is equivalent.
+SOILIE's side transfers the successful local placement-time distribution to a
+generic 4 GB x86 Lambda scenario with 10 GB ephemeral storage and the checked
+Canada Central tariff. It is not a measured cloud bill. Both sides stop at a
+completed furniture-layout proposal; rendering, animation, storage, API
+Gateway, data preparation and training are excluded. The comparison is hidden
+when either cost profile fails validation rather than substituting a raw model
+price or an unrelated request floor.
 
 The monthly hosting panel includes Lambda, Cloud Run Jobs, AWS Fargate and
 Cloudflare Containers. `hosting.py` pins anonymous public tariffs with sources
@@ -247,6 +255,15 @@ removes every such intersection. This correction rate is paired with the
 relation-change distances rather than presented as evidence of plausibility by
 itself.
 
+Category co-occurrence fidelity compares conditional presence probabilities in
+completed selections with the published bedroom combination catalog, separately
+for requested counts 3 through 6. Duplicate instances count once because the
+question is whether a category is present. Pairs below 5% in both source and
+generated data are omitted so shared absences cannot inflate agreement. The
+mean absolute percentage-point difference measures sampler fidelity to this
+catalog only; it is analogous to the GRAINS paper's category statistic but is
+not a cross-dataset model ranking or a placement-quality score.
+
 Each run's `generationBreakdown` separates completed-attempt time, failed-attempt
 time, and the timeout subset of failures. Their total equals the sum of model
 attempt stopwatches, excluding read-only observation overhead. Queue gaps,
@@ -254,10 +271,26 @@ pauses, other benchmark cohorts, validation, uploads and image rendering never
 enter that sum. Active placement retries are not idle waiting: retain them in
 all-attempt throughput, while reporting completed-scene latency separately.
 
-`stimuli.py` freezes up to 12 matched pairs per eligible baseline with seeded
-sampling and no quality-based selection. Neutral plan and oblique box views
+`stimuli.py` freezes a configurable number of unique matched pairs with seeded
+sampling and no quality-based selection. A deterministic maximum-cardinality
+one-to-one matcher prevents an early flexible match from stranding a baseline
+scene that has only one eligible counterpart. Eligibility fixes room type,
+furniture count, bedroom bed count, a 0.25 footprint-density difference, and at
+least 40% duplicate-aware normalized object-role agreement. Results are also
+split at two-thirds role agreement so broader matches cannot hide the more
+comparable subset. Neutral plan, oblique and 3D bird's-eye oriented-box views
 are immutable and method-blind. Illustrative high-intrusion examples on the
 Research page are a separate selection and never feed pilot sampling.
+
+The same frozen pairs can be evaluated in three explicitly separate evidence
+conditions: views only, symmetric measurements only, and views plus
+measurements. Numeric evidence includes only measurements available for both
+rooms in each pair. In the current LayoutGPT comparison this permits envelope
+and boundary intrusion; physical-unit clearance, floor penetration and support
+are omitted when equivalent baseline evidence is absent. Missing values are
+never treated as zero. Keeping the conditions separate reveals whether
+measurements change a visual preference; combining their votes into one
+undifferentiated score is not permitted.
 
 Ten fresh-context reviewers use the common rubric and registered prompt
 profiles in `serverless/study/service.py`. Signed invitations control identity,
@@ -272,7 +305,10 @@ and actual pilot databases separate. `export_pilot.py --require-complete`
 requires all ten reviewers and exports AI-labelled records without private
 invitations or bearer credentials. Do not publish smoke-test votes as independent
 reviewers. A provider model ID that is not exposed must be reported as
-unavailable, not guessed from the product name.
+unavailable, not guessed from the product name. Preference intervals resample
+whole room pairs. The exact sign test first collapses repeated ratings to one
+majority outcome per distinct pair, so ten ratings do not become ten room
+samples.
 
 The website scripts `pilot-browser.mjs` and `check-comparison-browser.mjs` use
 Playwright, store artifacts in `.codex/`, and close their browser processes.

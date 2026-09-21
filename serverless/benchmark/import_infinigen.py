@@ -33,8 +33,10 @@ def main():
         setattr(args,name,getattr(args,name).resolve())
     config = json.loads((args.run/"run.json").read_text())
     revision = subprocess.check_output(["git","rev-parse","HEAD"],cwd=args.repository,text=True).strip()
-    if revision != COMMIT or config["commit"] != COMMIT or config["fastSolve"]:
-        raise ValueError("Expected the pinned original default-solve workload")
+    if revision != COMMIT or config["commit"] != COMMIT or config.get("profile", "default") not in {
+        "default", "tutorial-fast", "matched-furniture-fast"
+    }:
+        raise ValueError("Expected a documented profile from the pinned original Indoors release")
     if subprocess.check_output(["git","diff","--name-only","HEAD"],cwd=args.repository,text=True).strip():
         raise ValueError("The source used for export must also remain unchanged")
     environment = dict(os.environ,PYTHONPATH=str(args.site_packages)+os.pathsep+str(args.repository),PWD=str(args.repository))

@@ -4,8 +4,9 @@ import unittest
 from serverless.study.combine_pilots import combine
 
 
-def wave(version, choice):
+def wave(version, choice, evidence_mode='visual_only'):
     return {'studyVersion':version,'respondentType':'ai_pilot','humanParticipants':0,'reviewersCompleted':10,
+            'evidenceMode':evidence_mode,
             'stimulusEvidence':[{'caseId':version,'soilieScene':'soilie-'+version,'baselineScene':'baseline-'+version}],
             'reviewers':[{'repeatComparisons':2,'agreements':2} for _ in range(10)],
             'responses':[{'caseId':version,'reviewerId':str(i),'promptProfile':'focus-'+str(i),'repeatOf':None,
@@ -36,3 +37,10 @@ class PilotWavesTests(unittest.TestCase):
         changed['responses'].pop()
         with self.assertRaises(ValueError):
             combine([changed])
+
+    def test_same_frozen_pairs_can_be_compared_across_evidence_conditions(self):
+        result = combine([wave('visual','left','visual_only'),wave('metrics','right','metrics_only')],resamples=100)
+        self.assertEqual(2,len(result['conditions']))
+        self.assertEqual({'visual_only','metrics_only'},{row['evidenceMode'] for row in result['conditions']})
+        self.assertTrue(all(row['reversedControls'] == 20 for row in result['conditions']))
+        self.assertTrue(all(row['consistentReversedControls'] == 20 for row in result['conditions']))

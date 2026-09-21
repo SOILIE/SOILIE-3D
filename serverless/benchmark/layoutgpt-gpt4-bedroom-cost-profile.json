@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "evidence": "reconstructed-official-prompt-token-estimate",
+  "model": "gpt-4",
+  "configuration": "bedroom, k-similar, K=8, normalized pixels, regular floor plan, one completion, 512-token output limit",
+  "sourceRepository": "https://github.com/UCSB-AI/LayoutGPT",
+  "sourceCommit": "fc31954962553e5b65bf267a904a6930d50b1f5e",
+  "sourceFile": "run_layoutgpt_3d.py",
+  "releasedLayouts": 423,
+  "releasedLayoutsSha256": "7ce88e5cb79d81616b4f938e5237fd3f8aaf8c2ad010c0be0b46e7412cd8bcaa",
+  "tokenizer": "cl100k_base via tiktoken 0.11.0",
+  "tokenAccounting": "Three tokens per chat message plus three assistant-priming tokens. Released CSS layouts reconstruct assistant outputs; released bedroom layouts proxy the unavailable retrieved training demonstrations.",
+  "sampling": "For each of 423 released bedroom targets, 100 deterministic eight-example draws were reconstructed without looking at quality scores.",
+  "inputTokens": {
+    "p10": 3067,
+    "median": 3300,
+    "p90": 3538,
+    "configuredMaximum": 7000
+  },
+  "outputTokens": {
+    "p10": 237,
+    "median": 296,
+    "p90": 415,
+    "configuredMaximum": 512
+  },
+  "limitations": [
+    "The official released parsed layouts do not include API usage receipts, rejected requests, or the exact eight retrieved training demonstrations.",
+    "Released layouts are used as same-format demonstration-length proxies, so the token distribution is an estimate rather than a billing record.",
+    "Current published GPT-4 rates are applied to the historical official configuration; no inference call was purchased for this analysis.",
+    "Retries are unavailable and therefore excluded."
+  ]
+}

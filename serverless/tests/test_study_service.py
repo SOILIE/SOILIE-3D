@@ -97,6 +97,32 @@ class StudyServiceTests(unittest.TestCase):
                 self.assertEqual("STUDY_PROTOCOL_CHANGED", caught.exception.code)
         self.assertEqual([], self.store.responses(self.session["sessionId"]))
 
+    def test_combined_condition_exposes_visuals_and_symmetric_metrics(self):
+        document = protocol()
+        document["studyVersion"] = "combined-v1"
+        document["evidenceMode"] = "combined"
+        metric = [{"id":"overlap","label":"Overlap","value":1.25,"unit":"%","direction":"lower","availability":"measured"}]
+        for case in document["cases"]:
+            case["relationMetrics"] = metric
+            case["comparisonMetrics"] = [dict(metric[0],value=2.5)]
+        service = StudyService(document,self.store,b"test-secret",True,clock=lambda:1000)
+        session = service.start({"invitation":service.invite("reviewer-combined","overall","test-model")})
+        self.assertEqual("combined",session["evidenceMode"])
+        self.assertEqual({"caseId","title","leftImage","rightImage","leftMetrics","rightMetrics"},set(session["cases"][0]))
+        self.assertIn("3D bird's-eye",session["rubric"])
+
+    def test_metrics_only_does_not_disclose_images(self):
+        document = protocol()
+        document["studyVersion"] = "metrics-v1"
+        document["evidenceMode"] = "metrics_only"
+        for case in document["cases"]:
+            case["relationMetrics"] = []
+            case["comparisonMetrics"] = []
+        service = StudyService(document,self.store,b"test-secret",True,clock=lambda:1000)
+        session = service.start({"invitation":service.invite("reviewer-metrics","overall","test-model")})
+        self.assertEqual({"caseId","title","leftMetrics","rightMetrics"},set(session["cases"][0]))
+        self.assertNotIn("leftImage",session["cases"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

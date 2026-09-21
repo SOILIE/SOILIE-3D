@@ -2,12 +2,18 @@ from copy import deepcopy
 import json
 import unittest
 
-from serverless.benchmark.cost import conditional_bound, evidence, lambda_charge, monthly_lambda_budget, token_charge
+from serverless.benchmark.cost import evidence, lambda_charge, monthly_lambda_budget, per_room_comparison, token_charge
 
 RATES = {"computeUsdPerGbSecond":.0000166667, "storageUsdPerGbSecond":.000000034,
          "requestUsd":.0000002}
 CARD = {"lambda":RATES, "gpt4":{"model":"gpt-4", "source":"https://developers.openai.com/api/docs/models/gpt-4", "inputUsdPerMillion":30, "outputUsdPerMillion":60},
         "gpt5nano":{"model":"gpt-5-nano", "source":"https://developers.openai.com/api/docs/models/gpt-5-nano", "inputUsdPerMillion":.05,"outputUsdPerMillion":.4}}
+PROFILE = {"schemaVersion":1,"evidence":"reconstructed-official-prompt-token-estimate","model":"gpt-4",
+           "configuration":"bedroom K=8","sourceRepository":"https://github.com/UCSB-AI/LayoutGPT",
+           "sourceCommit":"fixture","sourceFile":"run_layoutgpt_3d.py","releasedLayouts":423,
+           "releasedLayoutsSha256":"fixture","tokenizer":"fixture","tokenAccounting":"fixture",
+           "sampling":"fixture","inputTokens":{"p10":3067,"median":3300,"p90":3538,"configuredMaximum":7000},
+           "outputTokens":{"p10":237,"median":296,"p90":415,"configuredMaximum":512},"limitations":[]}
 
 
 class CostTests(unittest.TestCase):
@@ -34,12 +40,13 @@ class CostTests(unittest.TestCase):
             lambda_charge([{"durationMs":100}],RATES)
 
     def test_scenarios_never_turn_local_seconds_into_a_cloud_measurement(self):
-        result = evidence([{"status":"complete","generationSeconds":20}, {"status":"failed","generationSeconds":10}],CARD)
+        result = evidence([{"status":"complete","generationSeconds":20}, {"status":"failed","generationSeconds":10}],CARD,PROFILE)
         self.assertEqual(20,result["measuredLocal"]["secondsPerCompletedScene"])
         self.assertEqual(1,result["measuredLocal"]["failedAttemptsExcludedFromTiming"])
         self.assertFalse(result["lambda"]["moneyAvailable"])
         self.assertFalse(result["layoutgpt"]["moneyAvailable"])
-        self.assertTrue(all(row["evidence"] == "conditional-bound" for row in result["conditionalBounds"]))
+        self.assertFalse(result["perCompletedRoom"]["layoutgpt"]["receiptAvailable"])
+        self.assertFalse(result["perCompletedRoom"]["soilie"]["receiptAvailable"])
 
     def test_publication_rejects_account_payloads_in_price_inputs(self):
         for path, key in (((), "accountId"), ((), "freeTierUsage"),
@@ -50,12 +57,12 @@ class CostTests(unittest.TestCase):
                 target = target[part]
             target[key] = "PRIVATE_SENTINEL"
             with self.assertRaisesRegex(ValueError, "public rate-card fields only") as failure:
-                evidence([], card)
+                evidence([], card, PROFILE)
             self.assertNotIn("PRIVATE_SENTINEL", str(failure.exception))
 
     def test_public_scenarios_do_not_export_incidental_account_metadata(self):
         result = evidence([{"status":"complete", "generationSeconds":20,
-                            "accountUsage":{"marker":"PRIVATE_SENTINEL"}}], CARD)
+                            "accountUsage":{"marker":"PRIVATE_SENTINEL"}}], CARD, PROFILE)
         self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
         tier = result["freeTier"]
         self.assertFalse(tier["accountUsageIncluded"])
@@ -64,33 +71,35 @@ class CostTests(unittest.TestCase):
         self.assertEqual(0, tier["allowanceExhausted"]["assumedRemainingFreeGbSeconds"])
         self.assertEqual(0, tier["allowanceExhausted"]["assumedRemainingFreeRequests"])
 
-    def test_bound_is_conditional_and_not_universal_llm_saving(self):
-        legacy = conditional_bound(CARD["gpt4"],RATES)
-        cheap = conditional_bound(CARD["gpt5nano"],RATES)
-        self.assertEqual(.015,legacy["llmOutputChargeFloorUsd"])
-        self.assertAlmostEqual(.005009891,legacy["soilieWorkerCostCeilingUsd"])
-        self.assertTrue(legacy["cheaperUnderAssumptions"])
-        self.assertGreater(legacy["minimumSavingPct"],66)
-        self.assertFalse(cheap["cheaperUnderAssumptions"])
-        self.assertIsNone(cheap["minimumSavingPct"])
-        self.assertEqual(.0001,cheap["llmOutputChargeFloorUsd"])
+    def test_per_completed_room_compares_the_evaluated_methods(self):
+        rows = [{"status":"complete","generationSeconds":value} for value in (10,20,30)]
+        result = per_room_comparison(rows,CARD,PROFILE)
+        layoutgpt = {row["id"]:row for row in result["layoutgpt"]["rows"]}
+        soilie = {row["id"]:row for row in result["soilie"]["rows"]}
+        self.assertAlmostEqual(.11676,layoutgpt["median"]["usd"])
+        self.assertEqual(20,soilie["median"]["seconds"])
+        self.assertAlmostEqual(.001339996,soilie["median"]["usd"])
+        self.assertGreater(result["medianCostRatio"],87)
+        self.assertNotIn("gpt5nano",json.dumps(result))
 
-    def test_bound_includes_failed_invocation_budget_and_no_universal_floor(self):
-        row = conditional_bound(CARD["gpt4"],RATES,maximum_worker_seconds=60,maximum_invocations=2)
-        self.assertAlmostEqual(2*.005009891,row["soilieWorkerCostCeilingUsd"])
-        zero = conditional_bound(CARD["gpt4"],RATES,minimum_output_tokens=0)
-        self.assertFalse(zero["cheaperUnderAssumptions"])
-        with self.assertRaises(ValueError):
-            conditional_bound(CARD["gpt4"],RATES,maximum_worker_seconds=901)
+    def test_layoutgpt_profile_is_strict_and_ordered(self):
+        profile = deepcopy(PROFILE)
+        profile["privateReceipt"] = "PRIVATE_SENTINEL"
+        with self.assertRaisesRegex(ValueError,"Unexpected LayoutGPT"):
+            per_room_comparison([],CARD,profile)
+        profile = deepcopy(PROFILE)
+        profile["inputTokens"]["p90"] = 1
+        with self.assertRaisesRegex(ValueError,"must be ordered"):
+            per_room_comparison([],CARD,profile)
 
     def test_monthly_free_tier_covers_compute_but_not_extra_storage(self):
-        covered = monthly_lambda_budget(600,30,10240,10240,RATES,400000,1000000)
-        self.assertEqual(180000,covered["gbSeconds"])
+        covered = monthly_lambda_budget(600,20,4096,10240,RATES,400000,1000000)
+        self.assertEqual(48000,covered["gbSeconds"])
         self.assertEqual(0,covered["computeUsd"])
         self.assertEqual(0,covered["requestUsd"])
-        self.assertAlmostEqual(.005814,covered["extraTemporaryStorageUsd"])
-        exhausted = monthly_lambda_budget(600,30,10240,10240,RATES)
-        self.assertAlmostEqual(3.00594,exhausted["totalWorkerUsd"],places=5)
+        self.assertAlmostEqual(.003876,covered["extraTemporaryStorageUsd"])
+        exhausted = monthly_lambda_budget(600,20,4096,10240,RATES)
+        self.assertAlmostEqual(.8039976,exhausted["totalWorkerUsd"],places=5)
 
     def test_shared_account_consumption_and_failures_can_exhaust_allowance(self):
         partly = monthly_lambda_budget(600,30,10240,10240,RATES,100000,500)

@@ -1,7 +1,8 @@
 import unittest
 
 from serverless.benchmark.geometry import box_corners, measure
-from serverless.benchmark.nonhuman import matched_validity_rates, relation_drift, soilie_diagnostics, validity_rates
+from serverless.benchmark.nonhuman import (cooccurrence_fidelity, matched_validity_rates,
+                                           relation_drift, soilie_diagnostics, validity_rates)
 from serverless.benchmark.publish_comparison import analysis_cohort
 
 
@@ -19,6 +20,30 @@ def scene(scene_id, centres, room=(-2, -2, 2, 2), solid=None):
 
 
 class NonHumanDiagnosticsTests(unittest.TestCase):
+    def test_category_cooccurrence_fidelity_has_human_readable_percentage_points(self):
+        catalog = [
+            ("bed", "lamp", "chair", "desk", "book", "plant"),
+            ("bed", "lamp", "desk", "chair", "plant", "book"),
+        ]
+        attempts = []
+        for count in (3, 4, 5, 6):
+            for index, row in enumerate(catalog):
+                attempts.append({"status": "complete", "selection": list(row[:count]),
+                                 "request": {"objectCount": count}, "id": f"{count}-{index}"})
+        result = cooccurrence_fidelity(attempts, catalog)
+        self.assertTrue(result["available"])
+        self.assertEqual(result["equalCountMeanAbsoluteDifferencePercentagePoints"], 0)
+        self.assertEqual([row["completedScenes"] for row in result["strata"]], [2, 2, 2, 2])
+
+    def test_category_cooccurrence_treats_duplicates_as_category_presence(self):
+        catalog = [("bed", "lamp", "chair", "desk", "book", "plant")]
+        attempts = [{"status": "complete", "selection": ["bed", "bed", "lamp"],
+                     "request": {"objectCount": 3}, "id": "duplicate"}]
+        result = cooccurrence_fidelity(attempts, catalog)
+        first = result["strata"][0]
+        self.assertEqual(first["generatedAnchorCategories"], 2)
+        self.assertGreater(first["meanAbsoluteConditionalDifferencePercentagePoints"], 0)
+
     def test_analysis_cohort_keeps_validated_successes_and_only_active_failures(self):
         config = {"provenance": {"version": "4.0.2"}, "provenanceSegments": [
             {"firstAttempt": 0, "provenance": {"version": "4.0.2"}},

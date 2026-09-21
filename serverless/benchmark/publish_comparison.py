@@ -1,6 +1,7 @@
 """Compile website evidence from measured artifacts, never hand-entered scores."""
 import argparse
 from collections import Counter, defaultdict
+import csv
 from datetime import datetime, UTC
 import hashlib
 import json
@@ -96,7 +97,11 @@ def main():
     parser.add_argument("--infinigen", type=Path)
     parser.add_argument("--support-replays", type=Path, nargs="*", default=[])
     parser.add_argument("--rates", type=Path, required=True)
+    parser.add_argument("--layoutgpt-cost-profile", type=Path, required=True,
+                        help="Reconstructed token profile for the exact released LayoutGPT configuration")
     parser.add_argument("--selection", type=Path, required=True)
+    parser.add_argument("--combination-catalog", type=Path,
+                        help="Published V4 room-combination CSV used for category co-occurrence fidelity")
     parser.add_argument("--incidents", type=Path, default=Path(__file__).with_name("infrastructure-incidents.json"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -154,6 +159,12 @@ def main():
     incidents = json.loads(args.incidents.read_text())["incidents"]
     indoors_incidents = [row for row in incidents if row["model"] == "infinigen"]
     indoors_timing_complete = not any(not row["generationTimingAvailable"] for row in indoors_incidents)
+    source_combinations = None
+    if args.combination_catalog:
+        with args.combination_catalog.open(newline="", encoding="utf-8-sig") as stream:
+            source_combinations = [tuple(value for value in row if value) for row in csv.reader(stream)][1:]
+        if not source_combinations or any(len(row) != 6 for row in source_combinations):
+            raise ValueError("The V4 bedroom combination catalog must contain six labels per row")
     document = {"schemaVersion": 2, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
                 "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group),
                                    "validityRates": validity_rates(group)} for model,group in groups.items()},
@@ -177,13 +188,16 @@ def main():
                                          "completedPerMinute":60*len(indoors_times)/indoors_total if indoors_total and indoors_timing_complete else None,
                                          "completedLatencySeconds":summarize(indoors_times),
                                          "failures":dict(Counter(row["errorCode"] for row in indoors_attempts if row["status"] != "complete")),
-                                         "stage":"Default single-room coarse task: solving, procedural mesh construction, camera preparation and serialization; no image rendering"},
+                                         "profile":(indoors.get("configuration") or {}).get("profile"),
+                                         "stage":(indoors.get("configuration") or {}).get("profileDescription") or
+                                                 "Single-room coarse task: solving, procedural mesh construction, camera preparation and serialization; no image rendering"},
                            "grains": {"evidence": "paper-reported", "scenes": 10000, "seconds": 1027, "hierarchySeconds": 94, "placementSeconds": 933,
                                       "hardware": "GTX 1080 Ti and Intel i7-8700; after training", "source": "https://arxiv.org/html/1807.09193"}},
                 "selectionExplanation": json.loads(args.selection.read_text()),
-                "nonHumanDiagnostics": soilie_diagnostics(attempts),
+                "nonHumanDiagnostics": soilie_diagnostics(attempts, source_combinations),
                 "humanParticipants": 0,
-                "cost": cost_evidence(attempts, json.loads(args.rates.read_text())),
+                "cost": cost_evidence(attempts, json.loads(args.rates.read_text()),
+                                      json.loads(args.layoutgpt_cost_profile.read_text())),
                 "method": "Native final outputs, matched by room type, exact furniture count and 0.25-wide summed-footprint-density bins; equal weight per shared stratum. Not identical-input experiments.",
                 "grainsAvailability": "The authors removed pretrained weights; no new GRAINS geometry or inference run is claimed."}
     args.output.mkdir(parents=True, exist_ok=True)
