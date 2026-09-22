@@ -3,7 +3,8 @@ import unittest
 from serverless.benchmark.geometry import box_corners, measure
 from serverless.benchmark.nonhuman import (cooccurrence_fidelity, matched_validity_rates,
                                            relation_drift, soilie_diagnostics, validity_rates)
-from serverless.benchmark.publish_comparison import analysis_cohort
+from serverless.benchmark.publish_comparison import (analysis_cohort, inventory_summary,
+                                                     require_complete_soilie)
 
 
 def scene(scene_id, centres, room=(-2, -2, 2, 2), solid=None):
@@ -20,6 +21,29 @@ def scene(scene_id, centres, room=(-2, -2, 2, 2), solid=None):
 
 
 class NonHumanDiagnosticsTests(unittest.TestCase):
+    def test_inventory_summary_makes_unmatched_workload_ranges_explicit(self):
+        rows = []
+        for index, count in enumerate((3, 6, 8)):
+            value = scene(str(index), {f"chair-{item}": (item * 1.5, 0, .5) for item in range(count)})
+            value["roomType"] = "bedroom" if index < 2 else "living_room"
+            rows.append({"scene": value, "metrics": measure(value)})
+        self.assertEqual(inventory_summary(rows), {
+            "scenes": 3,
+            "minimumFurnitureInstances": 3,
+            "medianFurnitureInstances": 6,
+            "maximumFurnitureInstances": 8,
+            "roomTypes": {"bedroom": 2, "living_room": 1},
+        })
+
+    def test_publication_requires_every_target_scene_and_mesh_measurement(self):
+        complete = {"scene": {"id": "complete"}, "metrics": {"meanWorstSolidOverlapPct": 0}}
+        incomplete = {"scene": {"id": "incomplete"}, "metrics": {"meanWorstSolidOverlapPct": None}}
+        require_complete_soilie({"soilie": [complete]}, [{"target": 1}])
+        with self.assertRaises(RuntimeError):
+            require_complete_soilie({"soilie": [complete]}, [{"target": 2}])
+        with self.assertRaises(RuntimeError):
+            require_complete_soilie({"soilie": [incomplete]}, [{"target": 1}])
+
     def test_category_cooccurrence_fidelity_has_human_readable_percentage_points(self):
         catalog = [
             ("bed", "lamp", "chair", "desk", "book", "plant"),

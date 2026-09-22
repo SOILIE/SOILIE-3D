@@ -12,10 +12,11 @@ def digest(document):
 
 
 def placement(stage):
-    # Support rays are a read-only extra measurement. They are not a placement
-    # field, so a support replay can be checked against a non-support run.
+    # Read-only observations and derived headings are not placement fields, so
+    # measurement replays can be checked against older campaign records.
+    observation_fields = {"support", "frontDirection", "frontConvention"}
     return {"units": stage["units"], "room": stage["room"],
-            "objects": [{key: value for key, value in obj.items() if key != "support"}
+            "objects": [{key: value for key, value in obj.items() if key not in observation_fields}
                         for obj in stage["objects"]]}
 
 

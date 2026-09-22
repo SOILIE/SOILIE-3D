@@ -134,7 +134,8 @@ class StudyServiceTests(unittest.TestCase):
         self.assertIn("Judge only the assigned dimension",session["rubric"])
         self.assertIn("object sets are fixed experimental inputs",session["rubric"])
         self.assertIn("An object having no conventional counterpart is not a defect",session["rubric"])
-        self.assertIn("visible axes and facing directions",session["rubric"])
+        self.assertIn("cyan arrow marking its source-defined front direction",session["rubric"])
+        self.assertIn("explicit front-direction arrows",session["rubric"])
         self.assertNotIn("leftMetrics",session["cases"][0])
         with self.assertRaises(ValueError):
             service.invite("wrong-profile","overlap","test-model")

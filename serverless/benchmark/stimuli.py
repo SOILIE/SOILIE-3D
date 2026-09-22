@@ -76,11 +76,22 @@ def comparable_inventory(first, second):
 def diagram(scene, highlight_ids=frozenset()):
     items = furniture(scene)
     boxes = [(item,Box(item)) for item in items]
+    smallest_volume = min(box.volume for _, box in boxes)
+    label_counts = Counter(item["label"] for item in items)
+    label_seen = Counter()
+    volume_labels = []
+    for item, box in sorted(boxes, key=lambda pair: (pair[0]["label"], pair[0]["id"])):
+        label_seen[item["label"]] += 1
+        label = item["label"].replace("_", " ")
+        if label_counts[item["label"]] > 1:
+            label += f" {label_seen[item['label']]}"
+        volume_labels.append(f"{label} {box.volume / smallest_volume:.1f}×")
     room = scene["room"]["polygon"]
     floor = scene["room"]["floorZ"]
-    lines = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1040" role="img" aria-label="Plan, oblique, and three-dimensional bird’s-eye views of an indoor arrangement">',
-             '<rect width="720" height="1040" fill="#f2f4f6"/>',
-             '<style>text{font-family:Arial,sans-serif;fill:#25384a;font-size:12px} .title{font-size:17px;font-weight:bold} polygon,line{stroke-linejoin:round}</style>']
+    lines = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1080" role="img" aria-label="Plan, oblique, and three-dimensional bird’s-eye views of an indoor arrangement with front-direction arrows and relative bounding-box volumes">',
+             '<rect width="720" height="1080" fill="#f2f4f6"/>',
+             '<defs><marker id="front-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#087f8c"/></marker></defs>',
+             '<style>text{font-family:Arial,sans-serif;fill:#25384a;font-size:12px} .title{font-size:17px;font-weight:bold} polygon,line{stroke-linejoin:round}.front{stroke:#087f8c;stroke-width:2.4;marker-end:url(#front-arrow)}</style>']
     views = (
         ("plan", "Plan view", 34, lambda p: (p[0], -p[1])),
         ("oblique", "Oblique view", 354, lambda p: ((p[0]-p[1])*.70710678, (p[0]+p[1])*.35355339-p[2]*.8660254)),
@@ -149,6 +160,20 @@ def diagram(scene, highlight_ids=frozenset()):
             center = box.points.mean(axis=0)
             if view == "plan":
                 center[2] = floor
+            front = item.get("frontDirection")
+            if front is None or len(front) != 2 or not all(math.isfinite(float(value)) for value in front):
+                raise ValueError(f"Object {item.get('id')} lacks a finite front direction")
+            front = np.asarray(front,dtype=float)
+            length = float(np.linalg.norm(front))
+            if length <= 1e-9:
+                raise ValueError(f"Object {item.get('id')} has a zero front direction")
+            front /= length
+            footprint_size = max(float(np.ptp(box.points[:,0])),float(np.ptp(box.points[:,1])))
+            arrow_end = center.copy()
+            arrow_end[:2] += front * max(footprint_size*.38, .08)
+            start_x,start_y = point(center)
+            end_x,end_y = point(arrow_end)
+            lines.append(f'<line class="front" x1="{start_x:.2f}" y1="{start_y:.2f}" x2="{end_x:.2f}" y2="{end_y:.2f}"/>')
             x,y = point(center)
             label_x, label_y = label_position(x, y, label)
             if abs(label_x - x) + abs(label_y - y) > 3:
@@ -156,7 +181,11 @@ def diagram(scene, highlight_ids=frozenset()):
             lines.append(f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-opacity=".9">{escape(label)}</text>')
     lines.extend(['<line x1="24" x2="696" y1="320" y2="320" stroke="#c2cbd3"/>',
                   '<line x1="24" x2="696" y1="640" y2="640" stroke="#c2cbd3"/>',
-                  '<text x="24" y="1024">Final oriented bounding boxes, not solid meshes. Room boundary shown as a dark outline.</text>','</svg>'])
+                  '<text x="24" y="1004">Relative bounding-box volumes, normalized to this room’s smallest object:</text>',
+                  f'<text x="24" y="1022">{escape(" · ".join(volume_labels[:3]))}</text>',
+                  f'<text x="24" y="1040">{escape(" · ".join(volume_labels[3:]))}</text>' if len(volume_labels) > 3 else '',
+                  '<text x="24" y="1058">Judge the relative size differences among the objects present in each room.</text>',
+                  '<text x="24" y="1076">Values are box volume, not shape/aspect ratio. Cyan arrows mark source-defined fronts.</text>','</svg>'])
     return "\n".join(lines)
 
 
@@ -312,7 +341,7 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                             "cohortScenes":dict(Counter(row["scene"]["model"] for row in rows)),
                             "cohortSceneIdsSha256":digest(sorted(row["scene"]["id"] for row in rows)),
                             "scope":"Completed scenes available in this frozen snapshot, not subsequent benchmark completions",
-                            "visualEvidence":"Method-blind final oriented boxes shown as plan, oblique, and high-angle bird’s-eye views. Each room is independently fitted to the same canvas; absolute cross-panel scale is not implied.",
+                            "visualEvidence":"Method-blind final oriented boxes shown as plan, oblique, and high-angle bird’s-eye views. A cyan arrow marks every source-defined object front. Each room is independently fitted to the same canvas; absolute cross-panel scale is not implied.",
                             "numericEvidence":"Only per-room measurements available for both rooms in a pair are shown. Unavailable values are omitted rather than displayed as zero or used as evidence for either side."},
                 "stimulusEvidence":evidence}
     if reviewer_plan:

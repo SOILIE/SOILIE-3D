@@ -16,6 +16,14 @@ class ParityTests(unittest.TestCase):
         replay["stages"]["final"]["objects"][0]["support"] = {"gapM": 0}
         self.assertTrue(compare(original, replay)["exactPlacementEquality"])
 
+    def test_derived_front_direction_does_not_change_equality(self):
+        original, replay = self.row(), self.row()
+        replay["stages"]["final"]["objects"][0].update({
+            "frontDirection": [1, 0],
+            "frontConvention": "V4 asset-corrected local +X",
+        })
+        self.assertTrue(compare(original, replay)["exactPlacementEquality"])
+
     def test_any_moved_coordinate_is_rejected(self):
         original, replay = self.row(), self.row()
         replay["stages"]["afterSeparation"]["objects"][0]["corners"][0][0] += .000001

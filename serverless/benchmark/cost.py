@@ -181,7 +181,7 @@ def validate_public_rate_card(card):
         if not isinstance(value, dict) or set(value) - allowed:
             raise ValueError("Public cost evidence accepts public rate-card fields only")
 
-    fields(card, {"checkedAt", "currency", "lambda", "gpt4", "gpt5nano"})
+    fields(card, {"checkedAt", "currency", "lambda", "gpt4"})
     aws = card["lambda"]
     fields(aws, {"computeUsdPerGbSecond", "storageUsdPerGbSecond", "requestUsd",
                  "region", "architecture", "source", "offerPublishedAt", "sha256", "skus"})
@@ -216,8 +216,8 @@ def evidence(attempts, rate_card, layoutgpt_profile):
     return {"currency":"USD", "rateCard":rate_card,
             "hosting":hosting_evidence(available,exhausted,AWS_PRICING_URL),
             "question":"What is the estimated cost of one completed furniture layout from each evaluated method?",
-            "finding":("Under the stated runtime-transfer and reconstructed-token assumptions, the median SOILIE layout is estimated at "
-                       f"{comparison['medianCostRatio']:.0f} times less than the median official LayoutGPT GPT-4 call. This is a scoped estimate, not a cloud invoice or a claim about newer LLM substitutions." if comparison["medianCostRatio"] else
+            "finding":("Under the stated runtime-transfer and reconstructed-token assumptions, the reconstructed median LayoutGPT GPT-4 call costs "
+                       f"about {comparison['medianCostRatio']:.0f} times the estimated median SOILIE layout. This is a scoped estimate, not a cloud invoice or a claim about newer LLM substitutions." if comparison["medianCostRatio"] else
                        "The per-room cost comparison is unavailable until successful SOILIE timing exists."),
             "scope":comparison["scope"],
             "perCompletedRoom":comparison,
@@ -234,7 +234,7 @@ def evidence(attempts, rate_card, layoutgpt_profile):
                         "allowanceAvailable":available,
                         "allowanceExhausted":exhausted,
                         "interpretation":"With the full account-wide allowance still available, this hypothetical workload has no compute or request charge, but extra temporary storage still has a small charge. This is a hosting subsidy, not proof of universally cheaper model computation.",
-                        "exclusions":"S3 results, CloudWatch, API Gateway, queues, database operations, traffic, taxes and any extra invocation time are not included. LLM free quotas or credits can likewise remove API charges."},
+                        "exclusions":"S3 results, CloudWatch, API Gateway, queues, database operations, traffic, taxes and any extra invocation time are not included. Promotional API credits could reduce LayoutGPT's cash charge; none are assumed."},
             "exclusions":["Per-room estimates exclude credits; the separate monthly scenario considers the shared Lambda free tier", "Taxes and negotiated discounts are excluded", "No inference calls were purchased for this cost analysis", "A cheaper or newer LLM is not LayoutGPT until its layout quality is rerun and evaluated"]}
 
 

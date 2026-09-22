@@ -14,6 +14,16 @@ from serverless.study.service import StudyService, StudyError, PROFILES
 from serverless.study.store import SQLiteStudyStore
 
 
+def reviewer_model(document):
+    """Return the immutable, human-readable model provenance for invitations."""
+    configuration = document.get("reviewerConfiguration") or {}
+    model = configuration.get("model")
+    effort = configuration.get("reasoningEffort")
+    if not isinstance(model, str) or not model.strip() or not isinstance(effort, str) or not effort.strip():
+        raise ValueError("A reviewer model and reasoning effort are required in the frozen protocol")
+    return f"{model.strip()} ({effort.strip()} reasoning effort)"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--site",type=Path,required=True)
@@ -30,8 +40,9 @@ def main():
     invitations = args.state/"invitations.json"
     if not invitations.exists():
         plan = document.get("reviewerPlan") or list(PROFILES)
+        model = reviewer_model(document)
         invitations.write_text(json.dumps([{ "reviewerId":f"reviewer-{i+1:02d}", "profile":profile,
-            "invitation":service.invite(f"reviewer-{i+1:02d}",profile,"Codex session default (provider model ID not exposed)")}
+            "invitation":service.invite(f"reviewer-{i+1:02d}",profile,model)}
             for i,profile in enumerate(plan)]),encoding="utf-8")
     # Hand each independent reviewer only their own invitation, never the roster.
     for invitation in json.loads(invitations.read_text()):

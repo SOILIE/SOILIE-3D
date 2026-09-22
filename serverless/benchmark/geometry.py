@@ -2,8 +2,9 @@
 
 World-space box corners remain a cross-source envelope diagnostic: rotations
 are not discarded by turning every box into a world-axis-aligned box. Sources
-with evaluated Blender meshes can additionally provide an exact solid-overlap
-observation. No measurement moves objects.
+with evaluated Blender meshes can additionally provide exact occupied-volume
+overlap for closed solids and exact surface-separation evidence for open assets.
+No measurement moves objects.
 """
 from __future__ import annotations
 
@@ -130,7 +131,7 @@ def measure(scene):
     if solid is None:
         metric["unavailable"]["solidOverlap"] = "The source artifact does not contain evaluated solid-mesh evidence."
     else:
-        if solid.get("method") != "evaluated-solid-mesh-boolean-v1":
+        if solid.get("method") not in {"evaluated-solid-mesh-boolean-v1", "evaluated-mesh-intersection-v2"}:
             raise ValueError("Unknown solid-overlap measurement method")
         if solid.get("objectCount") != len(items):
             raise ValueError("Solid-overlap evidence does not cover the measured furniture set")
@@ -145,7 +146,9 @@ def measure(scene):
             metric["solidOverlapPairs"] = solid.get("overlapPairs", [])
         else:
             count = len(solid.get("unavailablePairs", []))
-            metric["unavailable"]["solidOverlap"] = f"{count} intersecting-envelope pair(s) lacked valid closed solids."
+            metric["unavailable"]["solidOverlap"] = (
+                f"{count} pair(s) had crossing open surfaces without a defined enclosed volume."
+            )
     if scene["units"] == "m":
         floor_z = scene["room"]["floorZ"]
         if not isinstance(floor_z, (int,float)) or not math.isfinite(floor_z):

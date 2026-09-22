@@ -17,7 +17,7 @@ from serverless.benchmark.verify_parity import digest
 from serverless.benchmark.nonhuman import matched_validity_rates, soilie_diagnostics, validity_rates
 
 METRICS = {
-    "meanWorstSolidOverlapPct": {"title": "Occupied mesh volume intersecting another object", "unit": "%", "direction": "lower", "meaning": "For each object, the largest physically occupied volume shared with another object is divided by that object's occupied volume, then averaged across the room. Disjoint envelopes prove zero mesh intersection. Intersecting envelopes require closed evaluated meshes and an exact Boolean result; otherwise the value is unavailable rather than assumed to be zero."},
+    "meanWorstSolidOverlapPct": {"title": "Evaluated mesh intersection", "unit": "%", "direction": "lower", "meaning": "For closed evaluated meshes, the largest occupied volume shared with another object is divided by that object's occupied volume and averaged across the room. Disjoint bounds or disjoint evaluated triangle surfaces establish zero physical intersection. The publication step rejects an incomplete SOILIE measurement."},
     "meanWorstEnvelopeOverlapPct": {"title": "Object-envelope intrusion", "unit": "%", "direction": "lower", "meaning": "A cross-source diagnostic based on oriented enclosing boxes. It is available for releases that do not include meshes, but it measures crowded envelopes rather than physical material collision."},
     "meanOutsideFootprintPct": {"title": "Furniture footprint outside the room", "unit": "%", "direction": "lower", "meaning": "The fraction of each furniture footprint outside the original boundary, averaged across the room. Auto-built rooms and fixed input rooms remain different tasks."},
     "supportGapCm": {"title": "Sampled gap to a supporting surface", "unit": "cm", "direction": "lower", "meaning": "Smallest vertical gap from actual lowest mesh vertices and sampled lower surfaces to a real supporting mesh, averaged over measured objects. Probes can miss contacts; a positive gap is not proof of floating, and contact is not proof of stability."},
@@ -25,6 +25,23 @@ METRICS = {
     "connectedClearancePct": {"title": "Connected clearance area", "unit": "%", "direction": "context", "meaning": "Largest connected area where the centre of a 0.6 m-wide, 1.8 m-tall cylinder fits, as a fraction of room area. More space is not automatically a better room."},
 }
 LABELS = {"soilie": "SOILIE-3D", "layoutgpt": "LayoutGPT", "infinigen": "Infinigen Indoors"}
+
+
+def attach_front_directions(scene):
+    """Expose each final heading without changing model placement or rotation."""
+    for item in scene.get("objects", []):
+        if item.get("frontDirection") is not None:
+            continue
+        transform = item.get("transform")
+        if scene.get("model") != "soilie" or not transform:
+            continue
+        x, y = float(transform[0][0]), float(transform[1][0])
+        length = (x*x + y*y) ** .5
+        if length <= 1e-9:
+            raise ValueError(f"Scene {scene.get('id')} object {item.get('id')} has no horizontal front")
+        item["frontDirection"] = [x/length, y/length]
+        item["frontConvention"] = "V4 asset-corrected local +X"
+    return scene
 
 
 def analysis_cohort(batch, config):
@@ -47,6 +64,18 @@ def aggregate(rows):
         reason for row in rows for reason in row["metrics"].get("unavailable", {}).values()
     ))
     return result
+
+
+def inventory_summary(rows):
+    """Describe the native workload without turning object count into quality."""
+    counts = sorted(row["metrics"]["objectCount"] for row in rows)
+    return {
+        "scenes": len(counts),
+        "minimumFurnitureInstances": min(counts) if counts else None,
+        "medianFurnitureInstances": statistics.median(counts) if counts else None,
+        "maximumFurnitureInstances": max(counts) if counts else None,
+        "roomTypes": dict(sorted(Counter(row["scene"]["roomType"] for row in rows).items())),
+    }
 
 
 def measured_rows(scenes):
@@ -90,6 +119,19 @@ def compare(rows):
     return results
 
 
+def require_complete_soilie(groups, runs):
+    """Reject a partial or incompletely observed SOILIE publication corpus."""
+    expected = sum(run["target"] for run in runs)
+    actual = groups.get("soilie", [])
+    incomplete = [row["scene"]["id"] for row in actual
+                  if row["metrics"].get("meanWorstSolidOverlapPct") is None]
+    if len(actual) != expected or incomplete:
+        raise RuntimeError(
+            f"SOILIE publication requires {expected} complete mesh measurements; "
+            f"found {len(actual)} scenes and {len(incomplete)} incomplete result(s)"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
@@ -102,7 +144,8 @@ def main():
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--combination-catalog", type=Path,
                         help="Published V4 room-combination CSV used for category co-occurrence fidelity")
-    parser.add_argument("--incidents", type=Path, default=Path(__file__).with_name("infrastructure-incidents.json"))
+    parser.add_argument("--incidents", type=Path,
+                        help="Optional current-cohort infrastructure incidents; omitted incidents are not historical comparison results")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     attempts, scenes, before_after, runs = [], [], [], []
@@ -136,7 +179,7 @@ def main():
     for row in attempts:
         if row["status"] != "complete":
             continue
-        scenes.append(row["stages"]["final"])
+        scenes.append(attach_front_directions(row["stages"]["final"]))
         try:
             before_after.append({"id": row["id"], **{stage: measure(value)["meanWorstEnvelopeOverlapPct"] for stage,value in row["stages"].items()}})
         except ValueError:
@@ -151,12 +194,13 @@ def main():
     if len({row["scene"]["id"] for row in rows}) != len(rows):
         raise ValueError("Duplicate scene IDs would inflate sample sizes")
     groups = {model: [row for row in rows if row["scene"]["model"] == model] for model in LABELS}
+    require_complete_soilie(groups, runs)
     successful_time = [row["generationSeconds"] for row in attempts if row["status"] == "complete"]
     successful_total = sum(successful_time)
     indoors_attempts = indoors["attempts"]
     indoors_times = [row["generationSeconds"] for row in indoors_attempts if row["status"] == "complete"]
     indoors_total = sum(row["generationSeconds"] for row in indoors_attempts)
-    incidents = json.loads(args.incidents.read_text())["incidents"]
+    incidents = json.loads(args.incidents.read_text())["incidents"] if args.incidents else []
     indoors_incidents = [row for row in incidents if row["model"] == "infinigen"]
     indoors_timing_complete = not any(not row["generationTimingAvailable"] for row in indoors_incidents)
     source_combinations = None
@@ -167,6 +211,7 @@ def main():
             raise ValueError("The V4 bedroom combination catalog must contain six labels per row")
     document = {"schemaVersion": 2, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
                 "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group),
+                                   "inventory": inventory_summary(group),
                                    "validityRates": validity_rates(group)} for model,group in groups.items()},
                 "comparisons": compare(rows), "runs": runs, "invalidGeometry": invalid,
                 "layoutgptSources": release["sources"], "layoutgptInvalidArtifacts": release["invalidArtifacts"],

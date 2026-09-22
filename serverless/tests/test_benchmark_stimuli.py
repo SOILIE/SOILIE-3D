@@ -2,17 +2,19 @@ from copy import deepcopy
 import unittest
 
 from serverless.benchmark.geometry import box_corners, measure
-from serverless.benchmark.stimuli import diagram, review_metrics, select_pairs, semantic_signature, semantic_similarity, symmetric_review_metrics
-from serverless.study.export_pilot import aggregate, condition_result
-from serverless.study.service import PROFILES
+from serverless.benchmark.stimuli import (diagram, review_metrics, select_pairs,
+                                          semantic_signature, semantic_similarity,
+                                          symmetric_review_metrics)
+from serverless.study.export_pilot import aggregate, condition_result, public_summary
+from serverless.study.service import EVIDENCE_RUBRICS, FOCUS_ONLY_RUBRIC, FOCUS_PROFILES, PROFILES
 from serverless.tests import test_study_service as study_tests
 
 
 def fixture(model,index):
     scene = {"id":f"{model}-{index}","model":model,"roomType":"bedroom","units":"m",
              "room":{"polygon":[[0,0],[4,0],[4,4],[0,4]],"floorZ":0},
-             "objects":[{"id":"a","label":"bed","corners":box_corners([1,1,.5],[1,1,1])},
-                        {"id":"b","label":"desk","corners":box_corners([3,3,.5],[1,1,1],30)}]}
+             "objects":[{"id":"a","label":"bed","corners":box_corners([1,1,.5],[1,1,1]),"frontDirection":[1,0]},
+                        {"id":"b","label":"desk","corners":box_corners([3,3,.5],[1,1,1],30),"frontDirection":[.8660254,.5]}]}
     return {"scene":scene,"metrics":measure(scene)}
 
 
@@ -108,7 +110,12 @@ class StimulusTests(unittest.TestCase):
         self.assertIn("Plan view",svg)
         self.assertIn("Oblique view",svg)
         self.assertIn("3D bird’s-eye view",svg)
-        self.assertIn('viewBox="0 0 720 1040"',svg)
+        self.assertIn('class="front"',svg)
+        self.assertIn("Judge the relative size differences",svg)
+        self.assertIn("Cyan arrows mark source-defined fronts",svg)
+        self.assertIn('viewBox="0 0 720 1080"',svg)
+        self.assertIn("Relative bounding-box volumes", svg)
+        self.assertIn("bed 1.0×", svg)
         self.assertNotIn("soilie",svg)
 
     def test_review_metrics_keep_missing_values_unavailable(self):
@@ -151,6 +158,24 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(10,result["decisivePairs"])
         self.assertEqual(80,result["soiliePairSharePct"])
         self.assertAlmostEqual(.109375,result["twoSidedExactP"])
+
+    def test_public_summary_keeps_aggregates_but_moves_row_level_evidence(self):
+        result = {
+            "reviewersCompleted": 10,
+            "dimensionResults": [{"id": "orientation", "soilie": 12}],
+            "reviewers": [{"reviewerId": "reviewer-01", "reviewPrompt": "Exact prompt"}],
+            "responses": [{"caseId": "a"}, {"caseId": "b"}],
+            "stimuli": [{"caseId": "a"}],
+            "stimulusEvidence": [{"caseId": "a"}],
+        }
+        compact = public_summary(result)
+        self.assertEqual(10, compact["reviewersCompleted"])
+        self.assertEqual("Exact prompt", compact["reviewers"][0]["reviewPrompt"])
+        self.assertNotIn("responses", compact)
+        self.assertNotIn("stimuli", compact)
+        self.assertNotIn("stimulusEvidence", compact)
+        self.assertEqual({"responseRows": 2, "stimulusPairs": 1, "stimulusEvidenceRows": 1,
+                          "download": "ai-pilot-responses.json"}, compact["detailedEvidence"])
 
     def test_combined_export_separates_numeric_dominance_from_overall_preference(self):
         protocol = {
@@ -225,6 +250,9 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(all("Judge only the assigned dimension" in row["reviewPrompt"] for row in result["reviewers"]))
         self.assertTrue(all("object sets are fixed experimental inputs" in row["reviewPrompt"] for row in result["reviewers"]))
         self.assertTrue(all("conventional counterpart is not a defect" in row["reviewPrompt"] for row in result["reviewers"]))
+        self.assertTrue(all(row["decisionRubric"] == FOCUS_ONLY_RUBRIC for row in result["reviewers"]))
+        self.assertTrue(all(row["dimensionRubric"] == FOCUS_PROFILES["orientation"] for row in result["reviewers"]))
+        self.assertTrue(all(row["evidenceRubric"] == EVIDENCE_RUBRICS["visual_only"] for row in result["reviewers"]))
         self.assertTrue(all(row["interfaceEmphasis"] == PROFILES["orientation"] for row in result["reviewers"]))
         self.assertTrue(all(row["reportedModel"] == "GPT-5.6 Sol" for row in result["reviewers"]))
         self.assertTrue(all(row["reportedReasoningEffort"] == "Extra High" for row in result["reviewers"]))

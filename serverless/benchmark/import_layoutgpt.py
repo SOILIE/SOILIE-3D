@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from urllib.request import urlopen
@@ -35,8 +36,12 @@ def normalize(layout, room_type, index, checksum):
         size = [float(box[key]) for key in ("length", "width", "height")]
         if min(size) <= 0:
             raise ValueError("Non-positive released object dimensions")
+        yaw = -float(box["orientation"])
+        angle = math.radians(yaw)
         objects.append({"id": f"object-{number:03d}", "label": label, "kind": "furniture",
-                        "corners": box_corners(center, size, -float(box["orientation"]))})
+                        "corners": box_corners(center, size, yaw),
+                        "frontDirection": [math.cos(angle), math.sin(angle)],
+                        "frontConvention": "released local +X orientation heading"})
     return {"schemaVersion": 1, "id": f"layoutgpt-{room_type}-{index:04d}", "model": "layoutgpt",
             "roomType": room_type, "units": "px", "stage": "released-final-layout", "objects": objects,
             "room": {"polygon": [[0,0],[width,0],[width,depth],[0,depth]], "floorZ": 0},

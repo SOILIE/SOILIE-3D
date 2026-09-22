@@ -6,8 +6,7 @@ from serverless.benchmark.cost import evidence, lambda_charge, monthly_lambda_bu
 
 RATES = {"computeUsdPerGbSecond":.0000166667, "storageUsdPerGbSecond":.000000034,
          "requestUsd":.0000002}
-CARD = {"lambda":RATES, "gpt4":{"model":"gpt-4", "source":"https://developers.openai.com/api/docs/models/gpt-4", "inputUsdPerMillion":30, "outputUsdPerMillion":60},
-        "gpt5nano":{"model":"gpt-5-nano", "source":"https://developers.openai.com/api/docs/models/gpt-5-nano", "inputUsdPerMillion":.05,"outputUsdPerMillion":.4}}
+CARD = {"lambda":RATES, "gpt4":{"model":"gpt-4", "source":"https://developers.openai.com/api/docs/models/gpt-4", "inputUsdPerMillion":30, "outputUsdPerMillion":60}}
 PROFILE = {"schemaVersion":1,"evidence":"reconstructed-official-prompt-token-estimate","model":"gpt-4",
            "configuration":"bedroom K=8","sourceRepository":"https://github.com/UCSB-AI/LayoutGPT",
            "sourceCommit":"fixture","sourceFile":"run_layoutgpt_3d.py","releasedLayouts":423,
@@ -80,7 +79,7 @@ class CostTests(unittest.TestCase):
         self.assertEqual(20,soilie["median"]["seconds"])
         self.assertAlmostEqual(.001339996,soilie["median"]["usd"])
         self.assertGreater(result["medianCostRatio"],87)
-        self.assertNotIn("gpt5nano",json.dumps(result))
+        self.assertEqual({"layoutgpt", "soilie", "scope", "medianCostRatio", "medianSavingPct"}, set(result))
 
     def test_layoutgpt_profile_is_strict_and_ordered(self):
         profile = deepcopy(PROFILE)

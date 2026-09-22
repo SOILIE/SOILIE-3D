@@ -16,19 +16,22 @@ PROFILES = {
     "support": "Pay particular attention to apparently floating or sunken objects; state uncertainty when boxes cannot establish support.",
     "clearance": "Pay particular attention to connected space for moving around the room.",
     "access": "Pay particular attention to whether furniture appears reachable and usable.",
-    "orientation": "Pay particular attention to the orientation of furniture toward nearby objects and room space.",
-    "proportions": "Pay particular attention to relative furniture and room proportions; do not assume an unprovided physical scale.",
+    "orientation": "Pay particular attention to the explicitly marked front direction of furniture relative to nearby objects and room space.",
+    "proportions": "Pay particular attention to relative oriented bounding-box volumes among the objects present; shape and aspect ratio are outside this question.",
     "relationships": "Pay particular attention to sensible relationships between the kinds of objects shown.",
     "room_function": "Pay particular attention to whether the arrangement serves its stated room type.",
     "overall": "Consider the arrangement as a whole, balancing visible spatial problems rather than one issue alone.",
 }
 FOCUS_PROFILES = {
     "orientation": (
-        "Compare the visible axes and facing directions of the objects shown relative to the room and to other shown objects. "
-        "When the box views do not reveal front versus back, judge axis alignment only and choose tie when no directional advantage is defensible."
+        "Each object has a cyan arrow marking its source-defined front direction. Compare whether those marked fronts "
+        "are oriented sensibly relative to walls, usable room space, and the other objects that are present. "
+        "For objects whose shape or function is rotationally symmetric, do not invent a preferred facing direction."
     ),
     "proportions": (
-        "Compare relative dimensions and aspect ratios among the objects shown. The two panels are fitted independently, so do not compare their absolute canvas or room scale."
+        "Compare which room has more believable relative oriented bounding-box volumes among the objects shown. "
+        "Judge the ratios of occupied box volume, not object shape or aspect ratio. The panels are fitted independently, "
+        "so absolute canvas size and absolute room scale are outside this question."
     ),
     "relationships": (
         "Compare the actual distances, grouping, and spatial relationships among the objects shown. Judge placement, not whether the inventory contains a conventional pairing."
@@ -55,7 +58,7 @@ FOCUS_ONLY_RUBRIC = (
     "Do not infer hidden geometry, method identity, absolute scale between independently fitted panels, or unavailable details. Do not consult other reviewers or numerical benchmark scores."
 )
 EVIDENCE_RUBRICS = {
-    "visual_only": (" Use only the method-blind plan, oblique, and 3D bird's-eye views. "
+    "visual_only": (" Use only the method-blind plan, oblique, and 3D bird's-eye views, including the explicit front-direction arrows. "
                     "Judge visible layout geometry; do not infer mesh detail or compare absolute scale between independently fitted panels."),
     "metrics_only": (" Use only the method-blind per-room measurements. Lower is better for intrusion, boundary, support-gap, and floor-penetration values. "
                      "Connected clearance is contextual rather than universally better. Treat unavailable as unknown, never as zero, and do not infer visual appearance."),

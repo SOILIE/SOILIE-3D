@@ -36,7 +36,7 @@ class SolidOverlapFixtures(unittest.TestCase):
         self.assertAlmostEqual(50, result["meanWorstOverlapPct"], places=5)
         self.assertAlmostEqual(4, result["overlapPairs"][0]["intersectionM3"], places=5)
 
-    def test_open_mesh_is_unavailable_instead_of_a_false_zero(self):
+    def test_open_mesh_with_disjoint_rendered_surfaces_is_zero(self):
         first, second = cube("open", (0, 0, 0)), cube("closed", (1, 0, 0))
         bm = bmesh.new()
         bm.from_mesh(first.data)
@@ -45,9 +45,49 @@ class SolidOverlapFixtures(unittest.TestCase):
         bm.to_mesh(first.data)
         bm.free()
         result = measure([("open", first), ("closed", second)])
+        # Removing the crossing face leaves two visually disjoint triangle
+        # surfaces even though a hypothetical filled cube would overlap.
+        self.assertTrue(result["complete"])
+        self.assertEqual(0, result["meanWorstOverlapPct"])
+        self.assertEqual(1, result["surfaceDisjointPairs"])
+
+    def test_disjoint_open_surfaces_resolve_to_zero(self):
+        def triangle(name, dz):
+            mesh = bpy.data.meshes.new(name + "-mesh")
+            # Parallel triangles have overlapping 3D bounds because z=x+dz,
+            # but their evaluated surfaces remain strictly disjoint.
+            mesh.from_pydata([(0,0,dz),(1,0,1+dz),(0,1,dz)], [], [(0,1,2)])
+            mesh.update()
+            obj = bpy.data.objects.new(name, mesh)
+            bpy.context.scene.collection.objects.link(obj)
+            return obj
+        result = measure([("a", triangle("a", 0)), ("b", triangle("b", .1))])
+        self.assertTrue(result["complete"])
+        self.assertEqual(0, result["meanWorstOverlapPct"])
+        self.assertEqual(1, result["surfaceDisjointPairs"])
+
+    def test_crossing_open_surfaces_remain_incomplete(self):
+        def triangle(name, points):
+            mesh = bpy.data.meshes.new(name + "-mesh")
+            mesh.from_pydata(points, [], [(0,1,2)])
+            mesh.update()
+            obj = bpy.data.objects.new(name, mesh)
+            bpy.context.scene.collection.objects.link(obj)
+            return obj
+        first = triangle("first", [(0,0,0),(1,0,1),(0,1,0)])
+        second = triangle("second", [(0,0,1),(1,0,0),(0,1,1)])
+        result = measure([("first", first), ("second", second)])
         self.assertFalse(result["complete"])
         self.assertIsNone(result["meanWorstOverlapPct"])
-        self.assertIn("non-manifold", result["unavailablePairs"][0]["reason"])
+        self.assertIn("intersecting triangle pair", result["unavailablePairs"][0]["reason"])
+
+    def test_one_part_per_million_penetration_is_numerical_contact(self):
+        first = cube("first", (0, 0, 0))
+        second = cube("second", (1.9999998, 0, 0))
+        result = measure([("first", first), ("second", second)])
+        self.assertTrue(result["complete"])
+        self.assertEqual(0, result["meanWorstOverlapPct"])
+        self.assertEqual(1, result["numericalContactPairs"])
 
 
 if __name__ == "__main__":

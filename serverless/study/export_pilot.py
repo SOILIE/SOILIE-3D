@@ -8,8 +8,10 @@ import math
 from pathlib import Path
 import random
 import re
+from copy import deepcopy
 
-from serverless.study.service import PROFILES, RUBRIC, FOCUS_ONLY_RUBRIC, prompt_text
+from serverless.study.service import (EVIDENCE_RUBRICS, FOCUS_PROFILES, FOCUS_ONLY_RUBRIC,
+                                      PROFILES, RUBRIC, prompt_text)
 from serverless.study.store import SQLiteStudyStore
 
 LABELS = {"layoutgpt":"LayoutGPT", "infinigen":"Infinigen Indoors"}
@@ -250,6 +252,9 @@ def aggregate(store, protocol):
                           "reportedModel":configuration.get("model", session["model"]),
                           "reportedReasoningEffort":configuration.get("reasoningEffort"),
                           "promptHash":session["promptHash"],"reviewPrompt":published_prompt,
+                          "decisionRubric":FOCUS_ONLY_RUBRIC if protocol.get("decisionScope") == "focus_only" else RUBRIC,
+                          "dimensionRubric":FOCUS_PROFILES.get(session["promptProfile"]),
+                          "evidenceRubric":EVIDENCE_RUBRICS[session.get("evidenceMode", "visual_only")],
                           "interfaceEmphasis":PROFILES[session["promptProfile"]],
                           "responses":len(main),"votes":dict(votes),
                           "complete":len(rows)==len(assignments),"repeatComparisons":len(controls),
@@ -268,8 +273,9 @@ def aggregate(store, protocol):
     limitations = ([
         "Two review contexts judge each visual dimension; their ratings are correlated within each frozen scene pair and are not independent scene samples.",
         "Review contexts may share an underlying model; separate context and prompt assignment do not establish independent model architectures or calibrated accuracy.",
-        "The matched cohort fixes room type, furniture count, bed count and density, and requires at least 40% normalized object-role agreement. Reviewers judge only present objects; inventory completeness is outside the task.",
-        "Bounding-box views preserve final placement, rotation and relative dimensions but omit mesh detail and independently fit each room to the canvas.",
+        "Each matched pair fixes room type, exact furniture-instance count and bedroom bed count. The methods' furniture densities may differ by no more than 0.25, where density is summed oriented furniture-footprint area divided by room floor area. At least 40% of duplicate-aware normalized object roles must agree. Reviewers judge only present objects; inventory completeness is outside the task.",
+        "Bounding-box views preserve final placement, rotation and dimensions but omit mesh detail and independently fit each room to the canvas.",
+        "The proportions question compares which room has more believable pairwise size relationships among its present objects, using within-room bounding-box volumes normalized to the smallest object. It does not assess shape, aspect ratio or physical-size ground truth.",
         "Reversed-side repeats assess response consistency, not correctness.",
     ] if focused else [
         "Multiple reviewers rate the same frozen pairs; rating counts are not counts of independent scene pairs.",
@@ -299,11 +305,33 @@ def aggregate(store, protocol):
             "interpretation":"Exploratory AI opinions and integration-test evidence only. Not human validation, independent model architectures, or a calibrated measure of accuracy. Repeated cases are excluded from preference totals."}
 
 
+def public_summary(result):
+    """Return the lightweight document consumed by the public result pages.
+
+    The complete export remains downloadable for audit. The browser only needs
+    aggregate results, reviewer prompts and provenance, so transferring every
+    per-case note and repeated stimulus reference would slow the Research page
+    without changing anything it renders.
+    """
+    compact = deepcopy(result)
+    responses = compact.pop("responses", [])
+    stimuli = compact.pop("stimuli", [])
+    evidence = compact.pop("stimulusEvidence", [])
+    compact["detailedEvidence"] = {
+        "responseRows": len(responses),
+        "stimulusPairs": len(stimuli),
+        "stimulusEvidenceRows": len(evidence),
+        "download": "ai-pilot-responses.json",
+    }
+    return compact
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--database",type=Path,required=True)
     parser.add_argument("--protocol",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
+    parser.add_argument("--compact-output",type=Path)
     parser.add_argument("--require-complete",action="store_true")
     args = parser.parse_args()
     protocol = json.loads(args.protocol.read_text())
@@ -314,6 +342,9 @@ def main():
         raise RuntimeError("All ten registered reviewers must complete the frozen task before final publication")
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(result,indent=2),encoding="utf-8")
+    if args.compact_output:
+        args.compact_output.parent.mkdir(parents=True,exist_ok=True)
+        args.compact_output.write_text(json.dumps(public_summary(result),indent=2),encoding="utf-8")
     print(json.dumps({"reviewersCompleted":result["reviewersCompleted"],"responses":len(result["responses"])}))
 
 

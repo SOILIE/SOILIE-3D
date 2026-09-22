@@ -1,10 +1,12 @@
-"""Exact solid-mesh overlap observations for completed Blender scenes.
+"""Evaluated-mesh overlap observations for completed Blender scenes.
 
-An object's evaluated triangle mesh can define a volume only when it is closed
-and manifold.  The observer therefore uses bounding boxes solely as a safe
-broad phase: disjoint boxes prove disjoint meshes, while intersecting boxes are
-resolved with Blender's exact Boolean solver only when both meshes are valid
-solids.  Invalid source topology is reported as unavailable, never as zero.
+World-space bounds are only a broad phase. Closed manifold meshes use Blender's
+exact Boolean solver so an occupied-volume percentage can be calculated. Some
+curated research assets are open or contain disconnected surfaces and therefore
+do not define a mathematical solid. For those assets, an exact triangle-surface
+test can still prove that the rendered geometry does not intersect. A pair is
+incomplete only when non-solid surfaces actually cross, because no defensible
+occupied-volume percentage exists in that case.
 """
 from itertools import combinations
 import math
@@ -12,10 +14,16 @@ import math
 import bmesh
 import bpy
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 
-METHOD = "evaluated-solid-mesh-boolean-v1"
+METHOD = "evaluated-mesh-intersection-v2"
 EPSILON_M3 = 1e-10
+# The published validity tests already treat one part per million as numerical
+# contact. Apply the same scale-free threshold before an asset-topology branch
+# so a supported object resting microscopically inside a surface is not called
+# a physical collision merely because floating-point transforms share triangles.
+NUMERICAL_CONTACT_FRACTION = 1e-6
 
 
 def _bounds(obj):
@@ -30,6 +38,17 @@ def _boxes_overlap(first, second):
     second_low, second_high = _bounds(second)
     return all(min(first_high[axis], second_high[axis]) > max(first_low[axis], second_low[axis])
                for axis in range(3))
+
+
+def _box_overlap_fractions(first, second):
+    first_low, first_high = _bounds(first)
+    second_low, second_high = _bounds(second)
+    extents = [max(0.0, min(first_high[axis], second_high[axis])
+                   - max(first_low[axis], second_low[axis])) for axis in range(3)]
+    intersection = math.prod(extents)
+    volumes = [math.prod(high[axis]-low[axis] for axis in range(3))
+               for low, high in ((first_low, first_high), (second_low, second_high))]
+    return [intersection/volume if volume > EPSILON_M3 else math.inf for volume in volumes]
 
 
 def _world_mesh(obj):
@@ -60,6 +79,26 @@ def _solid_volume(mesh):
         return volume, None
     finally:
         bm.free()
+
+
+def _surface_intersections(first, second):
+    """Return intersecting triangle pairs for evaluated world-space meshes.
+
+    BVHTree performs a triangle-level overlap test. It does not require closed
+    topology, so a zero result proves that the actual rendered surfaces are
+    disjoint even when either mesh cannot supply an enclosed volume.
+    """
+    def tree(mesh):
+        vertices = [vertex.co.copy() for vertex in mesh.vertices]
+        polygons = [tuple(polygon.vertices) for polygon in mesh.polygons]
+        if not vertices or not polygons:
+            return None
+        return BVHTree.FromPolygons(vertices, polygons, all_triangles=False, epsilon=0.0)
+
+    first_tree, second_tree = tree(first), tree(second)
+    if first_tree is None or second_tree is None:
+        return None
+    return first_tree.overlap(second_tree)
 
 
 def _boolean_intersection_volume(first, second):
@@ -103,12 +142,18 @@ def measure(objects):
     worst = {identifier: 0.0 for identifier, _ in rows}
     overlaps, unavailable = [], []
     broad_phase_zeros = 0
+    numerical_contact_pairs = 0
+    boolean_pairs = 0
+    surface_disjoint_pairs = 0
     meshes = {}
     volumes = {}
     try:
         for (first_id, first_obj), (second_id, second_obj) in combinations(rows, 2):
             if not _boxes_overlap(first_obj, second_obj):
                 broad_phase_zeros += 1
+                continue
+            if max(_box_overlap_fractions(first_obj, second_obj)) <= NUMERICAL_CONTACT_FRACTION:
+                numerical_contact_pairs += 1
                 continue
             pair = {"a": first_id, "b": second_id}
             for identifier, obj in ((first_id, first_obj), (second_id, second_obj)):
@@ -118,12 +163,19 @@ def measure(objects):
             reasons = [f"{identifier}: {volumes[identifier][1]}" for identifier in (first_id, second_id)
                        if volumes[identifier][0] is None]
             if reasons:
-                unavailable.append({**pair, "reason": "; ".join(reasons)})
+                intersections = _surface_intersections(meshes[first_id], meshes[second_id])
+                if intersections == []:
+                    surface_disjoint_pairs += 1
+                    continue
+                suffix = ("; triangle-surface test could not be constructed" if intersections is None
+                          else f"; {len(intersections)} intersecting triangle pair(s)")
+                unavailable.append({**pair, "reason": "; ".join(reasons) + suffix})
                 continue
             intersection, reason = _boolean_intersection_volume(meshes[first_id], meshes[second_id])
             if intersection is None:
                 unavailable.append({**pair, "reason": reason})
                 continue
+            boolean_pairs += 1
             ratios = [max(0.0, min(1.0, intersection / volumes[identifier][0]))
                       for identifier in (first_id, second_id)]
             worst[first_id] = max(worst[first_id], ratios[0])
@@ -142,7 +194,9 @@ def measure(objects):
         "objectCount": len(rows),
         "pairCount": pair_count,
         "broadPhaseDisjointPairs": broad_phase_zeros,
-        "booleanPairs": pair_count - broad_phase_zeros - len(unavailable),
+        "numericalContactPairs": numerical_contact_pairs,
+        "booleanPairs": boolean_pairs,
+        "surfaceDisjointPairs": surface_disjoint_pairs,
         "complete": complete,
         "meanWorstOverlapPct": (sum(worst.values()) / len(worst) * 100) if complete and worst else None,
         "maxOverlapPct": (max(worst.values()) * 100) if complete and worst else None,
@@ -151,7 +205,8 @@ def measure(objects):
         "overlapPairs": overlaps,
         "unavailablePairs": unavailable,
         "interpretation": (
-            "Disjoint world-space bounds prove that the enclosed meshes are disjoint. "
-            "Pairs whose bounds intersect require closed manifold meshes and Blender's exact Boolean solver."
+            "Disjoint world-space bounds prove zero intersection. Intersecting bounds use Blender's exact "
+            "Boolean solver for closed solids. Non-solid assets use an exact triangle-surface test to prove "
+            "zero rendered-geometry intersection; crossing open surfaces remain incomplete."
         ),
     }

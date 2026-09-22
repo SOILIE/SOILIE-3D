@@ -32,6 +32,16 @@ def corners(obj):
     return [[float(c) for c in obj.matrix_world @ Vector(vertex)] for vertex in obj.bound_box]
 
 
+def front_direction(obj):
+    """Return the V4-corrected local +X axis as a horizontal unit vector."""
+    direction = obj.matrix_world.to_3x3() @ Vector((1, 0, 0))
+    horizontal = Vector((direction.x, direction.y))
+    if horizontal.length <= 1e-9:
+        raise RuntimeError(f"Object {obj.name} has no horizontal front direction")
+    horizontal.normalize()
+    return [float(horizontal.x), float(horizontal.y)]
+
+
 def support_samples(obj, others, floor_z):
     """Observe support using real mesh feet as well as sparse lower-surface rays."""
     from serverless.benchmark.mesh_support import sample_support
@@ -67,7 +77,9 @@ def snapshot(inputs, stage, measure_support=False, measure_solids=False):
         row = {"id": identifier, "assemblyId": identifier, "label": label,
                "kind": "architecture" if label in ARCHITECTURE else "furniture",
                "asset": data.get("asset_name"), "corners": corners(obj),
-               "transform": [list(row) for row in obj.matrix_world]}
+               "transform": [list(row) for row in obj.matrix_world],
+               "frontDirection": front_direction(obj),
+               "frontConvention": "V4 asset-corrected local +X"}
         if measure_support and label not in WALL_MOUNTED:
             support = support_samples(obj, meshes, floor_z)
             if support:
