@@ -261,9 +261,14 @@ def select_pairs(rows, seed=SEED, limit=12, previous_protocols=(),
 
 
 def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=(),
-           minimum_semantic_similarity=MIN_SEMANTIC_SIMILARITY, evidence_mode="visual_only"):
+           minimum_semantic_similarity=MIN_SEMANTIC_SIMILARITY, evidence_mode="visual_only",
+           decision_scope="overall", reviewer_plan=None, reviewer_model=None, reasoning_effort=None):
     if evidence_mode not in {"visual_only", "metrics_only", "combined"}:
         raise ValueError("Unknown evidence mode")
+    if decision_scope not in {"overall", "focus_only"}:
+        raise ValueError("Unknown decision scope")
+    if decision_scope == "focus_only" and evidence_mode != "visual_only":
+        raise ValueError("Focused dimension reviews must remain visual-only")
     cases, evidence = [], []
     output.mkdir(parents=True,exist_ok=True)
     for baseline,key,a,b in select_pairs(rows,seed,limit,previous_protocols,minimum_semantic_similarity):
@@ -291,8 +296,13 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                          "normalizedObjectFamilies":{"soilie":sorted(semantic_signature(a).elements()),
                                                      baseline:sorted(semantic_signature(b).elements())},
                          "soilieDigest":digest(a),"baselineDigest":digest(b)})
-    document = {"schemaVersion":2,"studyVersion":"spatial-evidence-"+digest({"cases":cases,"seed":seed,"mode":evidence_mode})[:20],
-                "evidenceMode":evidence_mode,
+    reviewer_plan = list(reviewer_plan or [])
+    reviewer_configuration = ({"model":reviewer_model,"reasoningEffort":reasoning_effort}
+                              if reviewer_model and reasoning_effort else None)
+    document = {"schemaVersion":2,"studyVersion":"spatial-evidence-"+digest({"cases":cases,"seed":seed,"mode":evidence_mode,
+                                                                              "decisionScope":decision_scope,"reviewerPlan":reviewer_plan,
+                                                                              "reviewerConfiguration":reviewer_configuration})[:20],
+                "evidenceMode":evidence_mode,"decisionScope":decision_scope,
                 "humanEnrollmentEnabled":False,"pilotCollectionEnabled":bool(cases),"cases":cases,
                 "sampling":{"seed":seed,"maximumPairsPerBaseline":limit,"withoutReplacementWithinBaseline":True,
                             "qualityScoresUsed":False,
@@ -305,6 +315,10 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                             "visualEvidence":"Method-blind final oriented boxes shown as plan, oblique, and high-angle bird’s-eye views. Each room is independently fitted to the same canvas; absolute cross-panel scale is not implied.",
                             "numericEvidence":"Only per-room measurements available for both rooms in a pair are shown. Unavailable values are omitted rather than displayed as zero or used as evidence for either side."},
                 "stimulusEvidence":evidence}
+    if reviewer_plan:
+        document["reviewerPlan"] = reviewer_plan
+    if reviewer_configuration:
+        document["reviewerConfiguration"] = reviewer_configuration
     if previous_protocols:
         document['sampling']['excludedPriorStudyVersions'] = sorted(protocol['studyVersion'] for protocol in previous_protocols)
         document['sampling']['noSceneReuseAcrossWavesWithinBaseline'] = True
@@ -325,11 +339,17 @@ def main():
     parser.add_argument("--limit",type=int,default=12)
     parser.add_argument("--minimum-semantic-similarity",type=float,default=MIN_SEMANTIC_SIMILARITY)
     parser.add_argument("--evidence-mode",choices=("visual_only","metrics_only","combined"),default="visual_only")
+    parser.add_argument("--decision-scope",choices=("overall","focus_only"),default="overall")
+    parser.add_argument("--reviewer-plan",nargs="*",default=[])
+    parser.add_argument("--reviewer-model")
+    parser.add_argument("--reasoning-effort")
     parser.add_argument("--exclude-protocol",type=Path,nargs="*",default=[])
     args = parser.parse_args()
     result = freeze(json.loads(args.measurements.read_text())["rows"],args.output,args.protocol,
                     limit=args.limit,previous_protocols=[json.loads(path.read_text()) for path in args.exclude_protocol],
-                    minimum_semantic_similarity=args.minimum_semantic_similarity,evidence_mode=args.evidence_mode)
+                    minimum_semantic_similarity=args.minimum_semantic_similarity,evidence_mode=args.evidence_mode,
+                    decision_scope=args.decision_scope,reviewer_plan=args.reviewer_plan,
+                    reviewer_model=args.reviewer_model,reasoning_effort=args.reasoning_effort)
     print(json.dumps({"studyVersion":result["studyVersion"],"cases":len(result["cases"])}))
 
 

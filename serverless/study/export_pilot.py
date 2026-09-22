@@ -2,13 +2,14 @@
 import argparse
 from collections import Counter
 import hashlib
+import hmac
 import json
 import math
 from pathlib import Path
 import random
 import re
 
-from serverless.study.service import PROFILES, RUBRIC
+from serverless.study.service import PROFILES, RUBRIC, FOCUS_ONLY_RUBRIC, prompt_text
 from serverless.study.store import SQLiteStudyStore
 
 LABELS = {"layoutgpt":"LayoutGPT", "infinigen":"Infinigen Indoors"}
@@ -189,6 +190,32 @@ def condition_result(condition, protocol, responses):
             "metricAlignment":_metric_alignment(protocol, grouped, condition)}
 
 
+def focused_dimension_results(protocol, responses, reviewers):
+    """Keep visual dimensions separate instead of inventing one composite rank."""
+    if protocol.get("decisionScope") != "focus_only":
+        return []
+    results = []
+    ordered_profiles = list(dict.fromkeys(protocol.get("reviewerPlan", [])))
+    baseline = next(iter(sorted({case["comparisonCondition"] for case in protocol["cases"]})))
+    case_ids = {case["id"] for case in protocol["cases"] if case["comparisonCondition"] == baseline}
+    for profile in ordered_profiles:
+        rows = [row for row in responses if row["promptProfile"] == profile
+                and row["repeatOf"] is None and row["caseId"] in case_ids]
+        grouped = [[row for row in rows if row["caseId"] == case_id] for case_id in sorted(case_ids)]
+        votes = Counter(preference(row) for row in rows)
+        majorities = Counter(_majority(Counter(preference(row) for row in group), baseline)
+                             for group in grouped)
+        results.append({"id":profile,"label":PROFILES[profile],
+                        "reviewers":sum(row["profile"] == profile for row in reviewers),
+                        "pairs":len(case_ids),"responses":len(rows),
+                        "soilie":votes["soilie"],"tie":votes["tie"],"baseline":votes[baseline],
+                        "soilieDecisivePreferencePct":_decisive_share(rows),
+                        "pairClustered95PctInterval":_cluster_bootstrap(grouped),
+                        "pairMajorities":{"soilie":majorities["soilie"],"tie":majorities["tie"],
+                                          "baseline":majorities[baseline]}})
+    return results
+
+
 def aggregate(store, protocol):
     responses, reviewers = [], []
     seen = set()
@@ -215,32 +242,60 @@ def aggregate(store, protocol):
         by_case = {row["caseId"]:row for row in rows}
         controls = [row for row in rows if row["repeatOf"] in by_case]
         votes = Counter(preference(row) for row in main)
+        published_prompt = prompt_text(protocol, session["promptProfile"])
+        if not hmac.compare_digest(session["promptHash"], hashlib.sha256(published_prompt.encode()).hexdigest()):
+            raise ValueError("Published reviewer prompt differs from the immutable session prompt")
+        configuration = protocol.get("reviewerConfiguration") or {}
         reviewers.append({"reviewerId":reviewer,"profile":session["promptProfile"],"model":session["model"],
-                          "promptHash":session["promptHash"],"responses":len(main),"votes":dict(votes),
+                          "reportedModel":configuration.get("model", session["model"]),
+                          "reportedReasoningEffort":configuration.get("reasoningEffort"),
+                          "promptHash":session["promptHash"],"reviewPrompt":published_prompt,
+                          "interfaceEmphasis":PROFILES[session["promptProfile"]],
+                          "responses":len(main),"votes":dict(votes),
                           "complete":len(rows)==len(assignments),"repeatComparisons":len(controls),
                           "agreements":sum(preference(row)==preference(by_case[row["repeatOf"]]) for row in controls)})
         responses.extend(rows)
-    conditions = [condition_result(condition, protocol, responses)
-                  for condition in sorted({case["comparisonCondition"] for case in protocol["cases"]})]
+    focused = protocol.get("decisionScope") == "focus_only"
+    # A vote made under an orientation-only instruction is not commensurate
+    # with one made under a proportions-only instruction. Never collapse the
+    # focused study into the legacy overall-preference total.
+    conditions = [] if focused else [condition_result(condition, protocol, responses)
+                                     for condition in sorted({case["comparisonCondition"] for case in protocol["cases"]})]
     safe_keys = {"caseId","judgement","errorChoice","confidence","note","respondentType","reviewerId","promptProfile","evidenceMode",
                  "model","promptHash","studyVersion","leftCondition","rightCondition","comparisonCondition","repeatOf"}
     safe_rows = [{key:row[key] for key in sorted(safe_keys) if key in row} for row in responses]
+    reviewer_plan = protocol.get("reviewerPlan") or list(PROFILES)
+    limitations = ([
+        "Two review contexts judge each visual dimension; their ratings are correlated within each frozen scene pair and are not independent scene samples.",
+        "Review contexts may share an underlying model; separate context and prompt assignment do not establish independent model architectures or calibrated accuracy.",
+        "The matched cohort fixes room type, furniture count, bed count and density, and requires at least 40% normalized object-role agreement. Reviewers judge only present objects; inventory completeness is outside the task.",
+        "Bounding-box views preserve final placement, rotation and relative dimensions but omit mesh detail and independently fit each room to the canvas.",
+        "Reversed-side repeats assess response consistency, not correctness.",
+    ] if focused else [
+        "Multiple reviewers rate the same frozen pairs; rating counts are not counts of independent scene pairs.",
+        "Reviewers may share an underlying model; prompt variation is not evidence of calibrated accuracy.",
+        "The matched cohort fixes room type, furniture count, bed count and density, but only requires 40% normalized object-role agreement; high-match results are therefore reported separately.",
+        "Bounding-box views omit mesh detail and can have overlapping labels in crowded arrangements.",
+        "Reversed-side repeats assess response consistency, not correctness.",
+    ])
     return {"schemaVersion":1,"studyVersion":protocol["studyVersion"],"respondentType":"ai_pilot",
-            "humanParticipants":0,"reviewersPlanned":10,
+            "humanParticipants":0,"reviewersPlanned":len(reviewer_plan),
             "reviewersCompleted":sum(row["complete"] for row in reviewers),"conditions":conditions,
+            "decisionScope":protocol.get("decisionScope", "overall"),
+            "aggregateAcrossDimensions":not focused,
+            "dimensionResults":focused_dimension_results(protocol, responses, reviewers),
             "reviewers":sorted(reviewers,key=lambda row:row["reviewerId"]),"responses":safe_rows,
-            "rubric":RUBRIC,"promptProfiles":PROFILES,"sampling":protocol.get("sampling"),
+            "rubric":FOCUS_ONLY_RUBRIC if protocol.get("decisionScope") == "focus_only" else RUBRIC,
+            "promptProfiles":{profile:PROFILES[profile] for profile in dict.fromkeys(reviewer_plan)},
+            "reviewerConfiguration":protocol.get("reviewerConfiguration"),
+            "sampling":protocol.get("sampling"),
             "evidenceMode":protocol.get("evidenceMode", "visual_only"),
             "stimulusEvidence":protocol.get("stimulusEvidence",[]),
             "stimuli":[{"caseId":case["id"],"soilieImage":case["relationImage"],
                         "baselineImage":case["comparisonImage"],"baseline":case["comparisonCondition"]}
                        for case in protocol["cases"]],
             "stimulusVersionDigest":hashlib.sha256(json.dumps(protocol,sort_keys=True).encode()).hexdigest(),
-            "limitations":["Multiple reviewers rate the same frozen pairs; rating counts are not counts of independent scene pairs.",
-                           "Reviewers may share an underlying model; prompt variation is not evidence of calibrated accuracy.",
-                           "The matched cohort fixes room type, furniture count, bed count and density, but only requires 40% normalized object-role agreement; high-match results are therefore reported separately.",
-                           "Bounding-box views omit mesh detail and can have overlapping labels in crowded arrangements.",
-                           "Reversed-side repeats assess response consistency, not correctness."],
+            "limitations":limitations,
             "interpretation":"Exploratory AI opinions and integration-test evidence only. Not human validation, independent model architectures, or a calibrated measure of accuracy. Repeated cases are excluded from preference totals."}
 
 
@@ -251,8 +306,11 @@ def main():
     parser.add_argument("--output",type=Path,required=True)
     parser.add_argument("--require-complete",action="store_true")
     args = parser.parse_args()
-    result = aggregate(SQLiteStudyStore(args.database),json.loads(args.protocol.read_text()))
-    if args.require_complete and (result["reviewersCompleted"] != 10 or {row["profile"] for row in result["reviewers"]} != set(PROFILES)):
+    protocol = json.loads(args.protocol.read_text())
+    result = aggregate(SQLiteStudyStore(args.database),protocol)
+    expected_plan = protocol.get("reviewerPlan") or list(PROFILES)
+    if args.require_complete and (result["reviewersCompleted"] != len(expected_plan)
+                                  or Counter(row["profile"] for row in result["reviewers"]) != Counter(expected_plan)):
         raise RuntimeError("All ten registered reviewers must complete the frozen task before final publication")
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(result,indent=2),encoding="utf-8")

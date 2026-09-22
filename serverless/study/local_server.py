@@ -29,9 +29,10 @@ def main():
     service = StudyService(document,SQLiteStudyStore(args.state/"pilot.sqlite3"),secret_path.read_bytes(),enabled=True)
     invitations = args.state/"invitations.json"
     if not invitations.exists():
+        plan = document.get("reviewerPlan") or list(PROFILES)
         invitations.write_text(json.dumps([{ "reviewerId":f"reviewer-{i+1:02d}", "profile":profile,
             "invitation":service.invite(f"reviewer-{i+1:02d}",profile,"Codex session default (provider model ID not exposed)")}
-            for i,profile in enumerate(PROFILES)]),encoding="utf-8")
+            for i,profile in enumerate(plan)]),encoding="utf-8")
     # Hand each independent reviewer only their own invitation, never the roster.
     for invitation in json.loads(invitations.read_text()):
         destination = args.state/(invitation["reviewerId"]+".json")

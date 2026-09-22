@@ -4,6 +4,7 @@ import unittest
 from serverless.benchmark.geometry import box_corners, measure
 from serverless.benchmark.stimuli import diagram, review_metrics, select_pairs, semantic_signature, semantic_similarity, symmetric_review_metrics
 from serverless.study.export_pilot import aggregate, condition_result
+from serverless.study.service import PROFILES
 from serverless.tests import test_study_service as study_tests
 
 
@@ -198,6 +199,35 @@ class ExportTests(unittest.TestCase):
         self.assertNotIn("sessionToken",str(result))
         self.assertNotIn("recordedAt",str(result))
         self.assertTrue(all(row["respondentType"]=="ai_pilot" for row in result["responses"]))
+
+    def test_focused_export_keeps_dimensions_separate(self):
+        from serverless.tests.test_study_service import protocol
+        document = protocol()
+        document.update({"studyVersion":"focused-export","decisionScope":"focus_only",
+                         "evidenceMode":"visual_only","reviewerPlan":["orientation","orientation"],
+                         "reviewerConfiguration":{"model":"GPT-5.6 Sol","reasoningEffort":"Extra High"}})
+        document["cases"] = [dict(row,comparisonCondition="layoutgpt") for row in document["cases"]]
+        service = study_tests.StudyService(document,self.store,b"focused-secret",True,clock=lambda:1000)
+        for index in range(2):
+            invitation = service.invite(f"focused-{index}","orientation","test-model")
+            session = service.start({"invitation":invitation})
+            for case in session["cases"]:
+                service.respond(session["sessionId"],{"sessionToken":session["sessionToken"],"caseId":case["caseId"],
+                    "judgement":"left","errorChoice":"right","confidence":3,"note":"Facing direction only."})
+        result = aggregate(self.store,document)
+        self.assertEqual("focus_only",result["decisionScope"])
+        self.assertFalse(result["aggregateAcrossDimensions"])
+        self.assertEqual([],result["conditions"])
+        self.assertEqual(1,len(result["dimensionResults"]))
+        orientation = result["dimensionResults"][0]
+        self.assertEqual((2,12,24),(orientation["reviewers"],orientation["pairs"],orientation["responses"]))
+        self.assertEqual(2,len(result["reviewers"]))
+        self.assertTrue(all("Judge only the assigned dimension" in row["reviewPrompt"] for row in result["reviewers"]))
+        self.assertTrue(all("object sets are fixed experimental inputs" in row["reviewPrompt"] for row in result["reviewers"]))
+        self.assertTrue(all("conventional counterpart is not a defect" in row["reviewPrompt"] for row in result["reviewers"]))
+        self.assertTrue(all(row["interfaceEmphasis"] == PROFILES["orientation"] for row in result["reviewers"]))
+        self.assertTrue(all(row["reportedModel"] == "GPT-5.6 Sol" for row in result["reviewers"]))
+        self.assertTrue(all(row["reportedReasoningEffort"] == "Extra High" for row in result["reviewers"]))
 
 
 if __name__ == "__main__":

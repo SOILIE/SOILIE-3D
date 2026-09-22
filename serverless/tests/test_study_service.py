@@ -123,6 +123,22 @@ class StudyServiceTests(unittest.TestCase):
         self.assertEqual({"caseId","title","leftMetrics","rightMetrics"},set(session["cases"][0]))
         self.assertNotIn("leftImage",session["cases"][0])
 
+    def test_focus_only_session_uses_dimension_specific_visual_decision(self):
+        document = protocol()
+        document.update({"studyVersion":"focused-v1","evidenceMode":"visual_only",
+                         "decisionScope":"focus_only","reviewerPlan":["orientation","orientation"]})
+        service = StudyService(document,self.store,b"test-secret",True,clock=lambda:1000)
+        session = service.start({"invitation":service.invite("reviewer-focused","orientation","test-model")})
+        self.assertEqual("focus_only",session["decisionScope"])
+        self.assertEqual("Which arrangement is better on the assigned dimension?",session["decisionQuestion"])
+        self.assertIn("Judge only the assigned dimension",session["rubric"])
+        self.assertIn("object sets are fixed experimental inputs",session["rubric"])
+        self.assertIn("An object having no conventional counterpart is not a defect",session["rubric"])
+        self.assertIn("visible axes and facing directions",session["rubric"])
+        self.assertNotIn("leftMetrics",session["cases"][0])
+        with self.assertRaises(ValueError):
+            service.invite("wrong-profile","overlap","test-model")
+
 
 if __name__ == "__main__":
     unittest.main()

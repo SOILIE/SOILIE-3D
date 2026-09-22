@@ -22,10 +22,38 @@ PROFILES = {
     "room_function": "Pay particular attention to whether the arrangement serves its stated room type.",
     "overall": "Consider the arrangement as a whole, balancing visible spatial problems rather than one issue alone.",
 }
+FOCUS_PROFILES = {
+    "orientation": (
+        "Compare the visible axes and facing directions of the objects shown relative to the room and to other shown objects. "
+        "When the box views do not reveal front versus back, judge axis alignment only and choose tie when no directional advantage is defensible."
+    ),
+    "proportions": (
+        "Compare relative dimensions and aspect ratios among the objects shown. The two panels are fitted independently, so do not compare their absolute canvas or room scale."
+    ),
+    "relationships": (
+        "Compare the actual distances, grouping, and spatial relationships among the objects shown. Judge placement, not whether the inventory contains a conventional pairing."
+    ),
+    "access": (
+        "Compare visible approach space, circulation, and whether the objects shown appear reachable and usable from the available floor area."
+    ),
+    "room_function": (
+        "Given exactly the inventory shown, compare whether its placement organizes those objects into coherent usable zones for the stated room type. "
+        "Do not reward a broader or more conventional inventory."
+    ),
+}
 RUBRIC = ("Choose the more plausible indoor arrangement from the evidence provided, or tie if there is no defensible preference. "
           "Use the same overall plausibility criterion regardless of your inspection emphasis. "
           "Mark which side has obvious spatial problems, give confidence 1 (very uncertain) to 5 (very confident), and a short evidence-based rationale. "
           "Do not infer hidden geometry, method identity, or unavailable details. Do not consult other reviewers or numerical benchmark scores.")
+FOCUS_ONLY_RUBRIC = (
+    "Judge only the assigned dimension. Choose the side that is better on that dimension, or tie when neither side has a defensible advantage. "
+    "Do not let overlap, boundary containment, or another unassigned quality determine the choice unless it makes the assigned dimension impossible to inspect. "
+    "The object sets are fixed experimental inputs and may differ. Judge only how the objects that are present are arranged. "
+    "Do not reward or penalize inventory composition, the presence of a useful object category, conventional pairings, or breadth of function. "
+    "An object having no conventional counterpart is not a defect; never infer that either method should have generated another object. "
+    "Give confidence from 1 (very uncertain) to 5 (very confident) and explain only the visible evidence relevant to the assigned dimension. "
+    "Do not infer hidden geometry, method identity, absolute scale between independently fitted panels, or unavailable details. Do not consult other reviewers or numerical benchmark scores."
+)
 EVIDENCE_RUBRICS = {
     "visual_only": (" Use only the method-blind plan, oblique, and 3D bird's-eye views. "
                     "Judge visible layout geometry; do not infer mesh detail or compare absolute scale between independently fitted panels."),
@@ -36,11 +64,23 @@ EVIDENCE_RUBRICS = {
 }
 
 
-def review_instructions(document):
+def review_instructions(document, profile=None):
     mode = document.get("evidenceMode", "visual_only")
     if mode not in EVIDENCE_RUBRICS:
         raise ValueError("Unknown study evidence mode")
+    if document.get("decisionScope", "overall") == "focus_only":
+        if mode != "visual_only":
+            raise ValueError("Focused dimension reviews must remain visual-only")
+        if profile not in FOCUS_PROFILES:
+            raise ValueError("A registered review dimension is required")
+        return FOCUS_ONLY_RUBRIC + " Assigned dimension: " + FOCUS_PROFILES[profile] + EVIDENCE_RUBRICS[mode]
     return RUBRIC + EVIDENCE_RUBRICS[mode]
+
+
+def prompt_text(document, profile):
+    """Return every instruction pinned by the immutable prompt hash."""
+    instructions = review_instructions(document, profile)
+    return instructions if document.get("decisionScope", "overall") == "focus_only" else instructions + "\n" + PROFILES[profile]
 
 
 class StudyError(Exception):
@@ -62,7 +102,8 @@ class StudyService:
         return hmac.new(self.secret, value.encode(), hashlib.sha256).hexdigest()
 
     def invite(self, reviewer_id, profile, model, lifetime=86400):
-        if profile not in PROFILES or not reviewer_id or not model:
+        allowed_profiles = set(self.document.get("reviewerPlan") or PROFILES)
+        if profile not in PROFILES or profile not in allowed_profiles or not reviewer_id or not model:
             raise ValueError("Reviewer ID, known profile and actual model provenance are required")
         claims = {"reviewerId": reviewer_id, "promptProfile": profile, "model": model,
                   "studyVersion": self.document["studyVersion"], "expiresAt": int(self.clock())+lifetime}
@@ -120,7 +161,8 @@ class StudyService:
             session = {"sessionId": session_id, "respondentType": "ai_pilot", **claims,
                        "evidenceMode": self.document.get("evidenceMode", "visual_only"),
                        "expiresAt": int(self.clock())+7*86400, "createdAt": int(self.clock()),
-                       "promptHash": hashlib.sha256((review_instructions(self.document)+PROFILES[claims["promptProfile"]]).encode()).hexdigest(),
+                       "decisionScope":self.document.get("decisionScope", "overall"),
+                       "promptHash": hashlib.sha256(prompt_text(self.document, claims["promptProfile"]).encode()).hexdigest(),
                        "assignments": assignments}
             self.store.create(session_id, session)
             session = self.store.get(session_id)
@@ -129,8 +171,10 @@ class StudyService:
     def public_session(self, session):
         # An assignment can outlive a deployment. Never silently change the
         # instructions under which an existing reviewer is completing it.
-        instructions = RUBRIC + EVIDENCE_RUBRICS[session.get("evidenceMode", "visual_only")]
-        prompt_hash = hashlib.sha256((instructions+PROFILES[session["promptProfile"]]).encode()).hexdigest()
+        pinned_document = {"evidenceMode":session.get("evidenceMode", "visual_only"),
+                           "decisionScope":session.get("decisionScope", "overall")}
+        instructions = review_instructions(pinned_document, session["promptProfile"])
+        prompt_hash = hashlib.sha256(prompt_text(pinned_document, session["promptProfile"]).encode()).hexdigest()
         if not hmac.compare_digest(session["promptHash"], prompt_hash):
             raise StudyError(409, "STUDY_PROTOCOL_CHANGED", "This session's original review instructions are no longer available. Contact the study organizer.")
         mode = session.get("evidenceMode", "visual_only")
@@ -140,7 +184,12 @@ class StudyService:
         if mode in {"metrics_only", "combined"}:
             public_fields.extend(("leftMetrics", "rightMetrics"))
         return {"sessionId": session["sessionId"], "studyVersion": session["studyVersion"], "respondentType": "ai_pilot",
-                "evidenceMode":mode, "rubric": instructions, "emphasis": PROFILES[session["promptProfile"]],
+                "evidenceMode":mode,"decisionScope":session.get("decisionScope", "overall"),
+                "rubric": instructions, "emphasis": PROFILES[session["promptProfile"]],
+                "decisionQuestion":("Which arrangement is better on the assigned dimension?"
+                                    if session.get("decisionScope") == "focus_only" else "Which arrangement looks more spatially plausible?"),
+                "problemQuestion":("Which side has the clearer problem on the assigned dimension?"
+                                   if session.get("decisionScope") == "focus_only" else "Which side has obvious spatial problems?"),
                 "cases": [{key: case[key] for key in public_fields} for case in session["assignments"]],
                 "completedCaseIds": [row["caseId"] for row in self.store.responses(session["sessionId"])]}
 
