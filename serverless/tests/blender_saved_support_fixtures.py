@@ -63,6 +63,25 @@ class SavedSupportFixtures(unittest.TestCase):
         self.assert_restored_vertices(('chair','speaker','cupboard'),
                                      ('chair_0002.obj','speaker_0007.obj','cupboard_0001.obj'), 1.27)
 
+    def test_thin_window_uses_known_baked_scale_not_noisy_inverse_axis(self):
+        clear_scene()
+        row = {'id':'window', 'label':'window', 'asset':'window_0003',
+               'transform':[[-1.0352832078933716,9.05073349599661e-08,0,5.489639759063721],
+                            [-9.05073349599661e-08,-1.0352832078933716,0,.16997385025024414],
+                            [0,0,1.0352832078933716,1.2999999523162842],[0,0,0,1]],
+               'corners':[[5.496531009674072,.4860322177410126,.7716159820556641],
+                          [5.496531009674072,.4860322177410126,1.806899070739746],
+                          [5.496531009674072,-.14597684144973755,1.806899070739746],
+                          [5.496531009674072,-.14597684144973755,.7716159820556641],
+                          [5.47707462310791,.4860322177410126,.7716159820556641],
+                          [5.47707462310791,.4860322177410126,1.806899070739746],
+                          [5.477075099945068,-.14597684144973755,1.806899070739746],
+                          [5.477075099945068,-.14597684144973755,.7716159820556641]]}
+        obj = restore_object(row, render.load_rotations())
+        actual = [obj.matrix_world@Vector(v) for v in obj.bound_box]
+        self.assertLess(max(min((a-Vector(b)).length for b in row['corners']) for a in actual), 1e-6)
+        clear_scene()
+
 
 if __name__ == '__main__':
     if not unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(SavedSupportFixtures)).wasSuccessful():

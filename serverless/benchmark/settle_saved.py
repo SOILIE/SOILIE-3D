@@ -98,10 +98,20 @@ asset orientation fails the parity check rather than approximating the mesh.
     # Inverting a float32 world matrix introduces small errors in recovered
     # bounds. Preserve original vertices when those bounds identify the source
     # mesh's known baked scale; do not perturb flat feet to fit noisy corners.
+    # A thin axis magnifies inverse-matrix roundoff: averaging its recovered
+    # scale with the long axes perturbed a saved window by 14 micrometres.
+    # V4 has only these two baked scales. Test them in WORLD space directly,
+    # against the same strict bound tolerance, before using recovered bounds.
+    source_corners = [Vector(point) for point in obj.bound_box]
+    saved_corners = [Vector(point) for point in row['corners']]
+    candidates = []
     for original_scale in (1.0, 1.0/imported_max_dimension):
-        if abs(scale/original_scale-1) <= 1e-5 and offset.length <= 1e-5:
-            scale, offset = original_scale, Vector((0, 0, 0))
-            break
+        error = max(min((target_matrix @ (point*original_scale)-saved).length
+                        for saved in saved_corners) for point in source_corners)
+        candidates.append((error, original_scale))
+    error, original_scale = min(candidates)
+    if error <= 1e-5:
+        scale, offset = original_scale, Vector((0, 0, 0))
     for vertex in obj.data.vertices:
         vertex.co = vertex.co*scale+offset
     obj.matrix_world = target_matrix
@@ -225,6 +235,8 @@ def main():
     parser.add_argument('--observe-only', action='store_true',
                         help='Add support surface identities without changing any placement or original measurement')
     parser.add_argument('--limit', type=int)
+    parser.add_argument('--compatible-replay-resume', action='store_true',
+                        help='Audit and retain checkpoints when only the restoration implementation changed')
     parser.add_argument('--start', type=int, default=0)
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     if args.input.resolve() == args.output.resolve():
@@ -250,9 +262,17 @@ def main():
         target = args.output/path.name
         source_hash = checksum(path)
         if target.exists():
-            prior = json.loads(target.read_text())['supportCorrection']
-            if prior['sourceSha256'] != source_hash or prior['implementation'] != implementation:
+            saved = json.loads(target.read_text())
+            prior = saved['supportCorrection']
+            if prior['sourceSha256'] != source_hash:
                 raise ValueError('Replay checkpoint differs from source or correction code')
+            if prior['implementation'] != implementation:
+                from serverless.benchmark.audit_support_corrections import audit_record, compatible_replay
+                if not args.compatible_replay_resume or not compatible_replay(prior['implementation'], implementation):
+                    raise ValueError('Replay checkpoint differs from source or correction code')
+                # Keep its original implementation digest and timing. A saved
+                # success is reused only after its geometry and provenance pass.
+                audit_record(json.loads(path.read_text()), saved, source_hash)
             continue
         attempt = json.loads(path.read_text())
         if attempt['status'] != 'complete':

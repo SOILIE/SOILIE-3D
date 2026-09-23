@@ -15,6 +15,12 @@ from pathlib import Path
 from modules.support_settlement import CONTACT_TOLERANCE_M, FIXED_CLASSES
 
 
+def compatible_replay(first: dict, second: dict) -> bool:
+    """Restoration-only maintenance never permits a changed model or evaluator."""
+    return ({key: value for key, value in first.items() if key != 'replaySha256'} ==
+            {key: value for key, value in second.items() if key != 'replaySha256'})
+
+
 def audit_record(source: dict, derived: dict, source_hash: str) -> dict:
     report = derived['supportCorrection']
     if report['sourceSha256'] != source_hash:
@@ -89,6 +95,7 @@ def audit_cohort(source: Path, derived: Path, expected: int = 10000) -> dict:
     originals = {path.name: path for path in source.glob('attempt-*.json')}
     outputs = {path.name: path for path in derived.glob('attempt-*.json')}
     errors, changed, implementations = [], [], {}
+    correction_implementations = set()
     contact_counts = {'floor': 0, 'object': 0, 'architecture': 0}
     validated = changed_objects = 0
     maximum_gap = maximum_penetration = correction_seconds = 0.0
@@ -109,12 +116,14 @@ def audit_cohort(source: Path, derived: Path, expected: int = 10000) -> dict:
             correction_seconds += result['correctionSeconds']
             digest = hashlib.sha256(json.dumps(output['supportCorrection']['implementation'], sort_keys=True).encode()).hexdigest()
             implementations[digest] = implementations.get(digest, 0) + 1
+            correction_implementations.add(json.dumps({key: value for key, value in output['supportCorrection']['implementation'].items()
+                                                      if key != 'replaySha256'}, sort_keys=True))
             validated += 1
         except (ValueError, KeyError, TypeError, IndexError) as error:
             errors.append({'attempt': name, 'reason': str(error)})
     return {'schemaVersion': 1, 'expectedScenes': expected, 'originalScenes': len(originals),
             'derivedScenes': len(outputs), 'validatedScenes': validated,
-            'complete': validated == expected == len(originals) == len(outputs) and not errors and len(implementations) == 1,
+            'complete': validated == expected == len(originals) == len(outputs) and not errors and len(correction_implementations) == 1,
             'missingAttempts': sorted(originals.keys() - outputs.keys()), 'errors': errors,
             'changedScenes': len(changed), 'changedObjects': changed_objects, 'changedSceneIds': changed,
             'contactCounts': contact_counts, 'maxSupportGapM': maximum_gap,

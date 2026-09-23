@@ -6,6 +6,46 @@ is staged, byte-checked, by the existing runtime compiler.
 
 ## Evidence boundaries
 
+### Balanced room-type campaign
+
+`balanced_campaign.py` freezes the first 5,000 completed bedrooms in source
+filename order, independent of quality scores. Their source bytes and original
+timing are retained; only downstream vertical support correction is replayed.
+Validated repair checkpoints can be reused if only mesh-restoration code changed.
+The model, mesh sampler, solid-overlap evaluator and asset checksums must match.
+
+The 5,000 new living rooms use the ordinary tracked pipeline, with duplicates
+allowed and 1,250 completed requests at each requested object count from 3 to 6.
+Twenty 250-scene shards use interleaved, non-overlapping seed sequences. Six
+local jobs (one Blender thread each, single-threaded BLAS) share an eight-CPU
+WSL instance. Repair jobs and generation shards advance together; no images are
+rendered. The watchdog remains 900 seconds and unsuccessful attempts are kept.
+
+```bash
+.codex/linux-env/bin/python -m serverless.benchmark.balanced_campaign \
+  --source .codex/benchmark/soilie-bedroom-v4.0.2 \
+  --repaired .codex/benchmark/soilie-support-corrected-v3 \
+  --runtime . --blender .codex/tools/blender-3.6.23-linux-x64/blender \
+  --output .codex/benchmark/soilie-balanced-v4.0.2 --workers 6
+```
+
+Refresh `.codex/runtime/v4-provenance.json` from the committed source before
+launch. Resume with the same command and unchanged execution code. The manifest
+pins bedroom checksums and the request schedule; each shard checks its own
+checkpoints rather than trusting a controller's last progress message. Create
+`STOP` inside the campaign directory to stop scheduling after active shards
+finish. Interruptions terminate only owned subprocesses; complete scene records
+remain available for resume. A 15 GiB disk guard protects the remaining workspace.
+
+Keep the measured serial-bedroom timing distinct from the new parallel living
+workload; do not impute mixed-corpus time from the bedroom sample. Before
+publication, audit all 5,000 corrected bedrooms and all 5,000 new living rooms,
+then create bedroom- and living-room-specific matched review sets. Changed
+images require fresh AI votes. The existing comparison remains unchanged until
+that complete evidence bundle passes validation.
+
+### Baseline evidence
+
 - SOILIE: final placement after its existing Blender corrections. A fresh
   worker includes object selection, initialization and placement. Rendering is
   excluded. Failed attempts and watchdog terminations are reported as counts

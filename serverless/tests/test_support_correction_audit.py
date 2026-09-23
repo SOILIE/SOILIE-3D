@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from serverless.benchmark.audit_support_corrections import audit_cohort, audit_record
+from serverless.benchmark.audit_support_corrections import audit_cohort, audit_record, compatible_replay
 from serverless.benchmark.geometry import box_corners
 
 
@@ -33,6 +33,12 @@ def fixture():
 
 
 class SupportCorrectionAuditTests(unittest.TestCase):
+    def test_replay_only_maintenance_does_not_permit_model_or_evaluator_changes(self):
+        original = {'replaySha256': 'old', 'settlementSha256': 'fixed', 'solidOverlapSha256': 'fixed', 'observeOnly': False}
+        changed = {**original, 'replaySha256': 'new'}
+        self.assertTrue(compatible_replay(original, changed))
+        for key in ('settlementSha256', 'solidOverlapSha256', 'observeOnly'):
+            self.assertFalse(compatible_replay(original, {**changed, key: 'different'}))
     def check(self, source, derived, raw):
         return audit_record(source, derived, hashlib.sha256(raw).hexdigest())
 
@@ -96,6 +102,25 @@ class SupportCorrectionAuditTests(unittest.TestCase):
             self.assertEqual(['scene-0'], report['changedSceneIds'])
             self.assertEqual({'floor': 1, 'object': 0, 'architecture': 0}, report['contactCounts'])
             self.assertFalse(audit_cohort(source_dir, target, expected=10000)['complete'])
+
+    def test_audited_replay_versions_can_mix_but_model_changes_cannot(self):
+        scratch = Path(__file__).resolve().parents[2]/'.codex'
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch, prefix='support-version-test-') as directory:
+            source_dir, target = Path(directory)/'source', Path(directory)/'derived'
+            source_dir.mkdir(); target.mkdir()
+            for index in range(2):
+                _, derived, raw = fixture()
+                derived['supportCorrection']['implementation']['replaySha256'] = str(index)
+                name = f'attempt-{index:05d}.json'
+                (source_dir/name).write_bytes(raw)
+                (target/name).write_text(json.dumps(derived))
+            result = audit_cohort(source_dir, target, expected=2)
+            self.assertTrue(result['complete'])
+            self.assertEqual(2, len(result['implementationCohorts']))
+            derived['supportCorrection']['implementation']['settlementSha256'] = 'changed'
+            (target/name).write_text(json.dumps(derived))
+            self.assertFalse(audit_cohort(source_dir, target, expected=2)['complete'])
 
 
 if __name__ == '__main__':

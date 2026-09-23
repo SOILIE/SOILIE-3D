@@ -143,7 +143,7 @@ def worker(args):
     for name in ("assets", "modules", "data", "suggested_setup.blend"):
         (args.work/name).symlink_to(args.runtime/name, target_is_directory=name != "suggested_setup.blend")
     (args.work/"output").mkdir()
-    cmd = [str(args.blender), "--background", "suggested_setup.blend", "--threads", "4", "--python-exit-code", "2",
+    cmd = [str(args.blender), "--background", "suggested_setup.blend", "--threads", str(args.blender_threads), "--python-exit-code", "2",
            "--python", str(Path(__file__).with_name("capture_v4.py")), "--",
            "--input", str(args.work/"input.json"), "--output", str(args.work/"capture.json"), "--seed", str(request["seed"])]
     if args.full:
@@ -174,6 +174,10 @@ def batch(args):
               "pythonVersion": platform.python_version(),
               "hardware": platform.platform(), "cpu": platform.processor(), "cpuThreadsAvailable": os.cpu_count(),
               "roomFitIncluded": False, "provenance": load_v4_provenance(args.runtime)}
+    if args.seed_step != 997 or args.blender_threads != 4 or args.parallel_workers != 1:
+        config['execution'] = {'seedStep': args.seed_step, 'blenderThreads': args.blender_threads,
+                               'parallelWorkers': args.parallel_workers,
+                               'timingScope': 'parallel workload; not an uncontended serial timing sample'}
     if plan:
         # Finite evaluation workloads remain separate from the controlled
         # bedroom throughput run. Hash the inputs, not a machine-specific path.
@@ -201,11 +205,12 @@ def batch(args):
             shutil.rmtree(work)
         work.mkdir()
         request = dict(plan[index]) if plan else {"mode": "room_type", "roomType": args.room_type, "objectCount": args.object_count or 3+index%4,
-                   "seed": args.seed+index*997, "allowDuplicates": not args.no_duplicates,
+                   "seed": args.seed+index*args.seed_step, "allowDuplicates": not args.no_duplicates,
                    "sameObjectsAcrossScenes": True}
         write_json(work/"request.json", request)
         command = [sys.executable, "-m", "serverless.benchmark.run_batch", "--worker", "--work", str(work),
-                   "--runtime", str(args.runtime), "--blender", str(args.blender)]
+                   "--runtime", str(args.runtime), "--blender", str(args.blender),
+                   "--blender-threads", str(args.blender_threads)]
         if args.full:
             command.append("--full")
         if args.support:
@@ -226,6 +231,11 @@ def batch(args):
                 row['baselineSceneId'] = config['baselineSceneIds'][index]
         environment = os.environ.copy()
         environment["PYTHONHASHSEED"] = "0"
+        if args.parallel_workers > 1:
+            # BLAS defaults may consume every CPU inside each process. Limit
+            # inner parallelism; independent scenes supply the outer parallelism.
+            for variable in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
+                environment[variable] = '1'
         environment.pop("SOILIE_ROOM_REQUEST", None)
         with (work/"process.log").open("wb") as log:
             process = subprocess.Popen(supervised(command), cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
@@ -319,6 +329,9 @@ def main():
     parser.add_argument("--max-attempts", type=int, default=0)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--seed", type=int, default=20260913)
+    parser.add_argument('--seed-step', type=int, default=997)
+    parser.add_argument('--blender-threads', type=int, default=4)
+    parser.add_argument('--parallel-workers', type=int, default=1)
     parser.add_argument("--room-type", choices=["bedroom","living_room","kitchen","bathroom"], default="bedroom")
     parser.add_argument('--request-plan', type=Path)
     parser.add_argument("--object-count", type=int, choices=[3,4,5,6])
@@ -331,6 +344,8 @@ def main():
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--work", type=Path)
     args = parser.parse_args()
+    if args.seed_step < 1 or args.blender_threads < 1 or args.parallel_workers < 1:
+        parser.error('Seed step, Blender threads and parallel workers must be positive')
     for name in ("runtime","blender","output","work","request_plan"):
         if getattr(args,name) is not None:
             setattr(args,name,getattr(args,name).resolve())
