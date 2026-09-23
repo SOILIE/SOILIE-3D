@@ -134,8 +134,16 @@ def _boolean_intersection_volume(first, second):
                 bpy.data.meshes.remove(mesh)
 
 
-def measure(objects):
-    """Measure pairwise occupied-volume intrusion for semantic furniture objects."""
+def measure(objects, *, unchanged_source_bounds=None):
+    """Measure pairwise occupied-volume intrusion for semantic furniture objects.
+
+    Saved-scene replay may supply original world-space corners for objects that
+    did not move. Two disjoint original boxes remain a separation proof for that
+    unchanged pair, despite float32 error when restoring mesh vertices. Bounds
+    may only be reused within the replay's validated reconstruction tolerance;
+    moved objects must not be present in this mapping. Ordinary observations do
+    not supply it and continue to measure their live geometry directly.
+    """
     rows = list(objects)
     if len({identifier for identifier, _ in rows}) != len(rows):
         raise ValueError("Solid-overlap object IDs must be unique")
@@ -145,10 +153,27 @@ def measure(objects):
     numerical_contact_pairs = 0
     boolean_pairs = 0
     surface_disjoint_pairs = 0
+    preserved_disjoint_pairs = 0
+    source_bounds = {}
+    for identifier, obj in rows:
+        if unchanged_source_bounds is not None and identifier in unchanged_source_bounds:
+            points = unchanged_source_bounds[identifier]
+            if len(points) != 8 or any(len(point) != 3 or not all(math.isfinite(v) for v in point) for point in points):
+                raise ValueError('Invalid original mesh bounds: ' + identifier)
+            saved = tuple(tuple(fn(point[axis] for point in points) for axis in range(3)) for fn in (min, max))
+            observed = _bounds(obj)
+            if max(abs(saved[side][axis]-observed[side][axis]) for side in (0, 1) for axis in range(3)) > 1e-5:
+                raise ValueError('Original bounds cannot certify a moved or incorrectly restored object: ' + identifier)
+            source_bounds[identifier] = saved
     meshes = {}
     volumes = {}
     try:
         for (first_id, first_obj), (second_id, second_obj) in combinations(rows, 2):
+            if first_id in source_bounds and second_id in source_bounds:
+                first, second = source_bounds[first_id], source_bounds[second_id]
+                if any(min(first[1][axis], second[1][axis]) <= max(first[0][axis], second[0][axis]) for axis in range(3)):
+                    preserved_disjoint_pairs += 1
+                    continue
             if not _boxes_overlap(first_obj, second_obj):
                 broad_phase_zeros += 1
                 continue
@@ -197,6 +222,7 @@ def measure(objects):
         "numericalContactPairs": numerical_contact_pairs,
         "booleanPairs": boolean_pairs,
         "surfaceDisjointPairs": surface_disjoint_pairs,
+        "preservedBoundsDisjointPairs": preserved_disjoint_pairs,
         "complete": complete,
         "meanWorstOverlapPct": (sum(worst.values()) / len(worst) * 100) if complete and worst else None,
         "maxOverlapPct": (max(worst.values()) * 100) if complete and worst else None,

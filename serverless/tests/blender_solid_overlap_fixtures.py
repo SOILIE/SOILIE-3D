@@ -5,6 +5,7 @@ import unittest
 
 import bmesh
 import bpy
+from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from serverless.benchmark.solid_overlap import measure
@@ -88,6 +89,44 @@ class SolidOverlapFixtures(unittest.TestCase):
         self.assertTrue(result["complete"])
         self.assertEqual(0, result["meanWorstOverlapPct"])
         self.assertEqual(1, result["numericalContactPairs"])
+
+    def test_replay_retains_disjoint_proof_for_untouched_touching_objects(self):
+        first = cube('first', (0, 0, 0))
+        second = cube('second', (2, 0, 0))
+        source = {name: [list(obj.matrix_world @ Vector(point)) for point in obj.bound_box]
+                  for name, obj in [('first', first), ('second', second)]}
+        # Reconstruction noise, larger than the relative numerical-contact
+        # cutoff but below the measured ten-micrometre restoration tolerance.
+        second.location.x -= 4e-6
+        bpy.context.view_layer.update()
+        result = measure([('first', first), ('second', second)], unchanged_source_bounds=source)
+        self.assertTrue(result['complete'])
+        self.assertEqual(1, result['preservedBoundsDisjointPairs'])
+        self.assertEqual(0, result['meanWorstOverlapPct'])
+
+    def test_moved_object_still_gets_real_mesh_test_with_unchanged_neighbour(self):
+        first = cube('first', (0, 0, 0))
+        second = cube('second', (1, 0, 0))
+        source = {'first': [list(first.matrix_world @ Vector(point)) for point in first.bound_box]}
+        result = measure([('first', first), ('second', second)], unchanged_source_bounds=source)
+        self.assertEqual(0, result['preservedBoundsDisjointPairs'])
+        self.assertAlmostEqual(50, result['meanWorstOverlapPct'], places=5)
+
+    def test_restoration_certificate_rejects_actual_displacement(self):
+        first, second = cube('first', (0, 0, 0)), cube('second', (2, 0, 0))
+        source = {'second': [list(second.matrix_world @ Vector(point)) for point in second.bound_box]}
+        second.location.x -= .1
+        bpy.context.view_layer.update()
+        with self.assertRaisesRegex(ValueError, 'moved or incorrectly restored'):
+            measure([('first', first), ('second', second)], unchanged_source_bounds=source)
+
+    def test_intersecting_source_bounds_do_not_certify_separation(self):
+        first, second = cube('first', (0, 0, 0)), cube('second', (1, 0, 0))
+        source = {name: [list(obj.matrix_world @ Vector(point)) for point in obj.bound_box]
+                  for name, obj in [('first', first), ('second', second)]}
+        result = measure([('first', first), ('second', second)], unchanged_source_bounds=source)
+        self.assertEqual(0, result['preservedBoundsDisjointPairs'])
+        self.assertAlmostEqual(50, result['meanWorstOverlapPct'], places=5)
 
 
 if __name__ == "__main__":

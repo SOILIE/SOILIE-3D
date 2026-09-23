@@ -189,8 +189,15 @@ def correction(attempt, rotations, audit_original=False, observe_only=False):
                               'gapM': max(0.0, gap), 'belowFloorM': max(0.0, room['floorZ']-own['low'][2]),
                               'supportKind': support_kind, 'supportId': support_id}
         if changes:
+            # Untouched objects retain the original geometry, not the sub-micron
+            # noise introduced by reconstructing it. Reuse disjoint bounds only
+            # when BOTH members stayed fixed. Every pair with a moved object is
+            # measured afresh; no actual collision test is relaxed or omitted.
+            moved_ids = {entry['id'] for entry in changes}
+            unchanged = {row['id']: row['corners'] for row in attempt['stages']['final']['objects']
+                         if row['id'] not in moved_ids}
             final['solidMeshOverlap'] = measure([(row['id'], objects[row['id']])
-                for row in final['objects'] if row.get('kind') != 'architecture'])
+                for row in final['objects'] if row.get('kind') != 'architecture'], unchanged_source_bounds=unchanged)
             if not final['solidMeshOverlap']['complete'] or final['solidMeshOverlap']['maxOverlapPct'] > .0001:
                 raise RuntimeError('Settlement produced unverified or intersecting meshes: '+json.dumps(final['solidMeshOverlap']))
     else:
@@ -224,6 +231,7 @@ def main():
                       'replaySha256': checksum(Path(__file__)),
                       'samplerSha256': checksum(Path(__file__).with_name('mesh_support.py')),
                       'observerSha256': checksum(Path(__file__).with_name('capture_v4.py')),
+                      'solidOverlapSha256': checksum(Path(__file__).with_name('solid_overlap.py')),
                       'assetManifestSha256': checksum(manifest_path),
                       'observeOnly': args.observe_only}
     if args.observe_only:

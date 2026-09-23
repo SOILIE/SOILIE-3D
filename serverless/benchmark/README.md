@@ -121,6 +121,14 @@ stay untouched; derived records retain source/code checksums and separate
 correction time. Do not transfer old AI votes to changed geometry or present
 original generation time alone as timing the corrected pipeline.
 
+Every pair involving a moved object is tested against restored mesh geometry.
+Pairs with two untouched objects may retain the original disjoint-bounds proof;
+otherwise float32 reconstruction can turn exact contact into a false microscopic
+intersection. This reuse is counted as `preservedBoundsDisjointPairs`, requires
+restored bounds within 0.00001 m of the originals, and never certifies overlapping
+original bounds as separated. The solid-overlap implementation is checksummed
+alongside the replay and settlement code.
+
 ```bash
 blender --background --factory-startup --threads 1 --python-exit-code 2 \
   --python serverless/benchmark/settle_saved.py -- \
@@ -130,6 +138,19 @@ blender --background --factory-startup --threads 1 --python-exit-code 2 \
 
 Reusing the output directory resumes only when source and correction checksums
 match. `--start` and `--limit` allow bounded validation before the full replay.
+
+Audit a running cohort without Blender, and require a complete one before any
+publication. The report checks provenance, inventory, original timing, unchanged
+room bounds, Z-only movement, contact distances and complete mesh checks. It
+also lists the changed scene IDs that need new visual stimuli and AI judgements.
+Remove `--require-complete` for a progress report; invalid records still fail.
+
+```bash
+python -m serverless.benchmark.audit_support_corrections \
+  --source .codex/benchmark/soilie-bedroom-v4.0.2 \
+  --derived .codex/benchmark/soilie-support-corrected \
+  --output .codex/benchmark/support-correction-audit.json --require-complete
+```
 
 Matching uses room type, exact furniture count and 0.25-wide bins of summed
 furniture footprint area divided by room area. Each shared stratum has equal
