@@ -93,6 +93,26 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual(100,measure(layout)["meanOutsideFootprintPct"])
         self.assertEqual(12,measure(layout)["roomArea"])
 
+    def test_disconnected_emitted_floor_regions_are_all_measured_without_filling_gap(self):
+        layout = scene(item("a", [5.5,.5,.5]))
+        layout["room"] = {"regions":[
+            {"polygon":[[0,0],[1,0],[1,1],[0,1]],"holes":[]},
+            {"polygon":[[5,0],[6,0],[6,1],[5,1]],"holes":[]},
+        ], "floorZ":0}
+        result = measure(layout)
+        self.assertEqual(2,result["roomArea"])
+        self.assertEqual(0,result["meanOutsideFootprintPct"])
+
+    def test_mounted_objects_do_not_count_as_floor_boundary_violations(self):
+        floor_item = item("floor", [2,2,.5])
+        mounted = item("mounted", [5,2,2])
+        mounted["supportEligible"] = False
+        result = measure(scene(floor_item, mounted))
+        self.assertEqual(0,result["meanOutsideFootprintPct"])
+        self.assertEqual(1,result["boundaryObjectsMeasured"])
+        mounted_result = next(row for row in result["objects"] if row["id"] == "mounted")
+        self.assertIsNone(mounted_result["outsideFootprintPct"])
+
     def test_solid_mesh_evidence_is_strict_and_separate_from_envelopes(self):
         layout = scene(item("a", [1,1,.5]), item("b", [3,3,.5]))
         layout["solidMeshOverlap"] = {

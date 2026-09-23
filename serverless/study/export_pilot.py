@@ -14,7 +14,8 @@ from serverless.study.service import (EVIDENCE_RUBRICS, FOCUS_PROFILES, FOCUS_ON
                                       PROFILES, RUBRIC, prompt_text)
 from serverless.study.store import SQLiteStudyStore
 
-LABELS = {"layoutgpt":"LayoutGPT", "infinigen":"Infinigen Indoors"}
+LABELS = {"layoutgpt":"LayoutGPT", "infinigen":"Infinigen Indoors",
+          "infinigen_controlled":"Infinigen Indoors"}
 DIAGNOSTIC_THEMES = {
     "crowdingOrCollision": r"overlap|collid|crowd|cluster|cramp|obstruct|clearance",
     "boundaryOrWallUse": r"wall|boundar|outside|edge|corner",
@@ -305,7 +306,7 @@ def aggregate(store, protocol):
             "interpretation":"Exploratory AI opinions and integration-test evidence only. Not human validation, independent model architectures, or a calibrated measure of accuracy. Repeated cases are excluded from preference totals."}
 
 
-def public_summary(result):
+def public_summary(result, download_name="ai-pilot-responses.json"):
     """Return the lightweight document consumed by the public result pages.
 
     The complete export remains downloadable for audit. The browser only needs
@@ -321,7 +322,7 @@ def public_summary(result):
         "responseRows": len(responses),
         "stimulusPairs": len(stimuli),
         "stimulusEvidenceRows": len(evidence),
-        "download": "ai-pilot-responses.json",
+        "download": download_name,
     }
     return compact
 
@@ -332,6 +333,8 @@ def main():
     parser.add_argument("--protocol",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
     parser.add_argument("--compact-output",type=Path)
+    parser.add_argument("--download-name",default="ai-pilot-responses.json",
+                        help="Public filename of the corresponding complete response export")
     parser.add_argument("--require-complete",action="store_true")
     args = parser.parse_args()
     protocol = json.loads(args.protocol.read_text())
@@ -344,7 +347,7 @@ def main():
     args.output.write_text(json.dumps(result,indent=2),encoding="utf-8")
     if args.compact_output:
         args.compact_output.parent.mkdir(parents=True,exist_ok=True)
-        args.compact_output.write_text(json.dumps(public_summary(result),indent=2),encoding="utf-8")
+        args.compact_output.write_text(json.dumps(public_summary(result,args.download_name),indent=2),encoding="utf-8")
     print(json.dumps({"reviewersCompleted":result["reviewersCompleted"],"responses":len(result["responses"])}))
 
 

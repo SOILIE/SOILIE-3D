@@ -1,5 +1,6 @@
 import gzip
 from io import BytesIO
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -16,9 +17,12 @@ class ArchiveTests(unittest.TestCase):
         base.mkdir(parents=True,exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=base)
         self.output = Path(self.temp.name)
+        self.stimuli_temp = tempfile.TemporaryDirectory(dir=base)
+        self.stimuli = Path(self.stimuli_temp.name)
 
     def tearDown(self):
         self.temp.cleanup()
+        self.stimuli_temp.cleanup()
 
     def test_public_allowlist_rejects_private_values_not_web_sources(self):
         public_only({'source':'https://github.com/soilie/SOILIE-3D'})
@@ -34,6 +38,48 @@ class ArchiveTests(unittest.TestCase):
         geometry = json.loads((self.output/document['scenes'][0]['geometry']).read_text())
         self.assertEqual(fixture('soilie',0),geometry)
         self.assertIn('Plan view',(self.output/document['scenes'][0]['diagram']).read_text())
+
+    def test_archive_can_publish_source_geometry_without_a_front_axis(self):
+        row = fixture('infinigen',0)
+        for item in row['scene']['objects']:
+            item.pop('frontDirection',None)
+        document = build({'rows':[row]},{'runs':[]},[],'2026-09-14',self.output)
+        svg = (self.output/document['scenes'][0]['diagram']).read_text()
+        self.assertNotIn('class="front"',svg)
+
+    def test_focused_reviews_are_not_collapsed_into_an_overall_score(self):
+        review = {'decisionScope':'focus_only','stimuli':[]}
+        document = build({'rows':[fixture('soilie',0)]},{'runs':[]},[review],
+                         '2026-09-14',self.output)
+        self.assertEqual(1,len(document['aiReviews']))
+        self.assertIsNone(document['combinedAiPilot'])
+
+    def test_frozen_review_stimulus_is_archived_by_verified_content_hash(self):
+        body = b'<svg xmlns="http://www.w3.org/2000/svg"><title>Frozen review view</title></svg>'
+        name = hashlib.sha256(body).hexdigest()[:24]+'.svg'
+        (self.stimuli/name).write_bytes(body)
+        source = '/benchmarks/stimuli/'+name
+        review = {'decisionScope':'focus_only','stimuli':[
+            {'caseId':'case-1','soilieImage':source,'baselineImage':source},
+        ]}
+
+        document = build({'rows':[fixture('soilie',0)]},{'runs':[]},[review],
+                         '2026-09-14',self.output,self.stimuli)
+
+        archived = document['reviewStimulusPaths'][source]
+        self.assertTrue(archived.startswith('review-stimuli/'))
+        self.assertEqual(body,(self.output/archived).read_bytes())
+
+    def test_frozen_review_stimulus_rejects_a_false_content_hash(self):
+        name = '0'*24+'.svg'
+        (self.stimuli/name).write_text('<svg/>')
+        source = '/benchmarks/stimuli/'+name
+        review = {'decisionScope':'focus_only','stimuli':[
+            {'caseId':'case-1','soilieImage':source,'baselineImage':source},
+        ]}
+        with self.assertRaisesRegex(ValueError,'checksum does not match'):
+            build({'rows':[fixture('soilie',0)]},{'runs':[]},[review],
+                  '2026-09-14',self.output,self.stimuli)
 
     def test_gzipped_index_preserves_other_keys_and_updates_conditionally(self):
         client = MagicMock()

@@ -20,7 +20,9 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from serverless.benchmark.infinigen_metadata import asset_label, generated_instances, vertically_supported
+from serverless.benchmark.infinigen_metadata import (asset_label, generated_instances,
+                                                     largest_coplanar_surface, polygon_components,
+                                                     vertically_supported)
 from serverless.benchmark.mesh_support import sample_support
 from serverless.benchmark.solid_overlap import measure as measure_solid_overlap
 from infinigen.core import tagging, tags
@@ -70,31 +72,78 @@ def instance_geometry(root, other_roots):
     return corners, vertices, faces, [obj.name for obj in meshes]
 
 
+def source_front_direction(root):
+    """Return Infinigen's canonical local-front axis in world XY coordinates.
+
+    Infinigen's canonical surface tagging defines ``Subpart.Front`` as the
+    positive local X extent before the solver rotates an object. Final emitted
+    meshes need not retain those temporary face tags, but the asset root keeps
+    the solver transform. Applying that transform to local +X therefore reads
+    the source convention without guessing from the finished box shape.
+    """
+    world_axis = root.matrix_world.to_3x3() @ Vector((1.0, 0.0, 0.0))
+    direction = Vector((world_axis.x, world_axis.y))
+    if direction.length <= 1e-8:
+        raise ValueError(f"Canonical front axis is not horizontal for {root.name}")
+    direction.normalize()
+    return [float(direction.x), float(direction.y)]
+
+
 def floor_boundary(room):
     if tagging.COMBINED_ATTR_NAME not in room.data.attributes:
         raise ValueError("Original room has no floor tags; no guessed boundary is allowed")
     mask = tagging.tagged_face_mask(room, {tags.Subpart.SupportSurface, tags.Subpart.Visible})
     if len(mask) != len(room.data.polygons):
         raise ValueError("Floor tags do not align with the original faces")
-    pieces, elevations = [], []
-    for include, face in zip(mask, room.data.polygons):
-        if not include:
+    # Blender's loop triangles are the authoritative interpretation of emitted
+    # n-gons. Projecting an n-gon's raw vertex loop can be self-overlapping even
+    # when Blender has a valid tessellation for the rendered floor.
+    room.data.calc_loop_triangles()
+    horizontal = []
+    for triangle in room.data.loop_triangles:
+        if not mask[triangle.polygon_index]:
             continue
-        world = [room.matrix_world @ room.data.vertices[index].co for index in face.vertices]
+        world = [room.matrix_world @ room.data.vertices[index].co for index in triangle.vertices]
+        elevations = [v.z for v in world]
+        if max(elevations)-min(elevations) > 1e-5:
+            continue # The named floor mesh also contains its thin vertical edge faces.
         polygon = Polygon([(v.x,v.y) for v in world])
         if not polygon.is_valid or polygon.area <= 1e-12:
             raise ValueError("Tagged floor contains invalid or vertical geometry")
-        pieces.append(polygon)
-        elevations.extend(v.z for v in world)
-    if not pieces or max(elevations)-min(elevations) > 1e-5:
+        horizontal.append((sum(elevations)/len(elevations), polygon))
+    if not horizontal:
         raise ValueError("Expected a nonempty planar original floor")
-    boundary = unary_union(pieces)
-    if boundary.geom_type != "Polygon" or not boundary.is_valid:
-        raise ValueError("Floor boundary is disconnected or invalid; do not replace it with a convex hull")
-    return {"polygon":list(boundary.exterior.coords)[:-1],
-            "holes":[list(ring.coords)[:-1] for ring in boundary.interiors],
-            "floorZ":sum(elevations)/len(elevations),
-            "boundarySource":"Original tagged visible interior floor faces in the completed Infinigen scene"}
+    # The emitted floor may include small raised doorway thresholds alongside
+    # the main walkable surface. Group coplanar faces and select the elevation
+    # layer with the greatest tagged area; choosing the highest layer would
+    # mistake those thresholds for the room boundary.
+    layer = largest_coplanar_surface(horizontal)
+    floor_z = layer["elevation"]
+    pieces = layer["polygons"]
+    boundaries = polygon_components(unary_union(pieces))
+    if any(not boundary.is_valid for boundary in boundaries):
+        raise ValueError("Tagged floor component is invalid; do not replace it with a fitted boundary")
+    regions = [{"polygon":list(boundary.exterior.coords)[:-1],
+                "holes":[list(ring.coords)[:-1] for ring in boundary.interiors]}
+               for boundary in boundaries]
+    result = {"floorZ":floor_z,
+              "boundarySource":"All components of the dominant coplanar tagged visible surface, using Blender's emitted floor triangulation"}
+    if len(regions) == 1:
+        result.update(regions[0])
+    else:
+        result["regions"] = regions
+    return result
+
+
+def room_floor_object(room_id):
+    """Return the emitted floor for the metadata-selected room, never a spatial guess."""
+    expected = f"{room_id}.floor"
+    candidates = [obj for obj in bpy.context.scene.objects
+                  if obj.type == "MESH" and obj.name == expected
+                  and any(collection.name == "unique_assets:room_floor" for collection in obj.users_collection)]
+    if len(candidates) != 1:
+        raise ValueError(f"Expected one explicitly named floor object for {room_id}; found {len(candidates)}")
+    return candidates[0]
 
 
 def main():
@@ -110,9 +159,12 @@ def main():
     room_id, instances = generated_instances(records,args.room_type)
     tagging.tag_system.load_tag(args.state.with_name("MaskTag.json"))
     room_object = bpy.data.objects[records[room_id]["obj"]]
-    room = floor_boundary(room_object)
+    floor_object = room_floor_object(room_id)
+    room = floor_boundary(floor_object)
     room_points, room_faces = evaluated_mesh(room_object)
     room_tree = BVHTree.FromPolygons([Vector(point) for point in room_points], room_faces)
+    floor_points, floor_faces = evaluated_mesh(floor_object)
+    floor_tree = BVHTree.FromPolygons([Vector(point) for point in floor_points], floor_faces)
     roots = {record["obj"] for _,record in instances}
     objects, geometry, solid_sources = [], {}, []
     for identifier, record in instances:
@@ -127,11 +179,13 @@ def main():
         solid_sources.append((identifier, solid))
         objects.append({"id":identifier,"assemblyId":identifier,"label":asset_label(record),"kind":"furniture",
                         "corners":corners,"transform":[list(row) for row in root.matrix_world],"meshParts":parts,
-                        "sourceTags":record["tags"],"supportEligible":vertically_supported(record)})
+                        "sourceTags":record["tags"],"supportEligible":vertically_supported(record),
+                        "frontDirection":source_front_direction(root),
+                        "frontConvention":"Infinigen canonical Subpart.Front local +X axis"})
     for obj in objects:
         if obj["supportEligible"]:
             points, own = geometry[obj["id"]]
-            sampled = sample_support(points,own,[room_tree]+[tree for key,(_,tree) in geometry.items() if key != obj["id"]],room["floorZ"])
+            sampled = sample_support(points,own,[room_tree,floor_tree]+[tree for key,(_,tree) in geometry.items() if key != obj["id"]],room["floorZ"])
             if sampled:
                 obj["support"] = sampled
     try:

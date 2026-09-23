@@ -29,6 +29,25 @@ class StimulusTests(unittest.TestCase):
         self.assertEqual(12,len(selected))
         self.assertEqual(12,len({pair[2]["id"] for pair in selected}))
 
+    def test_sampling_can_target_the_controlled_infinigen_cohort(self):
+        rows = [fixture(model,i) for model in ("soilie","infinigen_controlled") for i in range(4)]
+        selected = select_pairs(rows, limit=4, baselines=("infinigen_controlled",))
+        self.assertEqual(4, len(selected))
+        self.assertTrue(all(pair[0] == "infinigen_controlled" for pair in selected))
+
+    def test_density_matching_policy_is_explicit_per_study(self):
+        left = fixture("soilie", 1)
+        right = fixture("infinigen_controlled", 1)
+        left["metrics"]["furnitureDensity"] = .1
+        right["metrics"]["furnitureDensity"] = .6
+        self.assertEqual([], select_pairs(
+            [left, right], limit=1, baselines=("infinigen_controlled",)
+        ))
+        self.assertEqual(1, len(select_pairs(
+            [left, right], limit=1, baselines=("infinigen_controlled",),
+            maximum_density_difference=1,
+        )))
+
     def test_semantic_aliases_are_duplicate_aware(self):
         left = fixture("soilie",1)["scene"]
         left["objects"] = [
@@ -42,6 +61,18 @@ class StimulusTests(unittest.TestCase):
         right["objects"][2]["label"] = "round_end_table"
         self.assertEqual(semantic_signature(left), semantic_signature(right))
         self.assertEqual(1, semantic_similarity(left, right))
+
+    def test_controlled_infinigen_asset_names_use_the_same_declared_roles(self):
+        scene = fixture("infinigen_controlled",1)["scene"]
+        scene["objects"] = [
+            {"id":"a","label":"sidetable_desk","corners":box_corners([1,1,.5],[1,1,1])},
+            {"id":"b","label":"single_cabinet","corners":box_corners([3,3,.5],[1,1,1])},
+            {"id":"c","label":"t_v_stand","corners":box_corners([2,3,.5],[1,1,1])},
+        ]
+        self.assertEqual(
+            {"nightstand":1,"storage":1,"tv stand":1},
+            dict(semantic_signature(scene)),
+        )
 
     def test_matching_rejects_a_bedroom_with_different_bed_count(self):
         left = fixture("soilie",1)
@@ -118,6 +149,16 @@ class StimulusTests(unittest.TestCase):
         self.assertIn("bed 1.0×", svg)
         self.assertNotIn("soilie",svg)
 
+    def test_geometry_illustration_can_omit_unpublished_front_axes(self):
+        scene = fixture("soilie",1)["scene"]
+        for item in scene["objects"]:
+            item.pop("frontDirection", None)
+        with self.assertRaises(ValueError):
+            diagram(scene)
+        svg = diagram(scene, show_fronts=False)
+        self.assertNotIn('class="front"',svg)
+        self.assertNotIn("Cyan arrows",svg)
+
     def test_review_metrics_keep_missing_values_unavailable(self):
         row = fixture("soilie",1)
         values = {item["id"]:item for item in review_metrics(row)}
@@ -176,6 +217,12 @@ class ExportTests(unittest.TestCase):
         self.assertNotIn("stimulusEvidence", compact)
         self.assertEqual({"responseRows": 2, "stimulusPairs": 1, "stimulusEvidenceRows": 1,
                           "download": "ai-pilot-responses.json"}, compact["detailedEvidence"])
+
+    def test_public_summary_can_name_a_separate_baseline_export(self):
+        compact = public_summary({"responses":[],"stimuli":[],"stimulusEvidence":[]},
+                                 "ai-pilot-infinigen-responses.json")
+        self.assertEqual("ai-pilot-infinigen-responses.json",
+                         compact["detailedEvidence"]["download"])
 
     def test_combined_export_separates_numeric_dominance_from_overall_preference(self):
         protocol = {
@@ -250,6 +297,7 @@ class ExportTests(unittest.TestCase):
         self.assertTrue(all("Judge only the assigned dimension" in row["reviewPrompt"] for row in result["reviewers"]))
         self.assertTrue(all("object sets are fixed experimental inputs" in row["reviewPrompt"] for row in result["reviewers"]))
         self.assertTrue(all("conventional counterpart is not a defect" in row["reviewPrompt"] for row in result["reviewers"]))
+        self.assertTrue(all("not a technical or rendering-error field" in row["reviewPrompt"] for row in result["reviewers"]))
         self.assertTrue(all(row["decisionRubric"] == FOCUS_ONLY_RUBRIC for row in result["reviewers"]))
         self.assertTrue(all(row["dimensionRubric"] == FOCUS_PROFILES["orientation"] for row in result["reviewers"]))
         self.assertTrue(all(row["evidenceRubric"] == EVIDENCE_RUBRICS["visual_only"] for row in result["reviewers"]))

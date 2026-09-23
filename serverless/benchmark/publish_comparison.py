@@ -19,12 +19,17 @@ from serverless.benchmark.nonhuman import matched_validity_rates, soilie_diagnos
 METRICS = {
     "meanWorstSolidOverlapPct": {"title": "Evaluated mesh intersection", "unit": "%", "direction": "lower", "meaning": "For closed evaluated meshes, the largest occupied volume shared with another object is divided by that object's occupied volume and averaged across the room. Disjoint bounds or disjoint evaluated triangle surfaces establish zero physical intersection. The publication step rejects an incomplete SOILIE measurement."},
     "meanWorstEnvelopeOverlapPct": {"title": "Object-envelope intrusion", "unit": "%", "direction": "lower", "meaning": "A cross-source diagnostic based on oriented enclosing boxes. It is available for releases that do not include meshes, but it measures crowded envelopes rather than physical material collision."},
-    "meanOutsideFootprintPct": {"title": "Furniture footprint outside the room", "unit": "%", "direction": "lower", "meaning": "The fraction of each furniture footprint outside the original boundary, averaged across the room. Auto-built rooms and fixed input rooms remain different tasks."},
+    "meanOutsideFootprintPct": {"title": "Floor-supported furniture footprint outside the room", "unit": "%", "direction": "lower", "meaning": "The fraction of each floor-supported furniture footprint outside the original boundary, averaged across the room. Wall- and ceiling-mounted objects are omitted because the floor is not their support surface. Auto-built rooms and fixed input rooms remain different tasks."},
     "supportGapCm": {"title": "Sampled gap to a supporting surface", "unit": "cm", "direction": "lower", "meaning": "Smallest vertical gap from actual lowest mesh vertices and sampled lower surfaces to a real supporting mesh, averaged over measured objects. Probes can miss contacts; a positive gap is not proof of floating, and contact is not proof of stability."},
     "belowFloorCm": {"title": "Depth below the floor", "unit": "cm", "direction": "lower", "meaning": "Object depth below the floor, averaged over measured objects."},
     "connectedClearancePct": {"title": "Connected clearance area", "unit": "%", "direction": "context", "meaning": "Largest connected area where the centre of a 0.6 m-wide, 1.8 m-tall cylinder fits, as a fraction of room area. More space is not automatically a better room."},
 }
-LABELS = {"soilie": "SOILIE-3D", "layoutgpt": "LayoutGPT", "infinigen": "Infinigen Indoors"}
+LABELS = {
+    "soilie": "SOILIE-3D",
+    "layoutgpt": "LayoutGPT",
+    "infinigen": "Infinigen Indoors (native room-scale task)",
+    "infinigen_controlled": "Infinigen Indoors (controlled six-object task)",
+}
 
 
 def attach_front_directions(scene):
@@ -98,7 +103,7 @@ def compare(rows):
     for row in rows:
         groups[row["scene"]["model"]][stratum(row["scene"], row["metrics"])].append(row)
     results = []
-    for baseline in ("layoutgpt", "infinigen"):
+    for baseline in ("layoutgpt", "infinigen_controlled"):
         shared = sorted(set(groups["soilie"]) & set(groups[baseline]))
         sides = {model: [row for key in shared for row in groups[model][key]] for model in ("soilie", baseline)}
         metric_results = {}
@@ -137,6 +142,7 @@ def main():
     parser.add_argument("--runs", type=Path, nargs="+", required=True)
     parser.add_argument("--layoutgpt", type=Path, required=True)
     parser.add_argument("--infinigen", type=Path)
+    parser.add_argument("--infinigen-controlled", type=Path, nargs="+")
     parser.add_argument("--support-replays", type=Path, nargs="*", default=[])
     parser.add_argument("--rates", type=Path, required=True)
     parser.add_argument("--layoutgpt-cost-profile", type=Path, required=True,
@@ -190,6 +196,25 @@ def main():
     if args.infinigen:
         indoors = json.loads(args.infinigen.read_text())
         scenes.extend(indoors["scenes"])
+    controlled_indoors = {"scenes":[],"attempts":[],"invalidArtifacts":[],"configuration":None}
+    if args.infinigen_controlled:
+        controlled_configurations = []
+        for path in args.infinigen_controlled:
+            shard = json.loads(path.read_text())
+            if any(scene.get("model") != "infinigen_controlled" for scene in shard["scenes"]):
+                raise ValueError("Controlled Infinigen input must use the controlled model identifier")
+            controlled_indoors["scenes"].extend(shard["scenes"])
+            controlled_indoors["attempts"].extend(shard["attempts"])
+            controlled_indoors["invalidArtifacts"].extend(shard["invalidArtifacts"])
+            controlled_configurations.append(shard["configuration"])
+        profiles = {configuration.get("profile") for configuration in controlled_configurations}
+        if profiles != {"controlled-six-fast"}:
+            raise ValueError("Every controlled Infinigen shard must use controlled-six-fast")
+        controlled_indoors["configuration"] = {
+            "profile":"controlled-six-fast",
+            "shards":controlled_configurations,
+        }
+        scenes.extend(controlled_indoors["scenes"])
     rows, invalid = measured_rows(scenes)
     if len({row["scene"]["id"] for row in rows}) != len(rows):
         raise ValueError("Duplicate scene IDs would inflate sample sizes")
@@ -198,8 +223,12 @@ def main():
     successful_time = [row["generationSeconds"] for row in attempts if row["status"] == "complete"]
     successful_total = sum(successful_time)
     indoors_attempts = indoors["attempts"]
-    indoors_times = [row["generationSeconds"] for row in indoors_attempts if row["status"] == "complete"]
-    indoors_total = sum(row["generationSeconds"] for row in indoors_attempts)
+    indoors_times = [row["generationSeconds"] for row in indoors_attempts
+                     if row["status"] == "complete" and row.get("timingEligible", True)]
+    indoors_total = sum(indoors_times)
+    controlled_indoors_times = [row["generationSeconds"] for row in controlled_indoors["attempts"]
+                                if row["status"] == "complete" and row.get("timingEligible", True)]
+    controlled_indoors_total = sum(controlled_indoors_times)
     incidents = json.loads(args.incidents.read_text())["incidents"] if args.incidents else []
     indoors_incidents = [row for row in incidents if row["model"] == "infinigen"]
     indoors_timing_complete = not any(not row["generationTimingAvailable"] for row in indoors_incidents)
@@ -219,6 +248,8 @@ def main():
                 "supportReplays":support_evidence,
                 "infinigenInvalidArtifacts":indoors["invalidArtifacts"],
                 "infinigenConfiguration":indoors["configuration"],
+                "infinigenControlledInvalidArtifacts":controlled_indoors["invalidArtifacts"],
+                "infinigenControlledConfiguration":controlled_indoors["configuration"],
                 "infrastructureIncidents":incidents,
                 "timing": {"soilie": {"completedPerMinute": 60*len(successful_time)/successful_total if successful_total else None,
                                       "completedLatencySeconds": summarize(successful_time),
@@ -226,16 +257,23 @@ def main():
                                       "failedAttemptsExcludedFromTiming":sum(row["status"] != "complete" for row in attempts),
                                       "failureCounts":dict(Counter(row.get("errorCode","UNCLASSIFIED_FAILURE") for row in attempts if row["status"] != "complete"))},
                            "layoutgpt": {"available": False, "reason": "Released layouts do not include inference timings."},
-                           "infinigen":{"available":bool(indoors_attempts),"attempted":len(indoors_attempts),
-                                         "completed":len(indoors_times),"allAttemptSeconds":indoors_total if indoors_timing_complete else None,
-                                         "recordedAttemptSeconds":indoors_total,
-                                         "infrastructureInterruptedExecutions":sum(row["affectedExecutions"] for row in indoors_incidents),
+                           "infinigen":{"available":bool(indoors_times),
+                                         "completed":len(groups["infinigen"]),
+                                         "timedCompleted":len(indoors_times),
+                                         "successfulGenerationSeconds":indoors_total if indoors_timing_complete else None,
                                          "completedPerMinute":60*len(indoors_times)/indoors_total if indoors_total and indoors_timing_complete else None,
                                          "completedLatencySeconds":summarize(indoors_times),
-                                         "failures":dict(Counter(row["errorCode"] for row in indoors_attempts if row["status"] != "complete")),
                                          "profile":(indoors.get("configuration") or {}).get("profile"),
                                          "stage":(indoors.get("configuration") or {}).get("profileDescription") or
                                                  "Single-room coarse task: solving, procedural mesh construction, camera preparation and serialization; no image rendering"},
+                           "infinigenControlled":{"available":bool(controlled_indoors_times),
+                                         "completed":len(groups["infinigen_controlled"]),
+                                         "timedCompleted":len(controlled_indoors_times),
+                                         "successfulGenerationSeconds":controlled_indoors_total or None,
+                                         "completedPerMinute":60*len(controlled_indoors_times)/controlled_indoors_total if controlled_indoors_total else None,
+                                         "completedLatencySeconds":summarize(controlled_indoors_times),
+                                         "profile":(controlled_indoors.get("configuration") or {}).get("profile"),
+                                         "stage":"Controlled six-object single-room coarse task; solving, procedural mesh construction, camera preparation and serialization; no image rendering"},
                            "grains": {"evidence": "paper-reported", "scenes": 10000, "seconds": 1027, "hierarchySeconds": 94, "placementSeconds": 933,
                                       "hardware": "GTX 1080 Ti and Intel i7-8700; after training", "source": "https://arxiv.org/html/1807.09193"}},
                 "selectionExplanation": json.loads(args.selection.read_text()),
@@ -243,7 +281,7 @@ def main():
                 "humanParticipants": 0,
                 "cost": cost_evidence(attempts, json.loads(args.rates.read_text()),
                                       json.loads(args.layoutgpt_cost_profile.read_text())),
-                "method": "Native final outputs, matched by room type, exact furniture count and 0.25-wide summed-footprint-density bins; equal weight per shared stratum. Not identical-input experiments.",
+                "method": "Final outputs matched by room type, exact furniture count and 0.25-wide summed-footprint-density bins, with equal weight per shared stratum. Infinigen's native workload is reported descriptively; its separately labelled six-object task enters matched comparisons. These are not identical-input experiments.",
                 "grainsAvailability": "The authors removed pretrained weights; no new GRAINS geometry or inference run is claimed."}
     args.output.mkdir(parents=True, exist_ok=True)
     illustrations = []
@@ -257,7 +295,7 @@ def main():
         if not pairs:
             continue
         pair = max(pairs,key=lambda pair: max(pair["fractions"]))
-        svg = diagram(sample["scene"],{pair["a"],pair["b"]})
+        svg = diagram(sample["scene"],{pair["a"],pair["b"]},show_fronts=False)
         filename = hashlib.sha256(svg.encode()).hexdigest()[:24]+".svg"
         directory = args.output/"illustrations"
         directory.mkdir(exist_ok=True)

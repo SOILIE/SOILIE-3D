@@ -46,12 +46,12 @@ def prefix(day):
     return f'files/outputs/benchmark-{day}/'
 
 
-def build(measurements, comparison, reviews, day, output):
+def build(measurements, comparison, reviews, day, output, review_stimuli_root=None):
     from serverless.benchmark.stimuli import diagram
+    from serverless.benchmark.geometry import furniture
     output.mkdir(parents=True,exist_ok=True)
     records, files = [], {}
-    def artifact(folder, data, extension, content_type):
-        body = packed(data) if extension == 'json' else data.encode('utf-8')
+    def artifact_bytes(folder, body, extension, content_type):
         sha = hashlib.sha256(body).hexdigest()
         relative = f'{folder}/{sha[:24]}.{extension}'
         path = output/relative
@@ -61,6 +61,9 @@ def build(measurements, comparison, reviews, day, output):
         path.write_bytes(body)
         files[relative] = {'sha256':sha,'bytes':len(body),'contentType':content_type}
         return relative
+    def artifact(folder, data, extension, content_type):
+        body = packed(data) if extension == 'json' else data.encode('utf-8')
+        return artifact_bytes(folder,body,extension,content_type)
     seen = set()
     for row in measurements['rows']:
         scene = row['scene']
@@ -70,16 +73,20 @@ def build(measurements, comparison, reviews, day, output):
         seen.add(identity)
         public_only(row)
         folder = f"scenes/{scene['model']}/{scene['id']}"
+        show_fronts = all(item.get('frontDirection') is not None for item in furniture(scene))
         record = {'id':scene['id'],'model':scene['model'],'roomType':scene['roomType'],'cohort':scene.get('cohort','comparison'),
                   'objects':[obj['label'] for obj in scene['objects']],
                   'geometry':artifact(folder,row,'json','application/json'),
-                  'diagram':artifact(folder,diagram(scene),'svg','image/svg+xml')}
+                  'diagram':artifact(folder,diagram(scene,show_fronts=show_fronts),'svg','image/svg+xml')}
         records.append(record)
     summary = artifact('evidence',comparison,'json','application/json')
     reports = [artifact('ai-reviews',review,'json','application/json') for review in reviews]
     from serverless.study.combine_pilots import combine
     from serverless.benchmark.interpretation import discussion
-    combined = combine(reviews) if reviews else None
+    # Focused reviewers answer different questions, so their votes must never
+    # be collapsed into the legacy overall-preference aggregate.
+    focused = any(review.get('decisionScope') == 'focus_only' for review in reviews)
+    combined = combine(reviews) if reviews and not focused else None
     combined_path = artifact('ai-reviews',combined,'json','application/json') if combined else None
     narrative = artifact('evidence',discussion(comparison,combined),'md','text/markdown; charset=utf-8')
     # Preserve the original response exports and resolve their immutable image
@@ -90,15 +97,27 @@ def build(measurements, comparison, reviews, day, output):
         for case in report['stimuli']:
             for key in ('soilieImage','baselineImage'):
                 source = case[key]
-                if Path(source).stem not in diagrams:
-                    raise ValueError('Reviewed stimulus is missing from the scene archive')
-                stimuli[source] = diagrams[Path(source).stem]
+                source_name = Path(source).name
+                if not re.fullmatch(r'[a-f0-9]{24}\.svg',source_name):
+                    raise ValueError('Reviewed stimulus path is not content addressed')
+                source_stem = Path(source_name).stem
+                if source_stem not in diagrams:
+                    if review_stimuli_root is None:
+                        raise ValueError(f'Reviewed stimulus is missing from the scene archive: {source_name}')
+                    frozen = review_stimuli_root/source_name
+                    if not frozen.is_file():
+                        raise ValueError(f'Reviewed stimulus file is missing: {source_name}')
+                    body = frozen.read_bytes()
+                    if not hashlib.sha256(body).hexdigest().startswith(source_stem):
+                        raise ValueError(f'Reviewed stimulus checksum does not match its filename: {source_name}')
+                    diagrams[source_stem] = artifact_bytes('review-stimuli',body,'svg','image/svg+xml')
+                stimuli[source] = diagrams[source_stem]
     document = {'schemaVersion':1,'archiveDateUtc':day,'generatedAt':datetime.now(UTC).isoformat(),
                 'prefix':prefix(day),'counts':dict(Counter(row['model'] for row in records)),
                 'scenes':records,'comparison':summary,'aiReviews':reports,'combinedAiPilot':combined_path,
                 'interpretation':narrative,'reviewStimulusPaths':stimuli,'files':files,
                 'description':'Final layout observations and standardized plan/oblique bounding-box diagrams, not photorealistic renders or imagination sequences.',
-                'sampling':'All completed measured scenes in this checkpoint, not a quality-selected gallery. Failed attempts remain in the comparison accounting.',
+                'sampling':'All completed measured scenes in the evaluated corpora, not a quality-selected gallery.',
                 'retention':'Research archive outside generated/; no seven-day expiry rule applies.',
                 'aiScope':'AI-only exploratory evaluation. No human validation claim. Each wave retains its frozen stimulus version.',
                 'sources':{'soilie':'https://github.com/soilie/SOILIE-3D',
@@ -202,6 +221,7 @@ def main():
     parser.add_argument('--comparison',type=Path)
     parser.add_argument('--extra-measurements',type=Path,nargs='*',default=[])
     parser.add_argument('--reviews',type=Path,nargs='*',default=[])
+    parser.add_argument('--review-stimuli-root',type=Path)
     parser.add_argument('--date',default=datetime.now(UTC).date().isoformat())
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--publish',action='store_true')
@@ -222,7 +242,8 @@ def main():
                 raise ValueError('Additional archive inputs must be labelled as a separate diversity cohort')
             measurements['rows'].extend(extra['rows'])
         document = build(measurements,json.loads(args.comparison.read_bytes()),
-                         [json.loads(path.read_bytes()) for path in args.reviews],args.date,args.output)
+                         [json.loads(path.read_bytes()) for path in args.reviews],args.date,args.output,
+                         args.review_stimuli_root)
         print(json.dumps({'builtScenes':len(document['scenes']),'files':len(document['files'])}),flush=True)
     if args.publish:
         import boto3

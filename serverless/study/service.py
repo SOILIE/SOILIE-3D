@@ -54,6 +54,7 @@ FOCUS_ONLY_RUBRIC = (
     "The object sets are fixed experimental inputs and may differ. Judge only how the objects that are present are arranged. "
     "Do not reward or penalize inventory composition, the presence of a useful object category, conventional pairings, or breadth of function. "
     "An object having no conventional counterpart is not a defect; never infer that either method should have generated another object. "
+    "Separately mark which side has the clearer visible problem on the assigned dimension; this is not a technical or rendering-error field and may be both, neither, or uncertain. "
     "Give confidence from 1 (very uncertain) to 5 (very confident) and explain only the visible evidence relevant to the assigned dimension. "
     "Do not infer hidden geometry, method identity, absolute scale between independently fitted panels, or unavailable details. Do not consult other reviewers or numerical benchmark scores."
 )

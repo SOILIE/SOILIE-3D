@@ -1,4 +1,5 @@
 """Interpret official solver metadata without inferring rooms from box positions."""
+import math
 import re
 
 
@@ -62,3 +63,38 @@ def vertically_supported(record):
     parents = [tag for relation in record["relations"]
                for tag in relation.get("relation", {}).get("parent_tags", [])]
     return "Subpart(support)" in parents or not any(tag in parents for tag in ("Subpart(wall)", "Subpart(ceiling)"))
+
+
+def largest_coplanar_surface(horizontal, tolerance=1e-5):
+    """Select the dominant floor layer when a mesh also contains thresholds.
+
+    ``horizontal`` contains ``(elevation, polygon)`` pairs. Polygons need only
+    expose an ``area`` attribute, keeping the grouping policy independently
+    testable without loading Blender.
+    """
+    if not horizontal:
+        raise ValueError("Expected at least one horizontal tagged surface")
+    layers = []
+    for elevation, polygon in sorted(horizontal, key=lambda item:item[0]):
+        layer = next((candidate for candidate in layers
+                      if abs(candidate["elevation"]-elevation) <= tolerance), None)
+        if layer is None:
+            layer = {"elevation":elevation,"polygons":[]}
+            layers.append(layer)
+        layer["polygons"].append(polygon)
+    return max(layers, key=lambda candidate:math.fsum(polygon.area for polygon in candidate["polygons"]))
+
+
+def polygon_components(geometry):
+    """Return every emitted polygonal component without filling gaps."""
+    if geometry.geom_type == "Polygon":
+        return [geometry]
+    polygons = []
+    for part in getattr(geometry, "geoms", []):
+        if part.geom_type == "Polygon":
+            polygons.append(part)
+        elif part.geom_type == "MultiPolygon":
+            polygons.extend(part.geoms)
+    if not polygons:
+        raise ValueError(f"Tagged floor union has no polygonal component: {geometry.geom_type}")
+    return sorted(polygons, key=lambda polygon: (-polygon.area, polygon.bounds))

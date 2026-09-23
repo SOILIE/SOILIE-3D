@@ -14,7 +14,7 @@ import statistics
 
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError
-from shapely.geometry import MultiPoint, Polygon
+from shapely.geometry import MultiPoint, MultiPolygon, Polygon
 from shapely.ops import unary_union
 
 SCHEMA_VERSION = 2
@@ -90,6 +90,25 @@ def furniture(scene):
             and canonical_label(item["label"]) not in ARCHITECTURE]
 
 
+def room_regions(room):
+    """Return explicit room regions, preserving disconnected emitted floors."""
+    regions = room.get("regions")
+    if regions is None:
+        regions = [{"polygon":room["polygon"], "holes":room.get("holes", [])}]
+    if not regions:
+        raise ValueError("Room boundary must contain at least one region")
+    return regions
+
+
+def room_geometry(room):
+    polygons = [Polygon(region["polygon"], region.get("holes", []))
+                for region in room_regions(room)]
+    geometry = polygons[0] if len(polygons) == 1 else MultiPolygon(polygons)
+    if not geometry.is_valid or geometry.area <= 1e-12:
+        raise ValueError("Room boundary is invalid")
+    return geometry
+
+
 def measure(scene):
     items = furniture(scene)
     if len({item["id"] for item in scene["objects"]}) != len(scene["objects"]):
@@ -97,9 +116,10 @@ def measure(scene):
     if not items:
         raise ValueError("A measured scene must contain furniture")
     boxes = [Box(item) for item in items]
-    room = Polygon(scene["room"]["polygon"], scene["room"].get("holes", []))
-    if not room.is_valid or room.area <= 1e-12:
-        raise ValueError("Room boundary is invalid")
+    floor_indices = [index for index,item in enumerate(items) if item.get("supportEligible", True)]
+    if not floor_indices:
+        raise ValueError("A physical room must contain at least one floor-supported object")
+    room = room_geometry(scene["room"])
     worst = [0.0] * len(boxes)
     pairs = []
     for a, b in combinations(range(len(boxes)), 2):
@@ -111,21 +131,23 @@ def measure(scene):
         worst[a], worst[b] = max(worst[a], ratios[0]), max(worst[b], ratios[1])
         if volume > 1e-10:
             pairs.append({"a": items[a]["id"], "b": items[b]["id"], "fractions": ratios})
-    outside = [max(0.0, min(1.0, box.footprint.difference(room).area / box.footprint.area)) for box in boxes]
+    outside = {index:max(0.0, min(1.0, boxes[index].footprint.difference(room).area / boxes[index].footprint.area))
+               for index in floor_indices}
     metric = {
         "objectCount": len(items), "roomArea": room.area,
-        "furnitureDensity": sum(box.footprint.area for box in boxes)/room.area,
+        "furnitureDensity": sum(boxes[index].footprint.area for index in floor_indices)/room.area,
         "meanWorstEnvelopeOverlapPct": statistics.fmean(worst)*100,
         "maxEnvelopeOverlapPct": max(worst)*100,
-        "meanOutsideFootprintPct": statistics.fmean(outside)*100,
-        "maxOutsideFootprintPct": max(outside)*100,
+        "meanOutsideFootprintPct": statistics.fmean(outside.values())*100,
+        "maxOutsideFootprintPct": max(outside.values())*100,
         "envelopeOverlapPairs": pairs,
-        "objects": [{"id": item["id"], "worstEnvelopeOverlapPct": worst[i]*100, "outsideFootprintPct": outside[i]*100}
+        "objects": [{"id": item["id"], "worstEnvelopeOverlapPct": worst[i]*100,
+                     "outsideFootprintPct": outside[i]*100 if i in outside else None}
                     for i, item in enumerate(items)],
         "meanWorstSolidOverlapPct": None, "maxSolidOverlapPct": None,
         "solidOverlapPairs": [], "solidOverlapMethod": None,
         "connectedClearancePct": None, "supportGapCm": None, "belowFloorCm": None,
-        "unavailable": {},
+        "unavailable": {}, "boundaryObjectsMeasured": len(floor_indices),
     }
     solid = scene.get("solidMeshOverlap")
     if solid is None:
@@ -154,8 +176,8 @@ def measure(scene):
         if not isinstance(floor_z, (int,float)) or not math.isfinite(floor_z):
             raise ValueError("Physical floor elevation must be finite")
         # Configuration-space clearance for a 0.6 m-wide, 1.8 m-tall cylinder.
-        obstacles = [box.footprint.buffer(0.3, quad_segs=16) for box in boxes
-                     if box.high[2] > floor_z and box.low[2] < floor_z+1.8]
+        obstacles = [boxes[index].footprint.buffer(0.3, quad_segs=16) for index in floor_indices
+                     if boxes[index].high[2] > floor_z and boxes[index].low[2] < floor_z+1.8]
         free = room.buffer(-0.3, quad_segs=16).difference(unary_union(obstacles))
         components = list(free.geoms) if hasattr(free, "geoms") else [free]
         metric["connectedClearancePct"] = max((part.area for part in components), default=0)/room.area*100

@@ -24,6 +24,15 @@ def reviewer_model(document):
     return f"{model.strip()} ({effort.strip()} reasoning effort)"
 
 
+def clean_static_path(site, request_path):
+    """Map a production-style clean route to an existing local HTML file."""
+    if request_path != "/" and not Path(request_path).suffix:
+        candidate = site/(request_path.lstrip("/")+".html")
+        if candidate.is_file():
+            return request_path+".html"
+    return request_path
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--site",type=Path,required=True)
@@ -62,7 +71,8 @@ def main():
             return super().guess_type(path)
 
         def do_GET(self):
-            if self.path.split("?")[0].startswith("/api-config"):
+            request_path, separator, query = self.path.partition("?")
+            if request_path.startswith("/api-config"):
                 script = b'window.SOILIE_API_BASE = ""; window.SOILIE_STUDY_API_BASE = "";'
                 self.send_response(200)
                 self.send_header("Content-Type","text/javascript")
@@ -70,6 +80,12 @@ def main():
                 self.end_headers()
                 self.wfile.write(script)
             else:
+                # CloudFront serves clean website routes such as /study. Mirror
+                # that contract locally so the browser pilot exercises the same
+                # URL instead of relying on a test-only .html address.
+                resolved_path = clean_static_path(args.site, request_path)
+                if resolved_path != request_path:
+                    self.path = resolved_path+(separator+query if separator else "")
                 super().do_GET()
 
         def do_POST(self):

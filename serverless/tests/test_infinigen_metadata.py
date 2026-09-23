@@ -1,7 +1,12 @@
 from copy import deepcopy
+from types import SimpleNamespace
 import unittest
 
-from serverless.benchmark.infinigen_metadata import ancestor_rooms, asset_label, generated_instances, vertically_supported
+from shapely.geometry import GeometryCollection, MultiPolygon, Point, Polygon
+
+from serverless.benchmark.infinigen_metadata import (ancestor_rooms, asset_label, generated_instances,
+                                                     largest_coplanar_surface, polygon_components,
+                                                     vertically_supported)
 
 
 def records():
@@ -15,6 +20,26 @@ def records():
 
 
 class InfinigenMetadataTests(unittest.TestCase):
+    def test_largest_coplanar_floor_ignores_smaller_raised_thresholds(self):
+        main = SimpleNamespace(area=24.0)
+        threshold_a = SimpleNamespace(area=.12)
+        threshold_b = SimpleNamespace(area=.11)
+        layer = largest_coplanar_surface([
+            (.1271702, main), (.1371703, threshold_a), (.13717031, threshold_b),
+        ])
+        self.assertAlmostEqual(layer["elevation"], .1271702)
+        self.assertEqual(layer["polygons"], [main])
+        with self.assertRaises(ValueError):
+            largest_coplanar_surface([])
+
+    def test_floor_components_preserve_disconnected_emitted_regions(self):
+        small = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+        main = Polygon([(3, 0), (7, 0), (7, 3), (3, 3)])
+        self.assertEqual([main, small], polygon_components(MultiPolygon([small, main])))
+        self.assertEqual([main], polygon_components(GeometryCollection([Point(0, 0), main])))
+        with self.assertRaises(ValueError):
+            polygon_components(Point(0, 0))
+
     def test_supported_objects_follow_original_room_without_crossing_neighbours(self):
         data = records()
         self.assertEqual({"room-a"},ancestor_rooms(data,"lamp"))
