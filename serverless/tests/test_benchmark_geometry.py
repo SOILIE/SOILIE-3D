@@ -87,6 +87,31 @@ class GeometryTests(unittest.TestCase):
         self.assertIsNone(result['supportGapCm'])
         self.assertEqual(100, result['belowFloorCm'])
 
+    def test_support_categories_have_separate_object_denominators(self):
+        a, b, c = item('table', [1,1,.5]), item('book', [1,1,1.5]), item('chair', [3,3,.5])
+        for obj, gap, kind in ((a,.01,'floor'), (b,.02,'object'), (c,.03,'floor')):
+            obj['support'] = {'source':'mesh-ray-samples','samplingVersion':2,
+                              'gapM':gap,'belowFloorM':0,'supportKind':kind,'supportId':'base'}
+        result = measure(scene(a,b,c))
+        self.assertAlmostEqual(2, result['floorSupportGapCm'])
+        self.assertAlmostEqual(2, result['objectSupportGapCm'])
+        self.assertEqual(2, result['supportCategoryCounts']['floor'])
+        self.assertEqual(1, result['supportCategoryCounts']['object'])
+        self.assertIsNone(measure(scene(a,c))['objectSupportGapCm'])
+
+    def test_unclassified_legacy_support_cannot_be_assumed_to_be_floor_support(self):
+        a = item('a', [1,1,.5])
+        a['support'] = {'source':'mesh-ray-samples','samplingVersion':2,'gapM':0,'belowFloorM':0}
+        result = measure(scene(a))
+        self.assertIsNone(result['floorSupportGapCm'])
+        self.assertEqual(1, result['supportCategoryCounts']['unclassified'])
+
+    def test_exact_mesh_contact_evidence_is_accepted_with_its_own_method_version(self):
+        a = item('a', [1,1,.5])
+        a['support'] = {'source':'mesh-vertical-contact','samplingVersion':3,
+                        'gapM':.0000005,'belowFloorM':0,'supportKind':'object','supportId':'base'}
+        self.assertAlmostEqual(.00005, measure(scene(a))['objectSupportGapCm'])
+
     def test_floor_holes_are_not_usable_room_area(self):
         layout = scene(item("a", [2,2,.5]))
         layout["room"]["holes"] = [[[1,1],[3,1],[3,3],[1,3]]]

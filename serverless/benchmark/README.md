@@ -96,6 +96,41 @@ attach that directory only after parity passes. Never overwrite old checkpoints
 or mix these observation replays into generation throughput. Positive sampled
 gaps can still miss a contact; contact alone does not establish physical stability.
 
+Support observations identify the nearest sampled mesh below the object as
+`floor`, `object`, or `architecture`, with the supporting instance ID. A book
+on a table is measured against that table, not against the floor. The floor and
+object categories each average only their measured objects within a room;
+absent categories remain unavailable rather than zero. Published distributions
+then give each measured room equal weight. Wall-mounted objects are not tested
+for vertical support, but their meshes may support other objects.
+
+`settle_saved.py` restores saved placements without repeating selection or the
+relational solver. It checks asset checksums, reconstructs the import/front
+rotation order, and rejects mismatching recorded bounds. `--observe-only`
+adds support identities with no placement changes and checks sampled distances
+against the source. `--audit-original` performs the same measurement check before
+correction. The Blender restoration fixture additionally compares actual vertices,
+including the last selected import whose import-axis rotation is baked first.
+
+For correction, the finite floor and actual supporting meshes stop vertical
+motion; higher objects settle after their supports. Contact uses projected
+triangle intersections, including edge crossings missed by vertex rays. The
+ten-micrometre numerical contact tolerance is retained in recorded distances.
+Changed scenes must pass fresh mesh-intersection measurements. Original attempts
+stay untouched; derived records retain source/code checksums and separate
+correction time. Do not transfer old AI votes to changed geometry or present
+original generation time alone as timing the corrected pipeline.
+
+```bash
+blender --background --factory-startup --threads 1 --python-exit-code 2 \
+  --python serverless/benchmark/settle_saved.py -- \
+  --input .codex/benchmark/soilie-bedroom-v4.0.2 \
+  --output .codex/benchmark/soilie-support-corrected
+```
+
+Reusing the output directory resumes only when source and correction checksums
+match. `--start` and `--limit` allow bounded validation before the full replay.
+
 Matching uses room type, exact furniture count and 0.25-wide bins of summed
 furniture footprint area divided by room area. Each shared stratum has equal
 weight in comparisons. Native-output distributions retain unmatched scenes.

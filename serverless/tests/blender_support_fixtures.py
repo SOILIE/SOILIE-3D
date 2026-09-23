@@ -57,6 +57,31 @@ class MeshSupportFixtures(unittest.TestCase):
         vertices, tree = mesh(box((10,10,1), (.2,.2,.2)))
         self.assertIsNone(sample_support(vertices, tree, [self.floor], 0)['gapM'])
 
+    def test_floor_and_table_support_are_identified_without_changing_distance(self):
+        _, table = mesh(*self.parts)
+        for center, kind, identity, expected in (((0,0,1.1), 'object', 'table', 0),
+                                                ((3,3,.3), 'floor', 'Floor', .2)):
+            vertices, tree = mesh(box(center, (.2,.2,.2)))
+            result = sample_support(vertices, tree, [self.floor, table], 0, support_metadata=[
+                {'kind':'floor', 'id':'Floor'}, {'kind':'object', 'id':'table'}])
+            self.assertEqual((kind, identity), (result['supportKind'], result['supportId']))
+            self.assertAlmostEqual(expected, result['gapM'], places=5)
+
+    def test_support_gap_is_not_the_height_of_a_book_above_floor(self):
+        _, table = mesh(*self.parts)
+        vertices, tree = mesh(box((0,0,1.3), (.2,.2,.2)))
+        result = sample_support(vertices, tree, [table, self.floor], 0, support_metadata=[
+            {'kind':'object','id':'table'}, {'kind':'floor','id':'Floor'}])
+        self.assertAlmostEqual(.2, result['gapM'], places=5)
+        self.assertEqual('object', result['supportKind'])
+
+    def test_missing_hit_does_not_invent_support_category(self):
+        vertices, tree = mesh(box((10,10,1), (.2,.2,.2)))
+        result = sample_support(vertices, tree, [self.floor], 0,
+                                support_metadata=[{'kind':'floor','id':'Floor'}])
+        self.assertIsNone(result['gapM'])
+        self.assertNotIn('supportKind', result)
+
     def test_below_floor_uses_actual_mesh_vertices(self):
         vertices, tree = mesh(box((0,0,0), (.2,.2,.2)))
         self.assertAlmostEqual(.1, sample_support(vertices, tree, [self.floor], 0)['belowFloorM'], places=5)

@@ -17,13 +17,14 @@ BASELINE = {
 }
 
 # These files intentionally differ from publication-2025. Pinning their patched
-# bytes keeps the V4.0.2 maintenance surface explicit instead of weakening the
+# bytes keeps the reviewed maintenance surface explicit instead of weakening the
 # original-file parity check whenever a regression repair touches V4 code.
-V4_0_2_MAINTENANCE = {
+REVIEWED_MAINTENANCE = {
     "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
     "modules/working_combos.py": "8dff9d87bd9c26334c48afe07510fa9325692b82cc9602d734b0bdbd4e61b956",
     "modules/prepare_data.py": "98c4fa9509ced827b97173710d7a27d4bfb28956832649d42dcaf495de57c517",
-    "modules/render.py": "64b3f156b6c9dfb2c95c248ab5706808c08b98988f61aff8f2576826dc4aecf5",
+    "modules/render.py": "be6bcfb38016a91928f23012606edaf19b18a590a6c4964d925db8197ce88bf4",
+    "modules/support_settlement.py": "cd5ae265a0d1edb0cfd951d975cd5bd7cf76483956504677f34671dbcae55aeb",
 }
 
 
@@ -35,12 +36,12 @@ class V4ParityTests(unittest.TestCase):
         }
         self.assertEqual(BASELINE, observed)
 
-    def test_v4_0_2_maintenance_files_match_reviewed_patch_bytes(self):
+    def test_maintenance_files_match_reviewed_patch_bytes(self):
         observed = {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-            for name in V4_0_2_MAINTENANCE
+            for name in REVIEWED_MAINTENANCE
         }
-        self.assertEqual(V4_0_2_MAINTENANCE, observed)
+        self.assertEqual(REVIEWED_MAINTENANCE, observed)
 
     def test_runtime_records_the_exact_repository_source(self):
         provenance_path = ROOT / ".codex" / "runtime" / "v4-provenance.json"

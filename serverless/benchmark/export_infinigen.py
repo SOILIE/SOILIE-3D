@@ -185,7 +185,14 @@ def main():
     for obj in objects:
         if obj["supportEligible"]:
             points, own = geometry[obj["id"]]
-            sampled = sample_support(points,own,[room_tree,floor_tree]+[tree for key,(_,tree) in geometry.items() if key != obj["id"]],room["floorZ"])
+            others = [(key, tree) for key, (_, tree) in geometry.items() if key != obj['id']]
+            # Prefer the separately emitted floor over coincident room-shell
+            # triangles so floor contact has an unambiguous category.
+            sampled = sample_support(points, own, [floor_tree, room_tree]+[tree for _, tree in others],
+                                     room['floorZ'], support_metadata=[
+                                         {'id': floor_object.name, 'kind': 'floor'},
+                                         {'id': room_id, 'kind': 'architecture'},
+                                     ]+[{'id': key, 'kind': 'object'} for key, _ in others])
             if sampled:
                 obj["support"] = sampled
     try:

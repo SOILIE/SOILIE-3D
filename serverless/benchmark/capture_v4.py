@@ -55,8 +55,11 @@ def support_samples(obj, others, floor_z):
             evaluated.to_mesh_clear()
     points, own = tree(obj)
     # This includes the real floor mesh, not an infinite imagined floor plane.
-    supporting = [tree(other)[1] for other in others if other != obj and other.type == "MESH" and not other.hide_render]
-    return sample_support(points, own, supporting, floor_z)
+    bases = [other for other in others if other != obj and other.type == "MESH" and not other.hide_render]
+    supporting = [tree(other)[1] for other in bases]
+    identities = [{'id': other.name, 'kind': 'floor' if other.name == 'Floor' else
+                   'architecture' if other.name.endswith(' Wall') else 'object'} for other in bases]
+    return sample_support(points, own, supporting, floor_z, support_metadata=identities)
 
 
 def snapshot(inputs, stage, measure_support=False, measure_solids=False):

@@ -108,6 +108,8 @@ def record_v4_provenance(repository: Path, output: Path) -> dict:
         "optionalRoomFitChangesInteriorPlacement": False,
         "collisionRecoveryChangesOnlyRepeatedStates": True,
         "collisionRecovery": "deterministic whole-scene recovery after a repeated pairwise geometry state",
+        "supportSettlement": "deterministic vertical mesh contact after overlap correction and final floor containment",
+        "supportSettlementToleranceM": 1e-5,
     }
     provenance["assetCount"] = len(list((repository / "assets").glob("*.obj")))
     provenance["totalBytes"] = sum(entry["bytes"] for entry in provenance["files"].values())

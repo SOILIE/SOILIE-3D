@@ -21,6 +21,8 @@ METRICS = {
     "meanWorstEnvelopeOverlapPct": {"title": "Object-envelope intrusion", "unit": "%", "direction": "lower", "meaning": "A cross-source diagnostic based on oriented enclosing boxes. It is available for releases that do not include meshes, but it measures crowded envelopes rather than physical material collision."},
     "meanOutsideFootprintPct": {"title": "Floor-supported furniture footprint outside the room", "unit": "%", "direction": "lower", "meaning": "The fraction of each floor-supported furniture footprint outside the original boundary, averaged across the room. Wall- and ceiling-mounted objects are omitted because the floor is not their support surface. Auto-built rooms and fixed input rooms remain different tasks."},
     "supportGapCm": {"title": "Sampled gap to a supporting surface", "unit": "cm", "direction": "lower", "meaning": "Smallest vertical gap from actual lowest mesh vertices and sampled lower surfaces to a real supporting mesh, averaged over measured objects. Probes can miss contacts; a positive gap is not proof of floating, and contact is not proof of stability."},
+    "floorSupportGapCm": {"title": "Gap to floor support", "unit": "cm", "direction": "lower", "meaning": "Mean gap within each room for objects whose nearest measured supporting surface below is the floor. Rooms without measured floor-supported objects are omitted, not assigned zero."},
+    "objectSupportGapCm": {"title": "Gap to another object", "unit": "cm", "direction": "lower", "meaning": "Mean gap within each room for objects whose nearest measured supporting surface below belongs to another object, such as a book on a table. Rooms without measured object-supported objects are omitted, not assigned zero."},
     "belowFloorCm": {"title": "Depth below the floor", "unit": "cm", "direction": "lower", "meaning": "Object depth below the floor, averaged over measured objects."},
     "connectedClearancePct": {"title": "Connected clearance area", "unit": "%", "direction": "context", "meaning": "Largest connected area where the centre of a 0.6 m-wide, 1.8 m-tall cylinder fits, as a fraction of room area. More space is not automatically a better room."},
 }
@@ -65,10 +67,29 @@ def analysis_cohort(batch, config):
 
 def aggregate(rows):
     result = {name: summarize([row["metrics"].get(name) for row in rows]) for name in METRICS}
+    result['supportCategories'] = {kind: {
+        'objects': sum(row['metrics'].get('supportCategoryCounts', {}).get(kind, 0) for row in rows),
+        'rooms': sum(row['metrics'].get('supportCategoryCounts', {}).get(kind, 0) > 0 for row in rows),
+    } for kind in ('floor', 'object', 'architecture', 'unclassified')}
     result["unavailableReasons"] = dict(Counter(
         reason for row in rows for reason in row["metrics"].get("unavailable", {}).values()
     ))
     return result
+
+
+def write_support_evidence(rows, output):
+    """Compact, inspectable contacts backing the support charts, without meshes."""
+    observations = []
+    for row in rows:
+        scene = row['scene']
+        contacts = [dict(id=obj['id'], label=obj['label'], **obj['support'])
+                    for obj in scene['objects'] if obj.get('support')]
+        if contacts:
+            observations.append({'model': scene['model'], 'sceneId': scene['id'],
+                                 'roomType': scene['roomType'], 'objects': contacts})
+    document = {'schemaVersion': 1, 'units': 'm', 'rooms': observations,
+                'aggregation': 'Average gaps over measured objects in each support category within each room; then give measured rooms equal weight. Missing categories are not zero.'}
+    (output/'support-measurements.json').write_text(json.dumps(document, separators=(',', ':')), encoding='utf-8')
 
 
 def inventory_summary(rows):
@@ -315,6 +336,7 @@ def main():
     document["evidenceDigest"] = hashlib.sha256(packed.encode()).hexdigest()
     (args.output/"comparison.json").write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
     (args.output/"measured-scenes.json").write_text(json.dumps({"schemaVersion":2,"rows":rows}, separators=(",", ":")), encoding="utf-8")
+    write_support_evidence(rows, args.output)
     print(json.dumps({"measuredScenes":len(rows), "invalidGeometry":len(invalid), "output":str(args.output)}))
 
 

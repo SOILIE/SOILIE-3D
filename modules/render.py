@@ -794,8 +794,10 @@ def separate_objects(objA, objB, sizeA='medium', sizeB='medium', directions_to_s
         'trash_bin','trash_can','tv_stand']
 
     # Get object names from asset names
-    objA_name = objA.name[:-5].lower()
-    objB_name = objB.name[:-5].lower()
+    # Blender appends .001 to reused meshes. Strip that suffix before the
+    # asset number so a duplicate chair retains its floor-standing rule.
+    objA_name = blender_source_name(objA.name).rsplit('_', 1)[0].lower()
+    objB_name = blender_source_name(objB.name).rsplit('_', 1)[0].lower()
 
     # Determine whether either object is a surface object
     objA_has_surface = objA_name in surface_objs
@@ -1367,6 +1369,17 @@ def visualize(inputs):
     # pass changes only the floor and wall envelope, never object placement.
     if expand_room_to_contain_objects(inputs):
         print('---| Room containment repair activated (final envelope)')
+
+    # Stacking uses enclosing-box heights. A headboard or raised trim can be
+    # taller than the surface beneath an item. Settle against actual meshes
+    # after horizontal corrections and after the finite floor encloses them.
+    try:
+        from support_settlement import settle_objects
+    except ImportError:
+        from .support_settlement import settle_objects
+    support_moves = settle_objects(inputs)
+    if support_moves:
+        print('---| Final mesh support settlement:', json.dumps(support_moves))
 
     # Do a final adjustment of windows, blinds, and curtain to walls
     adjust_windows_to_walls()

@@ -147,6 +147,7 @@ def measure(scene):
         "meanWorstSolidOverlapPct": None, "maxSolidOverlapPct": None,
         "solidOverlapPairs": [], "solidOverlapMethod": None,
         "connectedClearancePct": None, "supportGapCm": None, "belowFloorCm": None,
+        "floorSupportGapCm": None, "objectSupportGapCm": None,
         "unavailable": {}, "boundaryObjectsMeasured": len(floor_indices),
     }
     solid = scene.get("solidMeshOverlap")
@@ -184,13 +185,24 @@ def measure(scene):
         # Version 1 used only nine XY rays, which can miss narrow feet and
         # incorrectly report a grounded table as floating. Never publish those
         # superseded gap observations as physical-support evidence.
-        samples = [item["support"] for item in items
-                   if item.get("support", {}).get("source") == "mesh-ray-samples"
-                   and item["support"].get("samplingVersion") == 2]
+        methods = {('mesh-ray-samples', 2), ('mesh-vertical-contact', 3),
+                   ('mesh-extremum-floor-contact', 3)}
+        samples = [item['support'] for item in items if (
+            item.get('support', {}).get('source'), item.get('support', {}).get('samplingVersion')) in methods]
         if any(type(sample[key]) not in (int,float) or not math.isfinite(sample[key]) or sample[key] < 0
                for sample in samples for key in ("gapM","belowFloorM") if sample[key] is not None):
             raise ValueError("Measured support distances must be finite and non-negative")
         metric["supportObjectsMeasured"] = len(samples)
+        metric['supportCategoryCounts'] = {kind: sum(sample.get('supportKind') == kind
+            and sample['gapM'] is not None for sample in samples)
+            for kind in ('floor', 'object', 'architecture')}
+        metric['supportCategoryCounts']['unclassified'] = sum(
+            sample.get('supportKind') is None and sample['gapM'] is not None for sample in samples)
+        for kind, target in (('floor', 'floorSupportGapCm'), ('object', 'objectSupportGapCm')):
+            values = [sample['gapM'] for sample in samples
+                      if sample.get('supportKind') == kind and sample['gapM'] is not None]
+            if values:
+                metric[target] = statistics.fmean(values)*100
         if samples:
             for source, target in (("gapM","supportGapCm"), ("belowFloorM","belowFloorCm")):
                 values = [sample[source] for sample in samples if sample[source] is not None]
