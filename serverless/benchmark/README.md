@@ -106,11 +106,13 @@ for vertical support, but their meshes may support other objects.
 
 `settle_saved.py` restores saved placements without repeating selection or the
 relational solver. It checks asset checksums, reconstructs the import/front
-rotation order, and rejects mismatching recorded bounds. `--observe-only`
+rotation order and both mass-centroid passes (including their normalization
+scales), and rejects mismatching recorded bounds. `--observe-only`
 adds support identities with no placement changes and checks sampled distances
 against the source. `--audit-original` performs the same measurement check before
 correction. The Blender restoration fixture additionally compares actual vertices,
-including the last selected import whose import-axis rotation is baked first.
+including the last selected import whose import-axis rotation is baked first
+and thin window coverings with nonuniform final dimensions.
 
 For correction, the finite floor and actual supporting meshes stop vertical
 motion; higher objects settle after their supports. Contact uses projected

@@ -61,20 +61,27 @@ asset orientation fails the parity check rather than approximating the mesh.
     bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS', center='BOUNDS')
     obj.location = (0, 0, 0)
     imported_max_dimension = max(obj.dimensions)
+    obj.scale *= 1/imported_max_dimension
     if last_imported:
         # V4's normalization operator acts on the last selected import, baking
         # its import-axis rotation before the asset-front Euler correction.
         # Adding those Euler angles directly is NOT the same operation. Cubic
         # bounds can hide the resulting wrong-facing mesh, so retain the order.
-        obj.scale *= 1/imported_max_dimension
         bpy.ops.object.transform_apply(scale=True)
-        bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS', center='BOUNDS')
-        obj.location = (0, 0, 0)
+    # transform_objects recentres EVERY mesh after normalization. Repeating
+    # this in the original scaled coordinate system matters: Blender's mass
+    # centroid reduction can differ by micrometres after the first recenter.
+    # Omitting it misplaces thin, nonuniformly sized curtains in saved replays.
+    bpy.ops.object.origin_set(type='ORIGIN_CENTER_OF_MASS', center='BOUNDS')
+    obj.location = (0, 0, 0)
     import math
     angles = rotations[row['label']][asset+'.obj']
     for axis, angle in enumerate(angles):
         obj.rotation_euler[axis] += math.radians(angle)
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+    # Normalization is already present in the saved world transform unless
+    # V4 baked it into the last import's vertices above.
+    obj.scale = (1, 1, 1)
     bpy.context.view_layer.update()
     target_matrix = Matrix(row['transform'])
     local = [target_matrix.inverted() @ Vector(point) for point in row['corners']]
