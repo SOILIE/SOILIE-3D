@@ -83,13 +83,16 @@ def snapshot(inputs, stage, measure_support=False, measure_solids=False):
                "transform": [list(row) for row in obj.matrix_world],
                "frontDirection": front_direction(obj),
                "frontConvention": "V4 asset-corrected local +X"}
-        if measure_support and label not in WALL_MOUNTED:
-            support = support_samples(obj, meshes, floor_z)
-            if support:
-                row["support"] = support
         objects.append(row)
         if label not in ARCHITECTURE:
             solid_objects.append((identifier, obj))
+    if measure_support:
+        from serverless.benchmark.mesh_contact import measure_contacts
+        contacts = measure_contacts([(row['id'], inputs[row['id']]['blender_obj']) for row in objects
+                                     if row['label'] not in WALL_MOUNTED], meshes, floor_z)
+        for row in objects:
+            if row['id'] in contacts:
+                row['support'] = contacts[row['id']]
     result = {"schemaVersion": 2, "stage": stage, "units": "m", "objects": objects,
             "room": {"polygon": [[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]], "floorZ": floor_z,
                      "boundarySource": "original V4 interior wall faces, before cutaway or optional room fitting"}}

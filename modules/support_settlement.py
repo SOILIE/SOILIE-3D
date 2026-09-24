@@ -6,6 +6,8 @@ the item straight down to the first actual surface. It never rescales objects
 or invents a supporting plane outside the finite room floor.
 """
 import math
+import heapq
+from itertools import count
 
 # Ten micrometres is below the reported centimetre precision but above the
 # accumulated float32 transform error observed in metre-scale imported meshes.
@@ -119,11 +121,24 @@ def surface_drop(upper, lower, limit=math.inf):
            for axis in (0, 1)):
         return math.inf
     result = limit
-    pending = [(upper['projection'], lower['projection'])]
+    # Search the smallest possible gap first. Dense flat meshes used to scan
+    # millions of equally good triangles after already finding first contact.
+    # A node's min-Z minus the other's max-Z is an admissible lower bound.
+    # 1e-12 m absorbs interpolation roundoff only, six orders below our actual
+    # contact tolerance; it is not an approximation to the mesh or a fallback.
+    roundoff = 1e-12
+    global_bound = max(0.0, upper['low'][2]-lower['high'][2])
+    sequence = count()
+    pending = []
+    def push(first, second):
+        bound = max(0.0, float(first[0][2]-second[1][2]))
+        heapq.heappush(pending, (bound, next(sequence), first, second))
+    push(upper['projection'], lower['projection'])
     while pending:
-        first, second = pending.pop()
+        bound, _, first, second = heapq.heappop(pending)
+        if bound >= result-roundoff:
+            continue
         if (np.any(first[1][:2] < second[0][:2]) or np.any(second[1][:2] < first[0][:2])
-                or first[0][2]-second[1][2] > result
                 or first[1][2]-second[0][2] < -CONTACT_TOLERANCE_M):
             continue
         if first[2] is not None and second[2] is not None:
@@ -133,13 +148,17 @@ def surface_drop(upper, lower, limit=math.inf):
             matches &= upper['triangleLows'][a, None, 2]-lower['triangleHighs'][b, 2] <= result
             matches &= upper['triangleHighs'][a, None, 2]-lower['triangleLows'][b, 2] >= -CONTACT_TOLERANCE_M
             for i, j in zip(*np.nonzero(matches)):
+                if max(0.0, upper['triangleLows'][a[i],2]-lower['triangleHighs'][b[j],2]) >= result-roundoff:
+                    continue
                 result = min(result, triangle_drop(upper['triangles'][a[i]], lower['triangles'][b[j]]))
-                if result <= CONTACT_TOLERANCE_M:
+                if result <= CONTACT_TOLERANCE_M or result <= global_bound+roundoff:
                     return max(0.0, result)
         elif first[3] is not None and (second[3] is None or np.prod((first[1]-first[0])[:2]) >= np.prod((second[1]-second[0])[:2])):
-            pending.extend((child, second) for child in first[3])
+            for child in first[3]:
+                push(child, second)
         else:
-            pending.extend((first, child) for child in second[3])
+            for child in second[3]:
+                push(first, child)
     return result
 
 

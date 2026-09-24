@@ -162,15 +162,17 @@ def correction(attempt, rotations, audit_original=False, observe_only=False):
             from serverless.benchmark.capture_v4 import support_samples
             all_objects = list(objects.values())+[floor]
             for row in movable:
-                if row.get('support'):
+                if audit_original and row.get('support'):
                     observation = support_samples(objects[row['id']], all_objects, room['floorZ'])
                     expected = row['support']['gapM']
                     if expected is not None and (observation['gapM'] is None or abs(expected-observation['gapM']) > 1e-5):
                         raise RuntimeError(f'Restored support differs for {row["id"]}: saved {expected}, restored {observation["gapM"]}')
                     audit.append({'id': row['id'], 'savedGapM': expected, 'restoredGapM': observation['gapM']})
-                if observe_only:
-                    row['support'] = support_samples(objects[row['id']], all_objects, room['floorZ'])
             if observe_only:
+                from serverless.benchmark.mesh_contact import measure_contacts
+                contacts = measure_contacts([(row['id'],objects[row['id']]) for row in movable], all_objects, room['floorZ'])
+                for row in movable:
+                    row['support'] = contacts[row['id']]
                 return result, {'moves': [], 'correctionSeconds': 0, 'restorationAudit': audit}
         before = time.perf_counter()
         changes = settle_objects({name: {'blender_obj': obj} for name, obj in objects.items()})
@@ -233,7 +235,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--audit-original', action='store_true')
     parser.add_argument('--observe-only', action='store_true',
-                        help='Add support surface identities without changing any placement or original measurement')
+                        help='Remeasure exact mesh contacts without changing placement or generation timing')
     parser.add_argument('--limit', type=int)
     parser.add_argument('--compatible-replay-resume', action='store_true',
                         help='Audit and retain checkpoints when only the restoration implementation changed')
@@ -250,6 +252,7 @@ def main():
                       'replaySha256': checksum(Path(__file__)),
                       'samplerSha256': checksum(Path(__file__).with_name('mesh_support.py')),
                       'observerSha256': checksum(Path(__file__).with_name('capture_v4.py')),
+                      'contactObserverSha256': checksum(Path(__file__).with_name('mesh_contact.py')),
                       'solidOverlapSha256': checksum(Path(__file__).with_name('solid_overlap.py')),
                       'assetManifestSha256': checksum(manifest_path),
                       'observeOnly': args.observe_only}

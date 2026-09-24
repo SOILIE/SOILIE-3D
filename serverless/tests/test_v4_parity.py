@@ -24,7 +24,7 @@ REVIEWED_MAINTENANCE = {
     "modules/working_combos.py": "8dff9d87bd9c26334c48afe07510fa9325692b82cc9602d734b0bdbd4e61b956",
     "modules/prepare_data.py": "98c4fa9509ced827b97173710d7a27d4bfb28956832649d42dcaf495de57c517",
     "modules/render.py": "be6bcfb38016a91928f23012606edaf19b18a590a6c4964d925db8197ce88bf4",
-    "modules/support_settlement.py": "cd5ae265a0d1edb0cfd951d975cd5bd7cf76483956504677f34671dbcae55aeb",
+    "modules/support_settlement.py": "b7e8eb84ab5c60ce7b3eb83c877aa4c33721d0de67223b2927600727e309e1f1",
 }
 
 

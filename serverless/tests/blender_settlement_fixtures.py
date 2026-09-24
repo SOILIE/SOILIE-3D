@@ -9,6 +9,7 @@ from mathutils import Vector
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from modules.support_settlement import CONTACT_TOLERANCE_M, evaluated_surface, settle_objects, surface_drop
 from serverless.benchmark.capture_v4 import support_samples
+from serverless.benchmark.mesh_contact import measure_contacts, rectangular_plane
 
 
 def cube(name, xyz, size):
@@ -71,6 +72,23 @@ class SettlementFixtures(unittest.TestCase):
         lower = cube('lower', (0, 0, .5), (3, .2, 1))
         upper = cube('upper', (0, 0, 2), (.2, 3, .2))
         self.assertAlmostEqual(.9, surface_drop(evaluated_surface(upper), evaluated_surface(lower)), places=5)
+        measured=measure_contacts([('upper',upper)],[upper,lower,bpy.data.objects['Floor']],0)['upper']
+        self.assertAlmostEqual(.9,measured['gapM'],places=5)
+        self.assertEqual('lower',measured['supportId'])
+
+    def test_exact_measurement_includes_edge_contact_between_sparse_rays(self):
+        lower=cube('lower',(.173,.213,.5),(3,.013,1))
+        upper=cube('upper',(.173,.213,1.100005),(.017,3,.2))
+        measured=measure_contacts([('upper',upper)],[upper,lower,bpy.data.objects['Floor']],0)['upper']
+        self.assertLessEqual(measured['gapM'],CONTACT_TOLERANCE_M)
+        self.assertEqual('lower',measured['supportId'])
+        self.assertEqual(3,measured['samplingVersion'])
+
+    def test_rectangle_certificate_rejects_missing_triangle(self):
+        plane=evaluated_surface(bpy.data.objects['Floor'])
+        self.assertTrue(rectangular_plane(plane))
+        plane['triangles'][1]=plane['triangles'][0]
+        self.assertFalse(rectangular_plane(plane))
 
     def test_mounted_objects_do_not_drop(self):
         window = cube('window', (0, 0, 2), (1, .1, 1))
