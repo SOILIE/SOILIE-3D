@@ -48,6 +48,22 @@ def missing_ranges(shard,completed):
     return ranges
 
 
+def unused_segment(directory, request_range, implementation):
+    """Never resume an old segment merely because its missing seed is unchanged.
+
+    A prior controller can have written a run manifest without completing even
+    one request. Preserve that evidence and pin the new segment in local-tasks;
+    subsequent restarts reuse the pinned task, not this allocation function.
+    """
+    stem=f'{request_range}-{implementation[:12]}'
+    candidate=directory/stem
+    sequence=1
+    while candidate.exists():
+        candidate=directory/f'{stem}-{sequence}'
+        sequence+=1
+    return candidate
+
+
 def prepare_jobs(plan,campaign,output,runtime,blender):
     manifest=output/'local-tasks.json'
     digest=implementation_digest(runtime)
@@ -60,8 +76,9 @@ def prepare_jobs(plan,campaign,output,runtime,blender):
     tasks=[]
     for shard in plan['localLivingShards']:
         for start,end in missing_ranges(shard,complete):
-            name=f"living-{shard['index']:02d}-{start:05d}"
-            folder=output/'local-segments'/name
+            request_range=f"living-{shard['index']:02d}-{start:05d}"
+            folder=unused_segment(output/'local-segments',request_range,digest)
+            name=folder.name
             tasks.append({'id':name,'kind':'generation','target':end-start,'folder':str(folder),
                 'command':[sys.executable,'-m','serverless.benchmark.run_batch','--runtime',str(runtime),
                     '--blender',str(blender),'--output',str(folder),'--target',str(end-start),

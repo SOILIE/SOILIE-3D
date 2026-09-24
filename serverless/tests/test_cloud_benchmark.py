@@ -9,13 +9,29 @@ from serverless.cloud_benchmark.handler import request_document
 from serverless.cloud_benchmark.pilot import compare_placements
 from serverless.cloud_benchmark.campaign import compute_cost, prepare_retries, estimated_spend
 from serverless.cloud_benchmark.design import allocation, freeze
-from serverless.cloud_benchmark.local import missing_ranges
+from serverless.cloud_benchmark.local import missing_ranges, unused_segment
 from serverless.cloud_benchmark.cleanup import validate_downloads
 from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.benchmark.balanced_campaign import living_shards
 
 
 class CloudBenchmarkTests(unittest.TestCase):
+    def test_empty_old_segment_is_preserved_and_never_reused(self):
+        base=Path(__file__).resolve().parents[2]/'.codex/tests'
+        base.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as folder:
+            directory=Path(folder)
+            old=directory/'living-06-00000'
+            old.mkdir(); (old/'run.json').write_text('{"old":true}')
+            first=unused_segment(directory,'living-06-00000','a'*64)
+            self.assertEqual('living-06-00000-aaaaaaaaaaaa',first.name)
+            first.mkdir(); (first/'run.json').write_text('{"interrupted":true}')
+            second=unused_segment(directory,'living-06-00000','a'*64)
+            self.assertEqual(first.name+'-1',second.name)
+            self.assertFalse(second.exists())
+            self.assertEqual('{"old":true}',(old/'run.json').read_text())
+            self.assertNotEqual(first,unused_segment(directory,'living-06-00000','b'*64))
+
     def test_contact_remeasurement_cannot_change_geometry_or_timing(self):
         from serverless.benchmark.reobserve_contacts import audit_observation
         original={'generationSeconds':5,'stages':{'final':{'objects':[{'id':'chair',
