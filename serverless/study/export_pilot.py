@@ -193,7 +193,7 @@ def condition_result(condition, protocol, responses):
             "metricAlignment":_metric_alignment(protocol, grouped, condition)}
 
 
-def focused_dimension_results(protocol, responses, reviewers):
+def focused_dimension_results(protocol, responses, reviewers, room_type=None):
     """Keep visual dimensions separate instead of inventing one composite rank."""
     if protocol.get("decisionScope") != "focus_only":
         return []
@@ -201,6 +201,11 @@ def focused_dimension_results(protocol, responses, reviewers):
     ordered_profiles = list(dict.fromkeys(protocol.get("reviewerPlan", [])))
     baseline = next(iter(sorted({case["comparisonCondition"] for case in protocol["cases"]})))
     case_ids = {case["id"] for case in protocol["cases"] if case["comparisonCondition"] == baseline}
+    if room_type is not None:
+        # Room membership comes from frozen matching evidence, never a
+        # reviewer's wording or inferred preference.
+        case_ids &= {row['caseId'] for row in protocol.get('stimulusEvidence', [])
+                     if row['matchingStratum'][0] == room_type}
     for profile in ordered_profiles:
         rows = [row for row in responses if row["promptProfile"] == profile
                 and row["repeatOf"] is None and row["caseId"] in case_ids]
@@ -217,6 +222,17 @@ def focused_dimension_results(protocol, responses, reviewers):
                         "pairMajorities":{"soilie":majorities["soilie"],"tie":majorities["tie"],
                                           "baseline":majorities[baseline]}})
     return results
+
+
+def matching_description(protocol):
+    sampling = protocol.get('sampling') or {}
+    similarity = sampling.get('minimumSemanticSimilarity', .4)
+    density = sampling.get('maximumFurnitureDensityDifference', .25)
+    return (f'Pairs share room type, exact furniture-instance count and room-anchor count '
+            f'(beds in bedrooms; sofas in living rooms). At least {similarity * 100:.1f}% of '
+            f'duplicate-aware normalized object roles agree. Summed-footprint density differs '
+            f'by at most {density:g}; density is summed floor-supported furniture footprint '
+            f'area divided by floor area. Only present objects are judged.')
 
 
 def aggregate(store, protocol):
@@ -274,7 +290,7 @@ def aggregate(store, protocol):
     limitations = ([
         "Two review contexts judge each visual dimension; their ratings are correlated within each frozen scene pair and are not independent scene samples.",
         "Review contexts may share an underlying model; separate context and prompt assignment do not establish independent model architectures or calibrated accuracy.",
-        "Each matched pair fixes room type, exact furniture-instance count and bedroom bed count. The methods' furniture densities may differ by no more than 0.25, where density is summed oriented furniture-footprint area divided by room floor area. At least 40% of duplicate-aware normalized object roles must agree. Reviewers judge only present objects; inventory completeness is outside the task.",
+        matching_description(protocol),
         "Bounding-box views preserve final placement, rotation and dimensions but omit mesh detail and independently fit each room to the canvas.",
         "The proportions question compares which room has more believable pairwise size relationships among its present objects, using within-room bounding-box volumes normalized to the smallest object. It does not assess shape, aspect ratio or physical-size ground truth.",
         "Reversed-side repeats assess response consistency, not correctness.",
@@ -291,11 +307,15 @@ def aggregate(store, protocol):
             "decisionScope":protocol.get("decisionScope", "overall"),
             "aggregateAcrossDimensions":not focused,
             "dimensionResults":focused_dimension_results(protocol, responses, reviewers),
+            "dimensionsByRoomType":{room: focused_dimension_results(protocol, responses, reviewers, room)
+                                    for room in sorted({row['matchingStratum'][0]
+                                                        for row in protocol.get('stimulusEvidence', [])})},
             "reviewers":sorted(reviewers,key=lambda row:row["reviewerId"]),"responses":safe_rows,
             "rubric":FOCUS_ONLY_RUBRIC if protocol.get("decisionScope") == "focus_only" else RUBRIC,
             "promptProfiles":{profile:PROFILES[profile] for profile in dict.fromkeys(reviewer_plan)},
             "reviewerConfiguration":protocol.get("reviewerConfiguration"),
             "sampling":protocol.get("sampling"),
+            "matchingDescription":matching_description(protocol),
             "evidenceMode":protocol.get("evidenceMode", "visual_only"),
             "stimulusEvidence":protocol.get("stimulusEvidence",[]),
             "stimuli":[{"caseId":case["id"],"soilieImage":case["relationImage"],

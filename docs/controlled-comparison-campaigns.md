@@ -99,3 +99,38 @@ the extra left/right assignment across the frozen reviewer roster. Existing
 assignments never change on reload. Public exports must retain stimulus and
 prompt hashes, exclude repeat trials from preferences, and distinguish AI
 judgements from human validation.
+
+## Publication preparation
+
+`serverless.cloud_benchmark.publish` derives the four-condition SOILIE stage
+audit from the completed 10,000-room evidence. Preserve its `evidenceDigest`:
+it is checked before assembling updated baseline comparisons. Desktop and AWS
+Lambda observations remain separate, with 2,500 rooms per room/platform cell.
+Successful generation timers and downstream contact-correction timers are
+reported separately; concurrent elapsed time is not a serial-batch estimate.
+
+`serverless.cloud_benchmark.publication_views` reuses that audit and already
+measured geometry. It does not rerun the model, purchase API calls or recalculate
+10,000 mesh measurements. It produces room-specific model inventories and
+distributions, isolated Infinigen timings by room, recorded LayoutGPT request
+latencies, and a public-rate cost calculation from recorded token counts and
+measured cloud generation durations.
+
+```powershell
+wsl -- .codex/linux-env/bin/python -m serverless.cloud_benchmark.publication_views --base .codex/benchmark/soilie-platform-grid-final/publication/comparison.json --evidence .codex/benchmark/soilie-platform-grid-final/evidence --layoutgpt .codex/benchmark/layoutgpt-controlled/export.json --layoutgpt .codex/benchmark/layoutgpt-controlled-supplement/export.json --native .codex/benchmark/infinigen-matched-fast-roomscale-40/layouts-support.json --rates .codex/benchmark/soilie-platform-grid-final/public-rates.json --output .codex/benchmark/soilie-platform-grid-final/publication-preview
+```
+
+The preview includes released LayoutGPT bedrooms and all recorded controlled
+living-room proposals. Its geometric distributions are not limited to pairs
+selected for visual review. A closed API batch is required: uncertain, omitted,
+duplicate or unparsable calls prevent silently publishing a success-only cost.
+Only explicit public fields are exported; account receipts are never copied.
+
+This preview is not a release. The expanded six-object Infinigen corpus must
+still be frozen and added, followed by the remaining AI reviews. `aiReview.ready`
+stays false until version-matched review exports exist. Website review exports
+must carry the same `cohortSha256`; the browser rejects mismatched results.
+The website's `scripts/check-balanced-comparison.mjs` accepts the preview folder
+through `COMPARISON_PREVIEW_DIR`, serves the built site locally, and tests the
+new schema without replacing committed benchmark data. It always closes its
+browser and HTTP server.

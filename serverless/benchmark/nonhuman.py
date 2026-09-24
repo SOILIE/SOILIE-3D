@@ -128,7 +128,7 @@ def relation_drift(attempt):
     }
 
 
-def overlap_resolution(attempts):
+def overlap_resolution(attempts, stage_metrics=None):
     """Summarize how often V4's own separation stage removes envelope overlap.
 
     This is deliberately paired with the relation-drift report: eliminating an
@@ -138,10 +138,12 @@ def overlap_resolution(attempts):
     """
     affected = []
     for attempt in attempts:
-        before = measure(attempt["stages"]["beforeSeparation"])
+        before = (stage_metrics[attempt['id']]['beforeSeparation'] if stage_metrics is not None
+                  else measure(attempt["stages"]["beforeSeparation"]))
         if before["maxEnvelopeOverlapPct"] <= NUMERICAL_TOLERANCE_PCT:
             continue
-        final = measure(attempt["stages"]["final"])
+        final = (stage_metrics[attempt['id']]['final'] if stage_metrics is not None
+                 else measure(attempt["stages"]["final"]))
         affected.append({
             "beforeMeanWorstOverlapPct": before["meanWorstEnvelopeOverlapPct"],
             "finalMeanWorstOverlapPct": final["meanWorstEnvelopeOverlapPct"],
@@ -270,14 +272,14 @@ def cooccurrence_fidelity(attempts, source_combinations):
     }
 
 
-def soilie_diagnostics(attempts, source_combinations=None):
+def soilie_diagnostics(attempts, source_combinations=None, stage_metrics=None):
     completed = [attempt for attempt in attempts if attempt.get("status") == "complete"]
     drift = [relation_drift(attempt) for attempt in completed]
     combinations_seen = Counter(tuple(sorted(canonical_label(label) for label in attempt.get("selection", [])))
                                 for attempt in completed)
     labels = {label for combination in combinations_seen for label in combination}
     return {
-        "overlapResolution": overlap_resolution(completed),
+        "overlapResolution": overlap_resolution(completed, stage_metrics),
         "relationPreservation": {
             "scenes": len(drift),
             "scenesWithFurniturePairs": sum(row["pairCount"] > 0 for row in drift),
@@ -294,7 +296,7 @@ def soilie_diagnostics(attempts, source_combinations=None):
             "distinctObjectCombinations": len(combinations_seen),
             "mostFrequentCombinationScenes": max(combinations_seen.values(), default=0),
             "mostFrequentCombinationPct": (100 * max(combinations_seen.values()) / len(completed)) if completed else None,
-            "interpretation": "Distinct duplicate-aware object combinations observed in the controlled bedroom campaign. This describes sampler breadth, not spatial quality.",
+            "interpretation": "Distinct duplicate-aware object combinations observed in the controlled room-preset campaign. This describes sampler breadth, not spatial quality.",
         },
         "catalogCooccurrenceFidelity": (
             cooccurrence_fidelity(completed, source_combinations)
