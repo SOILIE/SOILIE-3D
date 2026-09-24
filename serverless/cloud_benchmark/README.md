@@ -65,3 +65,44 @@ Support measurement uses actual triangle contact, including crossing edges that
 sparse rays can miss. `benchmark.reobserve_contacts` rechecks flagged archived
 scenes without changing geometry or generation timing. Cleanup validates these
 source-checksummed observations alongside the immutable cloud receipts.
+
+## Final evidence and AI review
+
+`evidence` verifies the complete cloud allocation and its immutable source
+checksums, applies only audited contact/correction overlays, and caches shared
+geometry measurements. Supply `--grid`, `--baselines` (the existing measured
+baseline export), and `--output`. This step does not publish partial results.
+
+After local completion, `finalize --grid ... --campaign ... --cloud-evidence ...
+--output ...` audits all four groups and freezes the review protocols. Add
+`--wait` to leave this preparation running behind the local campaign. It starts
+no reviewers and performs no cloud calls or deployment. `readiness.json` records
+the stage; standard error retains any validation failure. A full-cohort gate
+requires exactly 2,500 distinct scenes in each room/platform condition and
+complete final support and mesh-intersection observations. Original generation
+and downstream correction durations remain separate.
+
+The new review draws from the entire 10,000-room pool, never from the fastest
+completed subset. Matching is performed separately for bedrooms and living
+rooms, with up to 120 pairs per room type/baseline. Existing object-count,
+room-anchor, role and density rules remain unchanged. If a baseline has fewer
+eligible cases, report that count; do not loosen matching to fill a quota.
+
+Ten independent review contexts cover five dimensions, two contexts each:
+orientation, relative size, relationships, access, and room function. Frozen
+packets retain the exact prompt and method-blind three-view illustrations with
+within-room volume annotations. Sessions independently shuffle and balance
+left/right presentation; two reversed repeats per baseline check consistency.
+Private session credentials stay separate from the reviewer packets and public
+exports. No votes carry over from changed stimuli.
+
+`node serverless/cloud_benchmark/render_packets.mjs REVIEW_ROOT PLAYWRIGHT_ROOT`
+renders the packets using an existing project-local Playwright installation.
+Each independent reviewer receives only their own `packets/reviewer-NN/`
+prompt/case list and the referenced neutral PNGs. They write `answers.json`
+with `set`, `caseId`, `judgement`, `errorChoice`, `confidence`, and `note`.
+`submit_reviews --root REVIEW_ROOT --reviewer reviewer-NN` validates complete,
+unique coverage and persists those answers through the same immutable study
+service used by the API. It never synthesizes judgements. Use the existing
+`study.export_pilot --require-complete` for each baseline only after all ten
+contexts finish. Publication must also pass the website evidence/browser checks.
