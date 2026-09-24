@@ -16,6 +16,7 @@ import boto3
 
 from serverless.benchmark.run_batch import write_json
 from serverless.benchmark.reobserve_contacts import audit_observation
+from serverless.benchmark.audit_support_corrections import audit_record
 
 
 TEMPORARY = 'soilie3d-benchmark-temporary'
@@ -40,8 +41,13 @@ def validate_downloads(output):
             raise ValueError('Invalid generation timing')
         # Exact non-mutating contact rechecks supplement, never overwrite, the
         # raw cloud artifact whose checksum is bound to its paid-call receipt.
+        correction=output/'geometry-corrections'/f"{task['seed']}.json"
         observation=output/'contact-observations'/f"{task['seed']}.json"
-        if observation.exists():
+        if correction.exists():
+            derived=json.loads(correction.read_bytes())
+            audit_record(row,derived,entry['sha256'])
+            row=derived
+        elif observation.exists():
             derived=json.loads(observation.read_bytes())
             if derived['contactObservation']['sourceSha256']!=entry['sha256']:
                 raise ValueError('Contact observation source checksum mismatch')

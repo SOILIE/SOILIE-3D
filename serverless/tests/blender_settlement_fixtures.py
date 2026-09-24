@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 import bpy
 from mathutils import Vector
@@ -21,6 +22,34 @@ def cube(name, xyz, size):
 
 
 class SettlementFixtures(unittest.TestCase):
+    def test_enlarged_floor_reaches_both_final_wall_axes(self):
+        from modules import render
+        bpy.data.objects.remove(bpy.data.objects['Floor'],do_unlink=True)
+        render.create_walls_and_floor(-1,1,-1,1,0,2.4)
+        obj=cube('printer',(4,3,1),(.5,.5,.5))
+        self.assertTrue(render.expand_room_to_contain_objects({'printer':{'blender_obj':obj}}))
+        xmin,xmax,ymin,ymax=render._room_bounds()
+        floor=bpy.data.objects['Floor']
+        corners=render.get_bbox_corners(floor)
+        self.assertAlmostEqual(xmin,min(point.x for point in corners),places=5)
+        self.assertAlmostEqual(xmax,max(point.x for point in corners),places=5)
+        self.assertAlmostEqual(ymin,min(point.y for point in corners),places=5)
+        self.assertAlmostEqual(ymax,max(point.y for point in corners),places=5)
+        self.settle(printer=obj)
+        self.assertAlmostEqual(.25,obj.location.z,delta=CONTACT_TOLERANCE_M)
+
+    def test_mounted_surface_moves_before_final_furniture_contact(self):
+        from modules import render
+        window=cube('window',(0,0,.5),(1,1,1))
+        book=cube('book',(0,0,1.1),(.2,.2,.2))
+        def relocate_window():
+            window.location.x=4
+            bpy.context.view_layer.update()
+        with patch.object(render,'adjust_windows_to_walls',side_effect=relocate_window):
+            render.finalize_room_placement({'window':{'blender_obj':window},'book':{'blender_obj':book}})
+        self.assertAlmostEqual(.1,book.location.z,delta=CONTACT_TOLERANCE_M)
+        self.assertEqual(4,window.location.x)
+
     def setUp(self):
         bpy.ops.object.select_all(action='SELECT')
         bpy.ops.object.delete(use_global=False)

@@ -23,7 +23,7 @@ REVIEWED_MAINTENANCE = {
     "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
     "modules/working_combos.py": "8dff9d87bd9c26334c48afe07510fa9325692b82cc9602d734b0bdbd4e61b956",
     "modules/prepare_data.py": "98c4fa9509ced827b97173710d7a27d4bfb28956832649d42dcaf495de57c517",
-    "modules/render.py": "be6bcfb38016a91928f23012606edaf19b18a590a6c4964d925db8197ce88bf4",
+    "modules/render.py": "721e0e219d09b7fbd6fb8a23b5a4f2967d4ceeacdcfd8ef8ed46d6b4a3133c21",
     "modules/support_settlement.py": "b7e8eb84ab5c60ce7b3eb83c877aa4c33721d0de67223b2927600727e309e1f1",
 }
 

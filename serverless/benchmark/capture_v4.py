@@ -131,7 +131,7 @@ def main():
     spec = importlib.util.spec_from_file_location("observed_v4", "modules/render.py")
     model = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(model)
-    original_overlap, original_windows = model.adjust_overlapping_objects, model.adjust_windows_to_walls
+    original_overlap, original_finalize = model.adjust_overlapping_objects, model.finalize_room_placement
     stages, captured_inputs = {}, None
     observation_seconds = 0.0
     started = time.perf_counter()
@@ -151,8 +151,8 @@ def main():
         observe(inputs, "afterSeparation")
         return result
 
-    def windows(*values, **kwargs):
-        result = original_windows(*values, **kwargs)
+    def finalize(*values, **kwargs):
+        result = original_finalize(*values, **kwargs)
         observe(captured_inputs, "final")
         document = {"stages": stages, "placementSeconds": time.perf_counter()-started-observation_seconds,
                     "observationSeconds": observation_seconds, "blenderVersion": bpy.app.version_string,
@@ -163,7 +163,7 @@ def main():
         return result
 
     model.adjust_overlapping_objects = overlap
-    model.adjust_windows_to_walls = windows
+    model.finalize_room_placement = finalize
     random.seed(args.seed)
     try:
         model.visualize(json.loads(args.input.read_text(encoding="utf-8")))

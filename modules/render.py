@@ -900,8 +900,10 @@ def expand_room_to_contain_objects(inputs, clearance=0.01):
     walls['Left Wall'].dimensions.x = walls['Right Wall'].dimensions.x = max_x-min_x
     walls['Front Wall'].dimensions.y = walls['Back Wall'].dimensions.y = max_y-min_y
 
-    floor.dimensions.x = max_x-min_x
-    floor.dimensions.y = max_y-min_y
+    # Blender dimensions is derived from the dependency graph. Assigning X and
+    # then Y separately reads stale X on the second assignment and silently
+    # undoes the width change. Update the whole vector atomically.
+    floor.dimensions = (max_x-min_x, max_y-min_y, floor.dimensions.z)
     bpy.context.view_layer.update()
     floor_centre = get_centroid(floor)
     floor.location.x += (min_x+max_x)/2-floor_centre.x
@@ -1323,6 +1325,22 @@ with open(f'output/11/00_blender_inputs.json','rb') as f:
 
 ## MAIN FUNCTION
 
+def finalize_room_placement(inputs):
+    """Fix mounted surfaces before measuring final furniture support."""
+    # A window or curtain can temporarily sit below a small object during the
+    # overlap pass. Move it to its final wall position first, or settling would
+    # leave that object resting on a surface which is subsequently moved away.
+    adjust_windows_to_walls()
+    try:
+        from support_settlement import settle_objects
+    except ImportError:
+        from .support_settlement import settle_objects
+    support_moves = settle_objects(inputs)
+    if support_moves:
+        print('---| Final mesh support settlement:', json.dumps(support_moves))
+    return support_moves
+
+
 def visualize(inputs):
     '''Create 3D renderings of the objects at the given inputs
     inputs: a dictionary of final object locations
@@ -1373,16 +1391,7 @@ def visualize(inputs):
     # Stacking uses enclosing-box heights. A headboard or raised trim can be
     # taller than the surface beneath an item. Settle against actual meshes
     # after horizontal corrections and after the finite floor encloses them.
-    try:
-        from support_settlement import settle_objects
-    except ImportError:
-        from .support_settlement import settle_objects
-    support_moves = settle_objects(inputs)
-    if support_moves:
-        print('---| Final mesh support settlement:', json.dumps(support_moves))
-
-    # Do a final adjustment of windows, blinds, and curtain to walls
-    adjust_windows_to_walls()
+    finalize_room_placement(inputs)
 
     # The web room request is deliberately downstream of all V4 object
     # placement. It redraws only the enclosing floor and walls.

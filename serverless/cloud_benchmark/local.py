@@ -69,10 +69,13 @@ def prepare_jobs(plan,campaign,output,runtime,blender):
                     '--object-count',str(shard['objectCount']),'--seed',str(shard['seed']+start*shard['seedStep']),
                     '--seed-step',str(shard['seedStep']),'--blender-threads','1','--parallel-workers','6',
                     '--support','--solid-mesh-overlap']})
-    for start in range(0,2500,100):
-        selected=plan['localBedrooms'][start:start+100]
-        if all((campaign/'bedroom-repaired'/row['file']).exists() for row in selected):
-            continue
+    completed_repairs={index for index,row in enumerate(plan['localBedrooms'])
+                       if (campaign/'bedroom-repaired'/row['file']).exists()}
+    chunks=[(index,min(index+100,end)) for begin,end in
+            missing_ranges({'seed':0,'seedStep':1,'target':2500},completed_repairs)
+            for index in range(begin,end,100)]
+    for start,end in chunks:
+        selected=plan['localBedrooms'][start:end]
         tasks.append({'id':f'repair-{start:05d}','kind':'repair','target':len(selected),
             'files':[str(campaign/'bedroom-repaired'/row['file']) for row in selected],
             'command':[str(blender),'--background','--factory-startup','--threads','1','--python-exit-code','2',
