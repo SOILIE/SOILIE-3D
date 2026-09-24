@@ -41,4 +41,8 @@ if ($LASTEXITCODE) { throw 'Cannot resolve immutable benchmark image' }
 $uri = "$registry/$repository@$digest"
 aws cloudformation deploy --profile $Profile --region $Region --stack-name $Stack --template-file (Join-Path $PSScriptRoot 'template.yaml') --capabilities CAPABILITY_IAM --parameter-overrides "ImageUri=$uri" "MemoryMB=$MemoryMB" "Concurrency=$Concurrency" --tags Project=SOILIE-3D Purpose=TemporaryBenchmark
 if ($LASTEXITCODE) { throw 'Temporary benchmark deployment failed' }
+# A safety stop can have set concurrency to zero outside CloudFormation. An
+# unchanged template parameter alone does not repair that deliberate drift.
+aws lambda put-function-concurrency --profile $Profile --region $Region --function-name $Stack --reserved-concurrent-executions $Concurrency | Out-Null
+if ($LASTEXITCODE) { throw 'Cannot restore the explicit benchmark concurrency' }
 aws cloudformation describe-stacks --profile $Profile --region $Region --stack-name $Stack --query 'Stacks[0].Outputs' --output json

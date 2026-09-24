@@ -25,10 +25,11 @@ combine platforms into one latency distribution, or substitute old serial timing
 
 ## Execution
 
-1. Keep model/observer source unchanged during the campaign. Place `STOP` in the
-   superseded balanced campaign so its current six shards drain without starting
-   later shards. The `local` module fills released slots with disjoint work and
-   stops repairs at the retained 2,500 bedrooms.
+1. Keep model/observer source unchanged during active work. Place `STOP` in the
+   superseded balanced campaign and stop its owned workers at checkpoints. The
+   `local` module refuses active competing workers, reuses successful requests,
+   and creates provenance-pinned segments for missing seeds only. It retries a
+   failed request at the same seed and stops repairs at 2,500 retained bedrooms.
 2. Run `deploy.ps1` with the authorized AWS profile. The isolated image inherits
    only dependencies/assets from an immutable renderer image, copies model code
    directly from the checkout, and checks every runtime asset during the build.
@@ -46,6 +47,11 @@ combine platforms into one latency distribution, or substitute old serial timing
    `recover_response` can reconstruct a missing client receipt from a unique S3
    artifact and its CloudWatch billing report without invoking Lambda again.
    Keep failed-call costs even when a repaired scene is later regenerated.
+   After a validated repair and a new eight-scene parity pilot, explicitly name
+   a reconciled failure with `--retry-failed-seed`. Its original artifact, receipt
+   and charge are archived before retry. `--max-new-calls 1` verifies this repair
+   before the remainder is dispatched. Every replacement image starts with a
+   16-call wave, even when an earlier image already completed many requests.
 6. After completion, `cleanup` verifies all 5,000 downloaded results, archives all
    private bucket objects and CloudWatch logs, and removes only the temporary
    Lambda stack, private bucket and ECR repository. A failed validation prevents
@@ -54,3 +60,8 @@ combine platforms into one latency distribution, or substitute old serial timing
 All generated inputs, receipts, artifacts and logs belong under the repository's
 `.codex/` directory. Keep account/resource identifiers out of website summaries.
 The temporary bucket is deliberately separate from the published research data.
+
+Support measurement uses actual triangle contact, including crossing edges that
+sparse rays can miss. `benchmark.reobserve_contacts` rechecks flagged archived
+scenes without changing geometry or generation timing. Cleanup validates these
+source-checksummed observations alongside the immutable cloud receipts.

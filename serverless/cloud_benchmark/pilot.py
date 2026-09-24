@@ -86,11 +86,13 @@ def main():
     parser.add_argument('--campaign', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--bedrooms', type=Path)
+    parser.add_argument('--references', type=Path, help='Explicit list of eight local artifact paths')
     parser.add_argument('--profile', default='darkest')
     parser.add_argument('--region', default='ca-central-1')
     args = parser.parse_args()
-    rows = [json.loads((args.campaign/f'living-{index:02d}/attempt-00000.json').read_text()) for index in range(4)]
-    if args.bedrooms:
+    rows = ([json.loads(Path(path).read_text()) for path in json.loads(args.references.read_text())] if args.references else
+            [json.loads((args.campaign/f'living-{index:02d}/attempt-00000.json').read_text()) for index in range(4)])
+    if args.bedrooms and not args.references:
         rows += [json.loads((args.bedrooms/f'attempt-{index:05d}.json').read_text()) for index in range(4)]
     def run(local):
         session = boto3.Session(profile_name=args.profile, region_name=args.region)

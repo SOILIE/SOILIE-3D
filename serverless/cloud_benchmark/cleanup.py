@@ -15,6 +15,7 @@ from pathlib import Path
 import boto3
 
 from serverless.benchmark.run_batch import write_json
+from serverless.benchmark.reobserve_contacts import audit_observation
 
 
 TEMPORARY = 'soilie3d-benchmark-temporary'
@@ -37,6 +38,15 @@ def validate_downloads(output):
             raise ValueError('Downloaded request does not match the frozen plan')
         if not math.isfinite(row['generationSeconds']) or row['generationSeconds'] <= 0:
             raise ValueError('Invalid generation timing')
+        # Exact non-mutating contact rechecks supplement, never overwrite, the
+        # raw cloud artifact whose checksum is bound to its paid-call receipt.
+        observation=output/'contact-observations'/f"{task['seed']}.json"
+        if observation.exists():
+            derived=json.loads(observation.read_bytes())
+            if derived['contactObservation']['sourceSha256']!=entry['sha256']:
+                raise ValueError('Contact observation source checksum mismatch')
+            audit_observation(row,derived)
+            row=derived
         final = row['stages']['final']
         solids = final['solidMeshOverlap']
         if not solids['complete'] or solids['maxOverlapPct'] > .0001:

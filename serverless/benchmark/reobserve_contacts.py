@@ -11,9 +11,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
-from modules import render
 from modules.support_settlement import CONTACT_TOLERANCE_M, FIXED_CLASSES
-from serverless.benchmark.settle_saved import correction, clear_scene
 
 
 def flagged(row):
@@ -38,6 +36,8 @@ def audit_observation(source,derived):
 
 
 def main():
+    from modules import render
+    from serverless.benchmark.settle_saved import correction, clear_scene
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)

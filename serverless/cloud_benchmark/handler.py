@@ -88,7 +88,9 @@ def lambda_handler(event, context):
         # Blender also consults PWD when resolving its startup .blend. Lambda
         # inherits /var/task even for a subprocess with a different cwd.
         environment['PWD'] = str(work)
-        environment['PYTHONPATH'] = '/var/task'
+        # Observer helpers import the tracked model package as well as the
+        # adapter. These have separate roots in the image, unlike a checkout.
+        environment['PYTHONPATH'] = os.pathsep.join(('/var/task',str(runtime)))
         started = time.perf_counter()
         with (work/'process.log').open('wb') as output:
             process = subprocess.Popen(command, cwd=work, env=environment,

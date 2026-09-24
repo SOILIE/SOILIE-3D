@@ -7,15 +7,27 @@ from unittest.mock import patch
 
 from serverless.cloud_benchmark.handler import request_document
 from serverless.cloud_benchmark.pilot import compare_placements
-from serverless.cloud_benchmark.campaign import compute_cost
+from serverless.cloud_benchmark.campaign import compute_cost, prepare_retries, estimated_spend
 from serverless.cloud_benchmark.design import allocation, freeze
-from serverless.cloud_benchmark.local import jobs
+from serverless.cloud_benchmark.local import missing_ranges
 from serverless.cloud_benchmark.cleanup import validate_downloads
 from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.benchmark.balanced_campaign import living_shards
 
 
 class CloudBenchmarkTests(unittest.TestCase):
+    def test_contact_remeasurement_cannot_change_geometry_or_timing(self):
+        from serverless.benchmark.reobserve_contacts import audit_observation
+        original={'generationSeconds':5,'stages':{'final':{'objects':[{'id':'chair',
+            'corners':[[1,2,3]],'support':{'gapM':.08}}]}}}
+        measured=deepcopy(original)
+        measured['stages']['final']['objects'][0]['support']={'gapM':.000005}
+        measured['contactObservation']={'sourceSha256':'fixed'}
+        audit_observation(original,measured)
+        measured['stages']['final']['objects'][0]['corners'][0][2]=2.92
+        with self.assertRaisesRegex(ValueError,'Non-observation'):
+            audit_observation(original,measured)
+
     def test_checkpoint_retries_rename_without_rewriting_or_dispatching(self):
         base=Path(__file__).resolve().parents[2]/'.codex/tests'
         base.mkdir(parents=True,exist_ok=True)
@@ -51,10 +63,35 @@ class CloudBenchmarkTests(unittest.TestCase):
         local_seeds={row['seed']+index*row['seedStep'] for row in local for index in range(row['target'])}
         self.assertFalse(local_seeds & {row['seed'] for row in cloud})
         self.assertEqual((local,cloud),allocation(document))
-        tasks=jobs(document,Path('/campaign'),Path('/repo'),Path('/blender'))
-        self.assertEqual(1000,sum(row['target'] for row in tasks if row['kind']=='repair'))
-        self.assertEqual(1000,sum(row['target'] for row in tasks if row['kind']=='generation'))
-        self.assertEqual(8,len(tasks))
+        shard={'seed':100,'seedStep':10,'target':6}
+        self.assertEqual([(1,2),(4,6)],missing_ranges(shard,{100,120,130}))
+        self.assertEqual([],missing_ranges(shard,{100,110,120,130,140,150}))
+
+    def test_retry_archives_failed_evidence_and_never_drops_paid_cost(self):
+        import hashlib
+        base=Path(__file__).resolve().parents[2]/'.codex/tests'
+        base.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as folder:
+            output=Path(folder); (output/'downloads').mkdir()
+            raw=b'{"status":"failed"}'
+            (output/'downloads/1.json').write_bytes(raw)
+            (output/'downloads/1-receipt.json').write_text('{}')
+            ledger={'setupAllowanceUSD':1,'pilotEstimatedUSD':.1,'entries':{
+                '1':{'status':'failed','costUSD':.06,'sha256':hashlib.sha256(raw).hexdigest(),'task':{'seed':1}},
+                '2':{'status':'complete','costUSD':.01,'task':{'seed':2}}}}
+            before=estimated_spend(ledger,.061)
+            for seed in (2,3):
+                with self.assertRaisesRegex(ValueError,'reconciled failed'):
+                    prepare_retries(ledger,output,[seed])
+            prepare_retries(ledger,output,[1])
+            self.assertEqual('retry_ready',ledger['entries']['1']['status'])
+            self.assertEqual(before,estimated_spend(ledger,.061))
+            self.assertEqual(raw,next((output/'retry-history').glob('1/*/1.json')).read_bytes())
+            ledger['entries']['1'].update(status='complete',costUSD=.002)
+            self.assertAlmostEqual(before+.002,estimated_spend(ledger,.061))
+            ledger['entries']['3']={'status':'unknown','task':{'seed':3}}
+            with self.assertRaisesRegex(ValueError,'ambiguous'):
+                prepare_retries(ledger,output,[])
 
     def test_frozen_allocation_pins_sources_and_rejects_local_cloud_conflicts(self):
         base=Path(__file__).resolve().parents[2]/'.codex/tests'
