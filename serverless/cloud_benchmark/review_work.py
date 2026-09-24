@@ -20,6 +20,68 @@ def load(path):
     return json.loads(path.read_bytes())
 
 
+def validate_answers(work, answers, *, complete=True):
+    """Validate the entire batch before any immutable response is persisted."""
+    expected = [(row['set'], row['caseId']) for row in work]
+    if len(set(expected)) != len(expected):
+        raise ValueError('Work queue contains duplicate assignments')
+    if not isinstance(answers, list):
+        raise ValueError('Answers must be an array')
+    keys = {'set', 'caseId', 'judgement', 'errorChoice', 'confidence', 'note'}
+    actual = []
+    for row in answers:
+        if (not isinstance(row, dict) or set(row) != keys
+                or not isinstance(row['set'], str) or not isinstance(row['caseId'], str)
+                or row['judgement'] not in ('left', 'tie', 'right')
+                or row['errorChoice'] not in ('left', 'right', 'both', 'neither', 'uncertain')
+                or type(row['confidence']) is not int or not 1 <= row['confidence'] <= 5
+                or not isinstance(row['note'], str) or len(row['note']) > 500):
+            raise ValueError('Invalid answer schema or response value')
+        actual.append((row['set'], row['caseId']))
+    # Checkpointed reviewers append answers in their frozen presentation order.
+    if actual != expected[:len(actual)] or (complete and len(actual) != len(expected)):
+        raise ValueError('Answers must cover the assigned cases once, in their frozen order')
+    return len(actual)
+
+
+def status(output):
+    """Report saved work, not whether an external reviewer process is running.
+
+    A receipt is trusted only while it matches the complete current answers.
+    Never print judgements, private routing, session credentials or model sides.
+    """
+    manifest = load(output / 'manifest.json')
+    reviewers = {}
+    for reviewer, entry in manifest['reviewers'].items():
+        folder = output / 'packets' / reviewer
+        work = load(folder / 'cases.json')
+        row = {'profile': entry['profile'], 'assigned': len(work),
+               'written': 0, 'saved': 0, 'state': 'no_answers_yet'}
+        try:
+            if (folder / 'answers.json').exists():
+                raw = (folder / 'answers.json').read_bytes()
+                row['written'] = validate_answers(work, json.loads(raw), complete=False)
+                row['state'] = 'awaiting_submission' if row['written'] == len(work) else 'partial_answers'
+                if (folder / 'submitted.json').exists():
+                    receipt = load(folder / 'submitted.json')
+                    if (row['written'] != len(work) or receipt.get('saved') != len(work)
+                            or receipt.get('respondentType') != 'ai_pilot'
+                            or receipt.get('answersSha256') != hashlib.sha256(raw).hexdigest()):
+                        raise ValueError('Submission receipt does not match complete answers')
+                    row.update(saved=len(work), state='saved')
+            elif (folder / 'submitted.json').exists():
+                raise ValueError('Submission receipt exists without its answers')
+        except (ValueError, TypeError, KeyError):
+            row.update(saved=0, state='invalid_or_being_written')
+        reviewers[reviewer] = row
+    totals = {key: sum(row[key] for row in reviewers.values()) for key in ('assigned', 'written', 'saved')}
+    result = {'scope': 'This frozen missing-work queue only; counts include repeat presentations.',
+              'frozenPairs': manifest['frozenPairs'], 'reviewers': reviewers, 'totals': totals,
+              'queueComplete': all(row['state'] == 'saved' for row in reviewers.values())}
+    print(json.dumps(result), flush=True)
+    return result
+
+
 def selected_assignment_ids(protocol, assignments, room=None):
     selected = {row['caseId'] for row in protocol['stimulusEvidence']
                 if room is None or row['matchingStratum'][0] == room}
@@ -115,9 +177,7 @@ def submit(output, reviewer):
     folder = output / 'packets' / reviewer
     work, answers = load(folder / 'cases.json'), load(folder / 'answers.json')
     expected = {(row['set'], row['caseId']) for row in work}
-    actual = Counter((row['set'], row['caseId']) for row in answers)
-    if set(actual) != expected or any(n != 1 for n in actual.values()):
-        raise ValueError('Exactly one answer per assigned case required')
+    validate_answers(work, answers)
     routing = load(output / 'private/routing.json')[reviewer]
     services = {}
     for group, route in routing.items():
@@ -151,9 +211,11 @@ def main():
     submit_parser = sub.add_parser('submit')
     submit_parser.add_argument('--output', type=Path, required=True)
     submit_parser.add_argument('--reviewer', choices=[f'reviewer-{i:02d}' for i in range(1, 11)], required=True)
+    status_parser = sub.add_parser('status')
+    status_parser.add_argument('--output', type=Path, required=True)
     args = vars(parser.parse_args())
     command = args.pop('command')
-    (prepare if command == 'prepare' else submit)(**args)
+    {'prepare': prepare, 'submit': submit, 'status': status}[command](**args)
 
 
 if __name__ == '__main__': main()

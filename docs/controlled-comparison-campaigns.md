@@ -125,13 +125,29 @@ and frozen reviewer materials independently of these unused generation copies.
 
 ## Review release gate
 
-Hold further AI reviews until the requested source sets are complete. Preserve
-already collected judgements on unchanged pairs. Each reviewer receives only
-their assigned neutral images and fixed prompt. Odd-sized extensions alternate
+AI reviewers can work on already frozen, validated pairs while the remaining
+Infinigen scenes generate. Preserve collected judgements on unchanged pairs;
+never append to a packet while its reviewer is running. Each reviewer receives
+only their assigned neutral images and fixed prompt. Odd-sized extensions alternate
 the extra left/right assignment across the frozen reviewer roster. Existing
 assignments never change on reload. Public exports must retain stimulus and
 prompt hashes, exclude repeat trials from preferences, and distinguish AI
 judgements from human validation.
+
+`serverless.cloud_benchmark.review_work` queues only missing assignments and
+persists them through the original study sessions. Before submission it checks
+the whole answer array for exact order, unique coverage and valid response
+values. To inspect progress without exposing answers or private session data:
+
+```powershell
+python -m serverless.cloud_benchmark.review_work status --output .codex/benchmark/soilie-platform-grid-final/review-work
+```
+
+This reports written answers separately from hash-matched submission receipts.
+It counts only this queue, including repeats, not earlier completed packets or
+future extensions. It does not infer whether an external reviewer is running.
+Only publish the final aggregate after every included pair has its required
+reviews; partial packets are not complete evidence.
 
 ## Publication preparation
 
