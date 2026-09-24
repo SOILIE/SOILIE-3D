@@ -57,6 +57,21 @@ class StudyServiceTests(unittest.TestCase):
             self.service.respond(self.session["sessionId"],dict(response,judgement="right"))
         self.assertEqual(409,caught.exception.status)
 
+    def test_single_pair_extension_balances_across_frozen_reviewer_roster(self):
+        document = protocol()
+        document.update(studyVersion='single-pair-extension', cases=document['cases'][:1],
+                        reviewerSideOffsets={f'reviewer-{i+1:02d}': i % 2 for i in range(10)})
+        service = StudyService(document, self.store, b'test-secret', True, clock=lambda: 1000)
+        sides = []
+        for i in range(10):
+            invitation = service.invite(f'reviewer-{i+1:02d}', 'overlap', 'test-model')
+            session = service.start({'invitation': invitation})
+            stored = self.store.get(session['sessionId'])
+            sides.append(stored['assignments'][0]['leftCondition'])
+            self.assertEqual(session, service.start({'invitation': invitation}))
+        self.assertEqual(5, sides.count('soilie'))
+        self.assertEqual(5, sides.count('baseline'))
+
     def test_assignment_pinned_across_protocol_change(self):
         old_cases = deepcopy(self.session["cases"])
         self.service.document = dict(protocol(),studyVersion="new",cases=[])

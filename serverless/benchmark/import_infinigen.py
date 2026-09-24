@@ -28,9 +28,10 @@ def require_complete_sample(scenes, invalid, configuration):
     expected = configuration["targetPerRoom"]
     counts = Counter(scene["roomType"] for scene in scenes)
     missing = {room_type: expected - counts.get(room_type, 0)
-               for room_type in ("bedroom", "living_room")
+               for room_type in configuration.get('roomTypes', ("bedroom", "living_room"))
                if counts.get(room_type, 0) != expected}
-    if invalid or missing:
+    unexpected = set(counts) - set(configuration.get('roomTypes', ('bedroom', 'living_room')))
+    if invalid or missing or unexpected:
         raise RuntimeError(
             f"Infinigen publication requires {expected} valid scenes per room type; "
             f"counts={dict(counts)}, invalidArtifacts={len(invalid)}, differences={missing}"

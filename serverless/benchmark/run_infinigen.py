@@ -152,6 +152,8 @@ def main():
     parser.add_argument("--output",type=Path,required=True)
     parser.add_argument("--per-room",type=int,default=20,
                         help="Required completed scenes for each room type; unsuccessful seeds advance the deterministic sequence")
+    parser.add_argument('--room-types', nargs='+', choices=('bedroom', 'living_room'),
+                        default=['bedroom', 'living_room'], help='Generate only the explicitly requested room types')
     parser.add_argument("--timeout",type=int,default=21600)
     parser.add_argument("--max-attempts",type=int,default=0)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="default")
@@ -182,6 +184,10 @@ def main():
                   "stage":"coarse task: solving, procedural meshes and scene serialization; no image rendering",
                   "profileDescription":profile_description,
                   "hardware":platform.platform(),"cpuThreadsAvailable":os.cpu_count()}
+        # Omit the default field to preserve exact resume checks for existing
+        # two-room campaigns. A single-room supplement has its own directory.
+        if args.room_types != ['bedroom', 'living_room']:
+            config['roomTypes'] = list(dict.fromkeys(args.room_types))
         manifest = args.output/"run.json"
         if manifest.exists() and json.loads(manifest.read_text()) != config:
             raise RuntimeError("Resume configuration changed")
@@ -191,6 +197,8 @@ def main():
             ("bedroom","Bedroom",args.bedroom_seed_offset),
             ("living_room","LivingRoom",100+args.living_room_seed_offset),
         ):
+            if room_type not in args.room_types:
+                continue
             existing = checkpoint_rows(args.output, room_type)
             if args.profile == "controlled-six-fast":
                 existing = revalidate_controlled_checkpoints(existing, args.output, room_type)

@@ -355,8 +355,7 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                             "qualityScoresUsed":False,
                             "matching":("maximum-cardinality one-to-one matching by room type, exact furniture and room-anchor counts, "
                                         "and a frozen minimum normalized object-family agreement"
-                                        + (f", with no more than {maximum_density_difference:g} summed-footprint-density difference"
-                                           if maximum_density_difference < 1 else "; furniture density was not restricted")),
+                                        + f", with no more than {maximum_density_difference:g} summed-footprint-density difference"),
                             "minimumSemanticSimilarity":minimum_semantic_similarity,
                             "maximumFurnitureDensityDifference":maximum_density_difference,
                             "semanticFamilyPolicy":"Documented duplicate-aware aliases only; unmatched labels remain distinct",

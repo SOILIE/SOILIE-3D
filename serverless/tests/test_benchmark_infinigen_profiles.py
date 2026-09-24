@@ -122,6 +122,14 @@ class InfinigenProfileTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             require_complete_sample(scenes, [{"id": "bad"}], {"targetPerRoom": 2})
 
+    def test_single_room_supplement_requires_only_its_declared_room(self):
+        config = {'targetPerRoom': 1, 'roomTypes': ['living_room']}
+        require_complete_sample([{'roomType': 'living_room'}], [], config)
+        for scenes in ([], [{'roomType': 'bedroom'}],
+                       [{'roomType': 'living_room'}, {'roomType': 'bedroom'}]):
+            with self.assertRaises(RuntimeError):
+                require_complete_sample(scenes, [], config)
+
 
 if __name__ == "__main__":
     unittest.main()
