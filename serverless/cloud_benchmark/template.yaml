@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Temporary private SOILIE layout benchmark; independent of the website
+Parameters:
+  ImageUri:
+    Type: String
+  MemoryMB:
+    Type: Number
+    Default: 4096
+  Concurrency:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 500
+Resources:
+  Results:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+  ResultsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Results
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt Results.Arn, !Sub '${Results.Arn}/*']
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}'
+      RetentionInDays: 14
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: WriteBenchmarkEvidenceOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${Results.Arn}/attempts/*'
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt LogGroup.Arn
+  Function:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref AWS::StackName
+      PackageType: Image
+      Architectures: [x86_64]
+      Code:
+        ImageUri: !Ref ImageUri
+      MemorySize: !Ref MemoryMB
+      Timeout: 900
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions: !Ref Concurrency
+      Role: !GetAtt Role.Arn
+      Environment:
+        Variables:
+          RESULT_BUCKET: !Ref Results
+Outputs:
+  FunctionName:
+    Value: !Ref Function
+  ResultBucket:
+    Value: !Ref Results
