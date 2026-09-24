@@ -37,6 +37,8 @@ def run(args):
         raise ValueError('Model-parity probes must pass before cloud dispatch')
     configured = boto3.Session(profile_name=args.profile, region_name=args.region).client('lambda').get_function(FunctionName=args.function)
     config = configured['Configuration']
+    if configured.get('Concurrency',{}).get('ReservedConcurrentExecutions',0) < args.concurrency:
+        raise ValueError('Explicitly allocate the requested temporary concurrency before dispatch')
     if (parity.get('function') != args.function or parity.get('image') != configured['Code']['ResolvedImageUri']
             or config['MemorySize'] != args.memory_mb or parity.get('memoryMB') != args.memory_mb
             or config['Timeout'] > 900 or config.get('EphemeralStorage', {}).get('Size',512) > 1024

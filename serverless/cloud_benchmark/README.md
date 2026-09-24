@@ -43,6 +43,9 @@ combine platforms into one latency distribution, or substitute old serial timing
    AWS free tier is not assumed. Reservations are not incurred spending.
 5. Ambiguous network outcomes stop new dispatch. Reconcile S3/receipts first;
    never blindly resubmit paid work. Downloads are checked against S3 checksums.
+   `recover_response` can reconstruct a missing client receipt from a unique S3
+   artifact and its CloudWatch billing report without invoking Lambda again.
+   Keep failed-call costs even when a repaired scene is later regenerated.
 6. After completion, `cleanup` verifies all 5,000 downloaded results, archives all
    private bucket objects and CloudWatch logs, and removes only the temporary
    Lambda stack, private bucket and ECR repository. A failed validation prevents
