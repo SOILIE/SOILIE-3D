@@ -50,8 +50,10 @@ The same command resumes checkpoints. A lock prevents duplicate controllers.
 Bedrooms start at decimal seed 4000; living rooms start at 5100 (the runner's
 100 offset plus 5000). Failed seeds advance the fixed sequence and remain in
 private attempt records. Per-room checkpoints report valid outputs and matched
-pairs separately. The controller stops at 120 pairs per type, 200 new attempts
-per type, or the 15 GiB free-disk safeguard.
+pairs separately. The controller stops at 120 pairs per type or 200 new attempts
+per type. Below 15 GiB free disk, workers wait between scenes until verified
+uploads restore at least 20 GiB of headroom. This wait does not enter generation
+timings or change an active scene's watchdog.
 
 Matching preserves room type, furniture-instance count and bed/sofa count,
 requires at least one-third duplicate-aware object-family agreement, and limits
@@ -89,6 +91,37 @@ decompress it to restore the scene. Compact local checkpoints are retained for
 resumption and matching. `observations.json` and the Data index are published
 only after their referenced objects exist; AI findings have a separate release
 gate.
+
+### Backfill older completed Blender files
+
+The expansion uploader watches its own checkpoints. To archive completed
+Blender files from older runs, explicitly name those run directories:
+
+```powershell
+python -u -m serverless.benchmark.archive_completed_blends --run .codex/benchmark/infinigen-matched-fast-roomscale-40 --state .codex/benchmark/soilie-platform-grid-final/completed-blend-archive --date 2026-09-24
+```
+
+Repeat `--run` for additional inactive Infinigen runs. The tool locks each run,
+reads only completed attempt records, and compresses one binary at a time. It
+verifies decompression locally and checks the S3 copy's size and SHA256 before
+removing the unchanged original. A local `s3-scene-archive.json` receipt contains
+the exact remote key and both restoration hashes. Logs, geometry, checkpoints
+and review materials remain local. Failed intermediate scenes are not archived
+as completed outputs.
+
+The public `blender-scenes.json` manifest and its content-addressed binaries
+appear under the dated Data archive. The manifest contains only generated-scene
+identifiers, seeds and artifact metadata, not private execution records. Rerun
+the same command after interruption; verified receipts make it resumable.
+
+### SOILIE retention boundary
+
+The frozen `soilie-platform-grid-final/evidence/cohort.json` defines the final
+10,000 SOILIE rooms: 2,500 in each room-type/platform condition. Retain those
+rooms and the source/correction records identified by the cohort's hashes.
+Earlier generation records outside that membership are disposable; do not
+upload them as extra final-cohort scenes. Keep the compact execution accounting
+and frozen reviewer materials independently of these unused generation copies.
 
 ## Review release gate
 

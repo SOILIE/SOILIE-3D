@@ -26,6 +26,22 @@ ROOMS = ('bedroom', 'living_room')
 OFFSETS = {'bedroom': 4000, 'living_room': 5000}
 
 
+def wait_for_disk(directory):
+    """Keep a checkpointed worker alive while verified uploads reclaim space.
+
+    A 5 GiB recovery margin avoids immediately starting/stopping another scene.
+    No model timeout or active generation is altered by this between-scene wait.
+    """
+    free = shutil.disk_usage(directory).free
+    if free >= 15 * 1024**3:
+        return
+    print(json.dumps({'status': 'waiting-for-disk', 'freeGiB': round(free / 1024**3, 2),
+                      'resumeAtGiB': 20}), flush=True)
+    while shutil.disk_usage(directory).free < 20 * 1024**3:
+        time.sleep(30)
+    print(json.dumps({'status': 'disk-headroom-restored'}), flush=True)
+
+
 def sha_file(path):
     value = hashlib.sha256()
     with path.open('rb') as stream:
@@ -90,8 +106,7 @@ def room_worker(room, args, pool, protocols, base_count):
         while base_count + len(state['selectedPairs']) < args.target:
             index = len(state['attempts'])
             if index >= args.max_attempts: raise RuntimeError('Reached fixed attempt ceiling for ' + room)
-            if shutil.disk_usage(directory).free < 15 * 1024**3:
-                raise RuntimeError('Stopped before disk free space falls below 15 GiB')
+            wait_for_disk(directory)
             work = directory / f'attempt-{index:03d}'
             work.mkdir(exist_ok=True)
             attempt_file = work / f'attempt-{room}-000.json'
