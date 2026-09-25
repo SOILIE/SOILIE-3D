@@ -1,11 +1,44 @@
 from copy import deepcopy
 import unittest
+import hashlib
+import json
+from pathlib import Path
+import tempfile
 
-from serverless.cloud_benchmark.publication_views import completed_calls, measured_cost, native_timing, room_models
+from serverless.cloud_benchmark.publication_views import (completed_calls, measured_cost, native_timing,
+                                                         room_models, merge_geometry, verified_reviews)
 from serverless.benchmark.cost import AWS_URL, GPT4_URL
 
 
 class PublicationViewsTests(unittest.TestCase):
+    def test_identical_geometry_is_not_counted_twice_and_changes_are_rejected(self):
+        row = {'scene': {'id': 'one'}, 'metrics': {'gap': 0}}
+        self.assertEqual([row], merge_geometry([row], [deepcopy(row)]))
+        with self.assertRaises(ValueError):
+            merge_geometry([row], [{'scene': {'id': 'one'}, 'metrics': {'gap': 1}}])
+        with self.assertRaises(ValueError):
+            merge_geometry([row, row], [])
+
+    def test_review_gate_requires_all_strata_and_unchanged_files(self):
+        scratch = Path(__file__).parents[2] / '.codex/tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            manifest = {'releaseEligible': True, 'cohortSha256': 'cohort', 'comparisons': {}}
+            for baseline, stem in (('layoutgpt', 'ai-pilot'), ('infinigen_controlled', 'ai-pilot-infinigen')):
+                files = {}
+                for suffix in ('-summary.json', '-responses.json'):
+                    path = root / (stem + suffix)
+                    path.write_text(json.dumps({'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10}))
+                    files[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+                manifest['comparisons'][baseline] = {'releaseEligible': True,
+                    'pairs': {'bedroom': 120, 'living_room': 120}, 'files': files}
+            (root / 'review-manifest.json').write_text(json.dumps(manifest))
+            self.assertEqual(4, len(verified_reviews(root, 'cohort')))
+            with self.assertRaises(ValueError): verified_reviews(root, 'other')
+            (root / 'ai-pilot-summary.json').write_text('{}')
+            with self.assertRaises(ValueError): verified_reviews(root, 'cohort')
+
     def export(self):
         return {'complete': True, 'reservedUncertainUsd': 0,
             'rows': [{'scene': {'id': 'layoutgpt-call-0', 'roomType': 'living_room',

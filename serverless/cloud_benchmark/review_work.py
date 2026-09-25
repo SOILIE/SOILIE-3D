@@ -119,6 +119,29 @@ def prepare(evidence, original, extension, layoutgpt, infinigen, output):
         scenes.update({scene['id']: scene for scene in export['scenes']})
     sources = [(original, 'set-a', 'bedroom'), (original, 'set-b', None),
                (extension, 'set-a', None), (extension, 'set-b', None)]
+    return queue_sources(cohort, scenes, sources, output)
+
+
+def prepare_additional(evidence, source, output):
+    """Queue missing work from completed expansion packets without new sampling."""
+    raw = (evidence / 'measured-scenes.json').read_bytes()
+    cohort = load(evidence / 'cohort.json')
+    if not cohort['complete'] or hashlib.sha256(raw).hexdigest() != cohort['measurementsSha256']:
+        raise ValueError('Audited complete SOILIE evidence required')
+    scenes = {row['scene']['id']: row['scene'] for row in json.loads(raw)['rows']}
+    sources = []
+    for root in source:
+        for scene in load(root / 'source-scenes.json')['scenes']:
+            if scene['id'] in scenes and digest(scene) != digest(scenes[scene['id']]):
+                raise ValueError('Conflicting source scene')
+            scenes[scene['id']] = scene
+        sources.extend((root, name, None) for name in ('set-a', 'set-b')
+                       if (root / name / 'protocol.json').exists())
+    return queue_sources(cohort, scenes, sources, output)
+
+
+def queue_sources(cohort, scenes, sources, output):
+    """Keep source sessions immutable; route only their still-missing responses."""
     protocols = [audit_protocol(root, name, scenes) for root, name, _ in sources]
     if (output / 'manifest.json').exists():
         raise ValueError('Work queue already frozen; do not overwrite running reviewer inputs')
@@ -169,7 +192,7 @@ def prepare(evidence, original, extension, layoutgpt, infinigen, output):
     write_json(output / 'manifest.json', {'cohortSha256': cohort['measurementsSha256'],
         'frozenPairs': [{'model': model, 'roomType': room, 'pairs': n} for (model, room), n in counts.items()],
         'reviewers': totals, 'modelsOrScoresDisclosedToReviewers': False,
-        'laterWork': 'Last supplemental LayoutGPT pair and the unfinished Infinigen expansion are not in this queue.'})
+        'scope': 'Only missing assignments from the listed immutable source protocols.'})
     print(json.dumps({'validatedProtocols': len(protocols), 'frozenPairs': sum(counts.values()), 'reviewers': totals}), flush=True)
 
 
@@ -208,6 +231,10 @@ def main():
     prepare_parser = sub.add_parser('prepare')
     for name in ('evidence', 'original', 'extension', 'layoutgpt', 'infinigen', 'output'):
         prepare_parser.add_argument('--' + name, type=Path, required=True)
+    additional = sub.add_parser('prepare-additional')
+    additional.add_argument('--evidence', type=Path, required=True)
+    additional.add_argument('--source', type=Path, action='append', required=True)
+    additional.add_argument('--output', type=Path, required=True)
     submit_parser = sub.add_parser('submit')
     submit_parser.add_argument('--output', type=Path, required=True)
     submit_parser.add_argument('--reviewer', choices=[f'reviewer-{i:02d}' for i in range(1, 11)], required=True)
@@ -215,7 +242,8 @@ def main():
     status_parser.add_argument('--output', type=Path, required=True)
     args = vars(parser.parse_args())
     command = args.pop('command')
-    {'prepare': prepare, 'submit': submit, 'status': status}[command](**args)
+    {'prepare': prepare, 'prepare-additional': prepare_additional,
+     'submit': submit, 'status': status}[command](**args)
 
 
 if __name__ == '__main__': main()

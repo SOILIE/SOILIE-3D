@@ -8,6 +8,7 @@ from collections import Counter
 import json
 import math
 from pathlib import Path
+import shutil
 
 from serverless.benchmark.cost import (
     monthly_lambda_budget, token_charge, validate_public_rate_card, worker_scenario,
@@ -20,6 +21,7 @@ from serverless.benchmark.publish_comparison import (
 from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.cloud_benchmark.evidence import sha
 from serverless.cloud_benchmark.publish import timing_conditions
+from serverless.cloud_benchmark.expanded_reviews import completed_rows
 
 ROOMS = ('bedroom', 'living_room')
 
@@ -117,7 +119,47 @@ def measured_cost(sources, calls, rates):
             'Prices exclude credits, taxes and discounts; a different LLM requires its own quality evaluation.']}
 
 
-def compile_views(base, evidence, layoutgpt, native, rates, output):
+def merge_geometry(rows, additions):
+    """Allow identical source reuse, never duplicate sample weight or changed geometry."""
+    indexed = {row['scene']['id']: row for row in rows}
+    if len(indexed) != len(rows):
+        raise ValueError('Repeated final geometry')
+    for row in additions:
+        identity = row['scene']['id']
+        if identity in indexed and indexed[identity] != row:
+            raise ValueError('Conflicting measured geometry')
+        indexed[identity] = row
+    return list(indexed.values())
+
+
+def verified_reviews(directory, cohort_sha):
+    """A release requires complete, hash-matched reports for both comparisons."""
+    manifest = json.loads((directory / 'review-manifest.json').read_bytes())
+    expected = {'layoutgpt', 'infinigen_controlled'}
+    if (manifest.get('releaseEligible') is not True or manifest.get('cohortSha256') != cohort_sha
+            or set(manifest['comparisons']) != expected):
+        raise ValueError('Reviews do not certify this completed cohort')
+    files = []
+    for baseline, stem in (('layoutgpt', 'ai-pilot'), ('infinigen_controlled', 'ai-pilot-infinigen')):
+        report = manifest['comparisons'][baseline]
+        names = {stem + suffix for suffix in ('-summary.json', '-responses.json')}
+        if (report.get('releaseEligible') is not True
+                or report['pairs'] != {room: 120 for room in ROOMS} or set(report['files']) != names):
+            raise ValueError('Exactly 120 reviewed pairs per room and baseline required')
+        for name, checksum in report['files'].items():
+            path = directory / name
+            if sha(path.read_bytes()) != checksum:
+                raise ValueError('Changed reviewer export')
+            document = json.loads(path.read_bytes())
+            if (document.get('releaseEligible') is not True or document.get('cohortSha256') != cohort_sha
+                    or document.get('reviewersCompleted') != 10):
+                raise ValueError('Incomplete reviewer export')
+            files.append(name)
+    return files
+
+
+def compile_views(base, evidence, layoutgpt, native, rates, output,
+                  expansion=None, controlled=None, reviews=None):
     raw = (evidence / 'measured-scenes.json').read_bytes()
     cohort = json.loads((evidence / 'cohort.json').read_bytes())
     document = json.loads(base.read_bytes())
@@ -135,8 +177,22 @@ def compile_views(base, evidence, layoutgpt, native, rates, output):
     rows = [row for row in json.loads(raw)['rows'] if not
             (row['scene']['model'] == 'layoutgpt' and row['scene']['roomType'] == 'living_room')]
     rows.extend(row for export in exports for row in export['rows'])
-    if len({row['scene']['id'] for row in rows}) != len(rows):
-        raise ValueError('Repeated final geometry')
+    additions, checkpoints = [], {}
+    if controlled:
+        from serverless.benchmark.geometry import measure
+        for path in controlled:
+            export = json.loads(path.read_bytes())
+            if export['invalidArtifacts']:
+                raise ValueError('Invalid controlled supplement')
+            additions.extend({'scene': scene, 'metrics': measure(scene)} for scene in export['scenes'])
+    if expansion:
+        if not json.loads((expansion / 'complete.json').read_bytes())['complete']:
+            raise ValueError('Both expansion room strata must be complete')
+        for room in ROOMS:
+            measured, _pairs, checksum = completed_rows(expansion, room)
+            additions.extend(measured)
+            checkpoints[room] = checksum
+    rows = merge_geometry(rows, additions)
     document.update(schemaVersion=4,
         models={model: model_summary(model, [row for row in rows if row['scene']['model'] == model]) for model in LABELS},
         modelsByRoomType=room_models(rows), comparisons=compare(rows),
@@ -154,16 +210,77 @@ def compile_views(base, evidence, layoutgpt, native, rates, output):
     # Selected extreme diagrams were made for the original baseline corpus;
     # retain only those whose source model/corpus has not changed.
     document['illustrations'] = [row for row in document['illustrations'] if row['model'] != 'layoutgpt']
+    if expansion:
+        document['infinigenControlledConfiguration'] = {
+            'profile': 'controlled inventory; official fast_solve',
+            'sourceCommit': 'fb7991e06580639202a4687937082cb63e931eb0',
+            'bedroom': 'Three to six requested roles: bed, side table, floor lamp, then storage, desk and rug. The initial fixed-six inputs and subsequent cyclic counts remain identified per scene.',
+            'living_room': 'Six roles: sofa, TV stand, storage, side table, coffee table and rug.',
+            'postGenerationObjectRemoval': False,
+            'checkpointSha256': checkpoints,
+            'countsByRoom': document['models']['infinigen_controlled']['inventory']['roomTypes'],
+            'timingEligible': False}
+        document['timing'].pop('infinigenControlled', None)
+        document['illustrations'] = [row for row in document['illustrations'] if row['model'] == 'infinigen']
+    review_files = []
+    if reviews:
+        if not expansion:
+            raise ValueError('Final reviews require the completed expansion geometry')
+        review_files = verified_reviews(reviews, cohort['measurementsSha256'])
+        # Match every reviewed geometry digest against the actual published rows.
+        from serverless.benchmark.stimuli import digest as scene_digest
+        by_id = {row['scene']['id']: row['scene'] for row in rows}
+        for name in review_files:
+            if not name.endswith('-responses.json'):
+                continue
+            report = json.loads((reviews / name).read_bytes())
+            for pair in report['stimulusEvidence']:
+                for side in ('soilie', 'baseline'):
+                    if scene_digest(by_id[pair[side + 'Scene']]) != pair[side + 'Digest']:
+                        raise ValueError('Published geometry differs from reviewed geometry')
+        document['aiReview'].update(ready=True, pairsPerRoomPerBaseline=120,
+                                    manifestSha256=sha((reviews / 'review-manifest.json').read_bytes()))
     document['evidenceDigest'] = sha(json.dumps(document, sort_keys=True, separators=(',', ':')).encode())
     output.mkdir(parents=True, exist_ok=True)
+    # Reproduce the retained explanatory image from its measured scene, rather
+    # than relying on an untracked image from a previous website build.
+    from serverless.benchmark.stimuli import diagram
+    by_id = {row['scene']['id']: row['scene'] for row in rows}
+    for example in document['illustrations']:
+        pair = example['highlightedPair']
+        body = diagram(by_id[example['sceneId']], {pair['a'], pair['b']}, show_fronts=False).encode()
+        name = Path(example['image']).name
+        if sha(body)[:24] != Path(name).stem:
+            raise ValueError('Reproduced explanatory diagram differs')
+        (output / 'illustrations').mkdir(exist_ok=True)
+        (output / 'illustrations' / name).write_bytes(body)
     write_json(output / 'comparison.json', document)
     write_support_evidence(rows, output)
+    # Compact downloadable row-level metrics, without private sessions, machine
+    # paths, invocation receipts or account identifiers.
+    write_json(output / 'room-measurements.json', {'schemaVersion': 1,
+        'cohortSha256': cohort['measurementsSha256'], 'metricDefinitions': document['metricDefinitions'],
+        'rows': [{'sceneId': row['scene']['id'], 'model': row['scene']['model'],
+                  'roomType': row['scene']['roomType'], 'metrics': row['metrics']} for row in rows]})
+    if reviews:
+        for name in review_files + ['review-manifest.json']:
+            shutil.copyfile(reviews / name, output / name)
+        shutil.copytree(reviews / 'stimuli', output / 'stimuli', dirs_exist_ok=True)
+        counts = {model: summary['n'] for model, summary in document['models'].items()}
+        write_json(output / 'status.json', {'schemaVersion': 1,
+            'analysis': {'state': 'complete', 'summary':
+                f"10,000 completed SOILIE layouts (5,000 bedrooms and 5,000 living rooms), {counts['layoutgpt']} LayoutGPT layouts, {counts['infinigen']} room-scale and {counts['infinigen_controlled']} controlled-inventory Infinigen rooms."},
+            'corpus': {'completedLayouts': 10000, 'roomTypes': {'bedroom': 5000, 'living_room': 5000}},
+            'phases': [{'id': key, 'state': 'complete'} for key in ('measurement', 'comparison', 'ai-review')],
+            'aiPilot': {'open': False, 'pairsPerRoomPerBaseline': 120, 'reviewers': 10},
+            'humanParticipants': 0})
     write_json(output / 'publication-inputs.json', {'schemaVersion': 1,
         'cohortSha256': cohort['measurementsSha256'], 'baseSha256': sha(base.read_bytes()),
         'layoutgptSha256': [sha(path.read_bytes()) for path in layoutgpt], 'nativeSha256': sha(native.read_bytes()),
-        'ratesSha256': sha(rates.read_bytes()), 'aiReviewsReady': False})
+        'ratesSha256': sha(rates.read_bytes()), 'expansionCheckpointsSha256': checkpoints,
+        'aiReviewsReady': bool(reviews)})
     print(json.dumps({'models': {key: value['n'] for key, value in document['models'].items()},
-                      'recordedApiCalls': len(calls), 'aiReviewsReady': False}), flush=True)
+                      'recordedApiCalls': len(calls), 'aiReviewsReady': bool(reviews)}), flush=True)
 
 
 def main():
@@ -171,6 +288,9 @@ def main():
     for name in ('base', 'evidence', 'native', 'rates', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--layoutgpt', type=Path, action='append', required=True)
+    parser.add_argument('--expansion', type=Path)
+    parser.add_argument('--controlled', type=Path, action='append', default=[])
+    parser.add_argument('--reviews', type=Path)
     compile_views(**vars(parser.parse_args()))
 
 

@@ -30,7 +30,7 @@ LABELS = {
     "soilie": "SOILIE-3D",
     "layoutgpt": "LayoutGPT",
     "infinigen": "Infinigen Indoors (native room-scale task)",
-    "infinigen_controlled": "Infinigen Indoors (controlled six-object task)",
+    "infinigen_controlled": "Infinigen Indoors (controlled inventory)",
 }
 
 

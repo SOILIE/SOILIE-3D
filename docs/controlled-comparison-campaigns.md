@@ -258,11 +258,53 @@ selected for visual review. A closed API batch is required: uncertain, omitted,
 duplicate or unparsable calls prevent silently publishing a success-only cost.
 Only explicit public fields are exported; account receipts are never copied.
 
-This preview is not a release. The expanded controlled-inventory Infinigen corpus must
-still be frozen and added, followed by the remaining AI reviews. `aiReview.ready`
-stays false until version-matched review exports exist. Website review exports
-must carry the same `cohortSha256`; the browser rejects mismatched results.
-The website's `scripts/check-balanced-comparison.mjs` accepts the preview folder
-through `COMPARISON_PREVIEW_DIR`, serves the built site locally, and tests the
-new schema without replacing committed benchmark data. It always closes its
-browser and HTTP server.
+### Final release gate and publication
+
+Add `--expansion .codex/benchmark/infinigen-expanded-120`,
+`--controlled .codex/benchmark/infinigen-controlled-living-supplement/export.json`
+and `--reviews <completed-review-export>` to the publication command. Both
+expansion checkpoints must be complete; the review manifest must certify exactly
+120 bedroom and 120 living-room pairs per baseline, with ten completed reviewer
+slots. Every reviewed scene digest is checked against the published geometry.
+The output sets `aiReview.ready` only after those checks.
+
+To queue only unanswered assignments from multiple frozen increments, use:
+
+```powershell
+python -m serverless.cloud_benchmark.review_work prepare-additional --evidence .codex/benchmark/soilie-platform-grid-final/evidence --source .codex/benchmark/soilie-platform-grid-final/review-wave-3 --source .codex/benchmark/soilie-platform-grid-final/review-wave-4 --output .codex/benchmark/soilie-platform-grid-final/review-final-work
+python -m serverless.cloud_benchmark.review_work submit --output .codex/benchmark/soilie-platform-grid-final/review-final-work --reviewer reviewer-01
+```
+
+Never regenerate this queue while reviewers are using it. Partial answer files
+must remain a prefix of the frozen assignment order. The submitted receipt
+verifies every answer was persisted in its original study session.
+
+The final website bundle includes comparison summaries, per-room metrics,
+object support measurements, review prompts/responses, and hash-named stimulus
+images. Geometry charts include all valid scenes, not only visually reviewed
+pairs. Concurrent expansion timings do not enter isolated latency comparisons.
+A three-to-six-object bedroom inventory is requested before generation;
+the original six-object observations remain included, with their configurations
+identified in source evidence.
+
+Publish the public bundle to the dated Data archive after validation:
+
+```powershell
+python -m serverless.cloud_benchmark.publish_release --directory .codex/benchmark/soilie-platform-grid-final/publication-final --date 2026-09-24 --version 0.2.1 --publish
+```
+
+This uploads only an explicit public allowlist, verifies remote SHA-256 receipts,
+then merges the Data index conditionally. It does not replace the streaming scene
+manifest, delete objects, or upload private sessions. A changed file cannot
+overwrite an immutable release object.
+
+Copy those same public artifacts into the website's `benchmarks/` folder and
+run its unit tests and build. `scripts/check-comparison-browser.mjs` then serves
+the actual built release locally and checks room-specific votes, common graph
+scales, exact reviewer inputs, keyboard controls and mobile reflow. Set
+`PLAYWRIGHT_ENGINE` to `chromium`, `firefox` or `webkit`. It closes its browser
+and loopback server in all cases.
+
+For a deliberately incomplete preview, omit `--reviews` and use
+`scripts/check-balanced-comparison.mjs` with `COMPARISON_PREVIEW_DIR`.
+The website must not fetch or display AI results when the preview gate is closed.
