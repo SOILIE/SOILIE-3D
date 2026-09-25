@@ -8,6 +8,7 @@ from collections import Counter
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 
 from serverless.benchmark.cost import (
@@ -45,8 +46,19 @@ def mesh_check_coverage(rows):
     for model in LABELS:
         checks = [row['scene']['solidMeshOverlap'] for row in rows
                   if row['scene']['model'] == model and row['scene'].get('solidMeshOverlap')]
+        # A crossing open surface is a detected intersection even though no
+        # enclosed-volume percentage exists. Do not drop it with null metrics.
+        def detected(check):
+            if check.get('overlapPairs'):
+                return True
+            return any((match := re.search(r'(\d+) intersecting triangle pair', pair.get('reason', '')))
+                       and int(match[1]) > 0 for pair in check.get('unavailablePairs', []))
         result[model] = {**{field: sum(check.get(field, 0) for check in checks) for field in fields},
-                         'roomsUsingSurfaceTests': sum(check.get('surfaceDisjointPairs', 0) > 0 for check in checks)}
+                         'roomsUsingSurfaceTests': sum(check.get('surfaceDisjointPairs', 0) > 0 for check in checks),
+                         'checkedRooms': len(checks),
+                         'detectedIntersectionRooms': sum(bool(detected(check)) for check in checks),
+                         'noDetectedIntersectionRooms': sum(check.get('complete', False) and not detected(check) for check in checks),
+                         'unresolvedRooms': sum(not check.get('complete', False) and not detected(check) for check in checks)}
     return result
 
 
@@ -103,7 +115,7 @@ def latency(seconds):
             'completedPerMinute': 60 * len(seconds) / sum(seconds) if seconds else None}
 
 
-def measured_cost(sources, calls, rates):
+def measured_cost(sources, calls, rates, native=None):
     validate_public_rate_card(rates)
     cloud = [row for row in sources if row['platform'] == 'AWS Lambda' and row['roomType'] == 'living_room']
     if len(cloud) != 2500:
@@ -112,7 +124,7 @@ def measured_cost(sources, calls, rates):
     prices = [token_charge(row['inputTokens'], row['outputTokens'], rates['gpt4']) for row in calls]
     soilie = summarize([worker_scenario(value, rates['lambda'])['usd'] for value in seconds])
     layout = summarize(prices)
-    return {'schemaVersion': 2, 'currency': 'USD', 'roomType': 'living_room', 'rateCard': rates,
+    result = {'schemaVersion': 3, 'currency': 'USD', 'roomType': 'living_room', 'rateCard': rates,
         'scope': 'One 3–6-object living-room proposal, excluding images, evaluation, orchestration and downstream contact correction.',
         'soilie': {'usd': soilie, 'seconds': summarize(seconds), 'memoryMb': 4096,
             'ephemeralStorageMb': 10240,
@@ -130,6 +142,39 @@ def measured_cost(sources, calls, rates):
         'limitations': ['Generation-stage compute is not a complete hosted-service bill.',
             'Different room requests and model outputs: this comparison prices generation, not equal quality.',
             'Prices exclude credits, taxes and discounts; a different LLM requires its own quality evaluation.']}
+    # Keep one price per observation. Quantiles describe variation across rooms,
+    # never a confidence interval or uncertainty about an individual's invoice.
+    observations, by_room = [], {}
+    for room in ROOMS:
+        workers = [row for row in sources if row['platform'] == 'AWS Lambda' and row['roomType'] == room]
+        for index, row in enumerate(workers):
+            seconds = positive(row['generationSeconds'])
+            observations.append({'id': f'soilie-{room}-{index:04d}', 'model': 'soilie',
+                'roomType': room, 'basis': 'measured-generation-stage', 'seconds': seconds,
+                'usd': worker_scenario(seconds, rates['lambda'])['usd']})
+        proposals = calls if room == 'living_room' else []
+        for row in proposals:
+            observations.append({'id': row['id'], 'model': 'layoutgpt', 'roomType': room,
+                'basis': 'recorded-api-tokens', 'inputTokens': row['inputTokens'],
+                'outputTokens': row['outputTokens'],
+                'usd': token_charge(row['inputTokens'], row['outputTokens'], rates['gpt4'])})
+        for row in (native or {}).get('attempts', []):
+            if row['roomType'] != room or row['status'] != 'complete' or not row.get('timingEligible', True):
+                continue
+            seconds = positive(row['generationSeconds'])
+            observations.append({'id': row['id'], 'model': 'infinigen', 'roomType': room,
+                'basis': 'hypothetical-runtime-transfer', 'seconds': seconds,
+                'usd': worker_scenario(seconds, rates['lambda'])['usd']})
+        by_room[room] = {
+            model: summarize([row['usd'] for row in observations if row['model'] == model and row['roomType'] == room])
+            for model in ('soilie', 'layoutgpt', 'infinigen')}
+    result.update(byRoomType=by_room, observations=observations,
+        distributionMeaning='Across-room variation at fixed tariffs: median, quartiles, full observed range and 95th percentile. Not confidence intervals or billing-error estimates.',
+        infinigenBasis='Illustration only: price each isolated desktop construction time as if a 4 GB x86-64 worker with 10 GB temporary storage achieved the same duration. Infinigen was not run on AWS Lambda; CPU equivalence, memory sufficiency and container compatibility are unverified. Not a measured cloud cost or a demonstrated cheapest deployment.',
+        missing={'layoutgptBedroom': 'These are official released layouts, not timed calls made for this experiment. They contain neither API latency nor token-usage receipts. Living-room calls cannot supply bedroom measurements.',
+                 'infinigenControlled': 'Controlled-inventory rooms ran on shared CPU workers. Elapsed time includes contention and no per-room allocated CPU/memory ledger was recorded, so an isolated-runtime cost estimate is not supplied.',
+                 'grains': 'No per-room inference usage or matching hardware cost record is available; the paper supplies only a batch timing reference.'})
+    return result
 
 
 def merge_geometry(rows, additions):
@@ -217,10 +262,11 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
         models={model: model_summary(model, [row for row in rows if row['scene']['model'] == model]) for model in LABELS},
         modelsByRoomType=room_models(rows), comparisons=compare(rows),
         meshCheckCoverage=mesh_check_coverage(rows),
+        meshCheckCoverageByRoomType={room: mesh_check_coverage([row for row in rows if row['scene']['roomType'] == room]) for room in ROOMS},
         layoutgptSources={'bedroom': 'Official released GPT-4 layouts, eight retrieved examples.',
             'living_room': 'Recorded GPT-4 calls, four retrieved examples, requested counts cycling 3–6.',
             'exportSha256': [sha(path.read_bytes()) for path in layoutgpt]},
-        cost=measured_cost(cohort['sources'], calls, json.loads(rates.read_bytes())),
+        cost=measured_cost(cohort['sources'], calls, json.loads(rates.read_bytes()), json.loads(native.read_bytes())),
         # A deliberate gate: final review exports must name this geometry cohort.
         # Do not pair newly measured rooms with earlier website judgement totals.
         aiReview={'ready': False, 'cohortSha256': cohort['measurementsSha256']},
@@ -276,6 +322,13 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
         # caller supplied an equivalent JSON file with different formatting.
         if layoutgpt_scale.resolve() != (output / 'layoutgpt-scale.json').resolve():
             shutil.copyfile(layoutgpt_scale, output / 'layoutgpt-scale.json')
+    # Publish an allowlisted numeric ledger, not account receipts or provider IDs.
+    observations = document['cost'].pop('observations')
+    cost_evidence = {'schemaVersion': 1, 'currency': 'USD', 'rateCard': document['cost']['rateCard'],
+                     'distributionMeaning': document['cost']['distributionMeaning'], 'rows': observations}
+    write_json(output / 'cost-measurements.json', cost_evidence)
+    document['cost']['measurements'] = {'file': 'cost-measurements.json',
+        'sha256': sha((output / 'cost-measurements.json').read_bytes()), 'rows': len(observations)}
     document['evidenceDigest'] = sha(json.dumps(document, sort_keys=True, separators=(',', ':')).encode())
     # Reproduce the retained explanatory image from its measured scene, rather
     # than relying on an untracked image from a previous website build.

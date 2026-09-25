@@ -77,6 +77,24 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(events[-2].endswith('/manifest.json'))
         self.assertEqual('files/outputs/benchmark-2026-09-24/analysis-v0.2.1/', result['prefix'])
         with self.assertRaises(ValueError): publish(None, 'test', self.root, '2026-09-24', '../bad')
+        with patch('serverless.cloud_benchmark.publish_release.upload', side_effect=uploaded), \
+             patch('serverless.cloud_benchmark.publish_release.merge_index', return_value=12):
+            amended = publish(None, 'test', self.root, '2026-09-24', '0.2.1', 'abcdef012345')
+        self.assertEqual('files/outputs/benchmark-2026-09-24/analysis-v0.2.1-abcdef012345/', amended['prefix'])
+        with self.assertRaises(ValueError): publish(None, 'test', self.root, '2026-09-24', '0.2.1', '../bad')
+
+    def test_cost_download_requires_matching_digest_and_count(self):
+        self.write('cost-measurements.json', {'rows': [{'id': 'public', 'usd': .01}]})
+        comparison = json.loads((self.root / 'comparison.json').read_bytes())
+        comparison.pop('evidenceDigest')
+        comparison['cost'] = {'measurements': {'file': 'cost-measurements.json', 'rows': 1,
+            'sha256': hashlib.sha256((self.root / 'cost-measurements.json').read_bytes()).hexdigest()}}
+        comparison['evidenceDigest'] = hashlib.sha256(json.dumps(comparison, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        self.write('comparison.json', comparison)
+        files, _, _ = release_files(self.root)
+        self.assertIn('cost-measurements.json', files)
+        self.write('cost-measurements.json', {'rows': []})
+        with self.assertRaisesRegex(ValueError, 'cost evidence differs'): release_files(self.root)
 
 
 if __name__ == '__main__': unittest.main()

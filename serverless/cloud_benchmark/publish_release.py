@@ -60,6 +60,16 @@ def release_files(directory):
             raise ValueError('LayoutGPT physical scale evidence differs')
         packed(json.loads(body))
         files['layoutgpt-scale.json'] = ('application/json', body)
+    if comparison.get('cost', {}).get('measurements'):
+        metadata = comparison['cost']['measurements']
+        body = (directory / 'cost-measurements.json').read_bytes()
+        if metadata['file'] != 'cost-measurements.json' or hashlib.sha256(body).hexdigest() != metadata['sha256']:
+            raise ValueError('Per-room cost evidence differs')
+        document = json.loads(body)
+        packed(document)
+        if len(document['rows']) != metadata['rows']:
+            raise ValueError('Per-room cost evidence count differs')
+        files['cost-measurements.json'] = ('application/json', body)
     images = set()
     for example in comparison.get('illustrations', []):
         url = example['image']
@@ -81,11 +91,13 @@ def release_files(directory):
     return files, cohort, dict(counts)
 
 
-def publish(client, bucket, directory, day, version):
+def publish(client, bucket, directory, day, version, revision=None):
     if not re.fullmatch(r'\d+\.\d+\.\d+', version):
         raise ValueError('Use the website semantic version')
     files, cohort, counts = release_files(directory)
-    target = prefix(day) + 'analysis-v' + version + '/'
+    if revision is not None and not re.fullmatch(r'[a-f0-9]{12}', revision):
+        raise ValueError('Archive revision must be a 12-character content hash')
+    target = prefix(day) + 'analysis-v' + version + ('-' + revision if revision else '') + '/'
     def send(item):
         name, (mime, body) = item
         checksum = hashlib.sha256(body).hexdigest()
@@ -106,6 +118,7 @@ def main():
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--date', required=True)
     parser.add_argument('--version', required=True)
+    parser.add_argument('--revision', help='Content-hash suffix for a no-version-bump amendment')
     parser.add_argument('--profile', default='darkest')
     parser.add_argument('--bucket', default='soilie3d-data')
     parser.add_argument('--publish', action='store_true')
@@ -114,7 +127,7 @@ def main():
     if args.publish:
         import boto3
         client = boto3.Session(profile_name=args.profile).client('s3', region_name='ca-central-1')
-        result = publish(client, args.bucket, args.directory, args.date, args.version)
+        result = publish(client, args.bucket, args.directory, args.date, args.version, args.revision)
     else:
         result = {'validatedFiles': len(files), 'cohortSha256': cohort, 'modelCounts': counts}
     print(json.dumps(result), flush=True)

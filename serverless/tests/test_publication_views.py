@@ -19,6 +19,18 @@ class PublicationViewsTests(unittest.TestCase):
         self.assertEqual(1, coverage['roomsUsingSurfaceTests'])
         self.assertEqual(0, coverage['booleanPairs'])
 
+    def test_open_surface_crossing_counts_as_detection_not_missing_volume(self):
+        checks = [
+            {'complete': True, 'overlapPairs': []},
+            {'complete': False, 'unavailablePairs': [{'reason': 'open mesh; 12 intersecting triangle pair(s)'}]},
+            {'complete': False, 'unavailablePairs': [{'reason': 'Boolean failed'}]},
+            {'complete': True, 'overlapPairs': [{'intersectionM3': .1}]}]
+        result = mesh_check_coverage([{'scene': {'model': 'infinigen', 'solidMeshOverlap': check}} for check in checks])['infinigen']
+        self.assertEqual(4, result['checkedRooms'])
+        self.assertEqual(2, result['detectedIntersectionRooms'])
+        self.assertEqual(1, result['noDetectedIntersectionRooms'])
+        self.assertEqual(1, result['unresolvedRooms'])
+
     def test_identical_geometry_is_not_counted_twice_and_changes_are_rejected(self):
         row = {'scene': {'id': 'one'}, 'metrics': {'gap': 0}}
         self.assertEqual([row], merge_geometry([row], [deepcopy(row)]))
@@ -109,6 +121,33 @@ class PublicationViewsTests(unittest.TestCase):
             for model in room.values():
                 self.assertEqual(0, model['n'])
                 self.assertIsNone(model['metrics']['floorSupportGapCm']['mean'])
+
+    def test_cost_distributions_price_individual_records_and_label_transfer(self):
+        rates = {'currency': 'USD', 'lambda': {'source': AWS_URL,
+            'computeUsdPerGbSecond': .0000166667, 'storageUsdPerGbSecond': .000000034, 'requestUsd': .0000002},
+            'gpt4': {'source': GPT4_URL, 'inputUsdPerMillion': 30, 'outputUsdPerMillion': 60}}
+        sources = [{'platform': 'AWS Lambda', 'roomType': 'living_room', 'generationSeconds': 10}] * 2500
+        sources += [{'platform': 'AWS Lambda', 'roomType': 'bedroom', 'generationSeconds': 20}]
+        native = {'attempts': [
+            {'id': 'native-bedroom', 'roomType': 'bedroom', 'status': 'complete', 'generationSeconds': 100},
+            {'id': 'native-living', 'roomType': 'living_room', 'status': 'complete', 'generationSeconds': 200},
+            {'id': 'shared', 'roomType': 'living_room', 'status': 'complete', 'generationSeconds': 500, 'timingEligible': False}]}
+        result = measured_cost(sources, completed_calls([self.export()]), rates, native)
+        self.assertEqual(2504, len(result['observations']))
+        self.assertEqual(0, result['byRoomType']['bedroom']['layoutgpt']['n'])
+        self.assertIsNone(result['byRoomType']['bedroom']['layoutgpt']['mean'])
+        self.assertNotIn('shared', [row['id'] for row in result['observations']])
+        self.assertIn('not run on AWS Lambda', result['infinigenBasis'])
+        for room in ('bedroom', 'living_room'):
+            for model, summary in result['byRoomType'][room].items():
+                rows = [row for row in result['observations'] if row['roomType'] == room and row['model'] == model]
+                self.assertEqual(sorted(row['usd'] for row in rows), summary['values'])
+        for row in result['observations']:
+            if row['model'] == 'layoutgpt':
+                self.assertAlmostEqual(.072, row['usd'])
+            else:
+                self.assertAlmostEqual(row['seconds'] * (4 * .0000166667 + 9.5 * .000000034) + .0000002, row['usd'])
+        self.assertTrue(all(row['basis'] == 'hypothetical-runtime-transfer' for row in result['observations'] if row['model'] == 'infinigen'))
 
 
 if __name__ == '__main__': unittest.main()

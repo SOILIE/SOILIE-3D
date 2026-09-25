@@ -65,11 +65,10 @@ def percentile(values, fraction):
 
 
 def worker_scenario(seconds, aws, memory_mb=4096, storage_mb=10240):
-    """Price one successful invocation using a transferred local runtime.
+    """Price supplied seconds at a worker tariff, without claiming an invoice.
 
-    The duration is an observed local placement duration, not a Lambda result.
-    This helper prices the explicit counterfactual in which the same duration is
-    achieved by the planned worker allocation.
+    The caller must disclose whether seconds are a measured cloud stage or a
+    hypothetical transfer from local hardware. Neither is total billed usage.
     """
     seconds = nonnegative(seconds)
     memory = nonnegative(memory_mb) / 1024
