@@ -37,6 +37,19 @@ def model_summary(model, rows):
             'inventory': inventory_summary(rows), 'validityRates': validity_rates(rows)}
 
 
+def mesh_check_coverage(rows):
+    """Distinguish separation proofs from surface tests and solid volumes."""
+    fields = ('pairCount', 'broadPhaseDisjointPairs', 'preservedBoundsDisjointPairs',
+              'numericalContactPairs', 'booleanPairs', 'surfaceDisjointPairs')
+    result = {}
+    for model in LABELS:
+        checks = [row['scene']['solidMeshOverlap'] for row in rows
+                  if row['scene']['model'] == model and row['scene'].get('solidMeshOverlap')]
+        result[model] = {**{field: sum(check.get(field, 0) for check in checks) for field in fields},
+                         'roomsUsingSurfaceTests': sum(check.get('surfaceDisjointPairs', 0) > 0 for check in checks)}
+    return result
+
+
 def room_models(rows):
     return {room: {model: model_summary(model, [row for row in rows
                     if row['scene']['model'] == model and row['scene']['roomType'] == room])
@@ -196,6 +209,7 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
     document.update(schemaVersion=4,
         models={model: model_summary(model, [row for row in rows if row['scene']['model'] == model]) for model in LABELS},
         modelsByRoomType=room_models(rows), comparisons=compare(rows),
+        meshCheckCoverage=mesh_check_coverage(rows),
         layoutgptSources={'bedroom': 'Official released GPT-4 layouts, eight retrieved examples.',
             'living_room': 'Recorded GPT-4 calls, four retrieved examples, requested counts cycling 3–6.',
             'exportSha256': [sha(path.read_bytes()) for path in layoutgpt]},
@@ -210,6 +224,12 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
     # Selected extreme diagrams were made for the original baseline corpus;
     # retain only those whose source model/corpus has not changed.
     document['illustrations'] = [row for row in document['illustrations'] if row['model'] != 'layoutgpt']
+    document['metricDefinitions']['meanWorstSolidOverlapPct'].update(
+        title='Mesh intersection diagnostic',
+        meaning='Disjoint bounds establish separation. Closed intersecting meshes permit Boolean volume measurement. '
+                'Open or non-manifold assets are checked for triangle-surface crossings instead; disjoint surfaces '
+                'do not establish a solid volume or exclude containment inside an undefined interior. '
+                'A zero diagnostic means no intersection detected under these tests, not a solid-volume measurement for every pair.')
     if expansion:
         document['infinigenControlledConfiguration'] = {
             'profile': 'controlled inventory; official fast_solve',

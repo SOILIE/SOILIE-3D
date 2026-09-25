@@ -6,11 +6,19 @@ from pathlib import Path
 import tempfile
 
 from serverless.cloud_benchmark.publication_views import (completed_calls, measured_cost, native_timing,
-                                                         room_models, merge_geometry, verified_reviews)
+                                                         room_models, merge_geometry, verified_reviews, mesh_check_coverage)
 from serverless.benchmark.cost import AWS_URL, GPT4_URL
 
 
 class PublicationViewsTests(unittest.TestCase):
+    def test_surface_checks_are_not_reported_as_closed_solid_volumes(self):
+        rows = [{'scene': {'model': 'soilie', 'solidMeshOverlap': {
+            'pairCount': 6, 'broadPhaseDisjointPairs': 5, 'surfaceDisjointPairs': 1}}}]
+        coverage = mesh_check_coverage(rows)['soilie']
+        self.assertEqual(6, coverage['pairCount'])
+        self.assertEqual(1, coverage['roomsUsingSurfaceTests'])
+        self.assertEqual(0, coverage['booleanPairs'])
+
     def test_identical_geometry_is_not_counted_twice_and_changes_are_rejected(self):
         row = {'scene': {'id': 'one'}, 'metrics': {'gap': 0}}
         self.assertEqual([row], merge_geometry([row], [deepcopy(row)]))
