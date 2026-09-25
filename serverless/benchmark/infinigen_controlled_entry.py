@@ -1,4 +1,4 @@
-"""Run the pinned Infinigen release with a disclosed six-object room task.
+"""Run the pinned Infinigen release with a disclosed object-inventory task.
 
 The native Indoors release does not expose an exact primary-object count.  This
 entry point extends only its constraint graph: asset generation, placement,
@@ -6,7 +6,15 @@ annealing, collision handling and scene construction remain Infinigen's.  The
 native profile is benchmarked separately and never passes through this module.
 """
 from collections import OrderedDict
+import os
+from pathlib import Path
 import runpy
+import sys
+
+# Blender's --python entrypoint does not reliably add this directory to sys.path.
+# The inventory contract has no dependency on the backend or its environment.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from infinigen_task import controlled_role_counts
 
 from infinigen.assets import elements, lighting, seating, shelves, tables
 from infinigen.core.constraints import constraint_language as cl
@@ -19,7 +27,8 @@ _native_home_constraints = constraints.home_constraints
 
 
 def controlled_home_constraints():
-    """Add exact, room-specific six-object constraints to the native graph."""
+    """Add exact inventory constraints without changing native placement rules."""
+    counts = controlled_role_counts('bedroom', int(os.environ.get('SOILIE_INFINIGEN_BEDROOM_COUNT', '6')))
     problem = _native_home_constraints()
 
     rooms = cl.scene()[{Semantics.Room, -Semantics.Object}]
@@ -40,13 +49,13 @@ def controlled_home_constraints():
     desks = wall_furniture[shelves.SimpleDeskFactory]
     bedroom_condition = bedrooms.all(lambda room: (
         beds.related_to(room).count().equals(1)
-        * storage.related_to(room).count().equals(1)
+        * storage.related_to(room).count().equals(counts['storage'])
         * side_tables.related_to(room)
             .related_to(beds.related_to(room), cu.leftright_leftright)
             .count().equals(1)
-        * desks.related_to(room).count().equals(1)
+        * desks.related_to(room).count().equals(counts['desk'])
         * floor_lamps.related_to(room).count().equals(1)
-        * rugs.related_to(room).count().equals(1)
+        * rugs.related_to(room).count().equals(counts['rug'])
     ))
 
     living_rooms = rooms[Semantics.LivingRoom].excludes(cu.room_types)

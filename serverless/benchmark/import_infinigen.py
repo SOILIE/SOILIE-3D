@@ -10,7 +10,8 @@ import subprocess
 
 from serverless.benchmark.geometry import measure
 from serverless.benchmark.run_batch import write_json
-from serverless.benchmark.run_infinigen import COMMIT
+from serverless.benchmark.run_infinigen import COMMIT, PROFILES
+from serverless.benchmark.infinigen_task import CONTROLLED_PROFILES
 from serverless.benchmark.timing import session_summary
 from serverless.benchmark.supervise import command as supervised
 
@@ -60,9 +61,7 @@ def main():
         args.timing_exclusions = args.timing_exclusions.resolve()
     config = json.loads((args.run/"run.json").read_text())
     revision = subprocess.check_output(["git","rev-parse","HEAD"],cwd=args.repository,text=True).strip()
-    if revision != COMMIT or config["commit"] != COMMIT or config.get("profile", "default") not in {
-        "controlled-six-fast", "default", "tutorial-fast", "matched-furniture-fast"
-    }:
+    if revision != COMMIT or config["commit"] != COMMIT or config.get("profile", "default") not in PROFILES:
         raise ValueError("Expected a documented profile from the pinned original Indoors release")
     if subprocess.check_output(["git","diff","--name-only","HEAD"],cwd=args.repository,text=True).strip():
         raise ValueError("The source used for export must also remain unchanged")
@@ -116,11 +115,15 @@ def main():
                 return None, {"id":attempt["id"],"reason":"GEOMETRY_EXPORT_FAILED", "exitCode":result.returncode}
             write_json(receipt,expected)
         scene = json.loads(artifact.read_text())
-        if config.get("profile") == "controlled-six-fast":
+        if config.get("profile") in CONTROLLED_PROFILES:
             scene["sourceSceneId"] = scene["id"]
             scene["id"] = "controlled-" + scene["id"]
             scene["model"] = "infinigen_controlled"
-            scene["benchmarkVariant"] = "controlled-six-fast"
+            scene["benchmarkVariant"] = config['profile']
+            if config['profile'] == 'controlled-count-fast':
+                scene['provenance']['controlledObjectCount'] = config['objectCount']
+                scene['provenance']['controlledRoleCounts'] = config['controlledRoleCounts']
+                scene['provenance']['controlImplementation'] = config['controlImplementation']
         scene["provenance"].update(expected,commit=COMMIT)
         try:
             measure(scene)

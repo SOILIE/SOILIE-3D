@@ -6,7 +6,8 @@ import unittest
 from serverless.benchmark.import_infinigen import require_complete_sample
 from serverless.benchmark.run_infinigen import (checkpoint_rows, controlled_roles,
                                                 profile_command,
-                                                revalidate_controlled_checkpoints)
+                                                revalidate_controlled_checkpoints, validate_controlled_output)
+from serverless.benchmark.infinigen_task import controlled_role_counts
 
 
 class InfinigenProfileTests(unittest.TestCase):
@@ -62,6 +63,29 @@ class InfinigenProfileTests(unittest.TestCase):
                          {"bed", "storage", "side_table", "desk", "floor_lamp", "rug"})
         self.assertEqual(set(controlled_roles(living, "living_room")),
                          {"sofa", "tv_stand", "storage", "side_table", "coffee_table", "rug"})
+
+    def test_variable_bedroom_inventory_is_exact_and_nested(self):
+        specifications = [("Bed", ["bed"]), ("SideTable", ["side-table"]), ("FloorLamp", []),
+                          ("SingleCabinet", ["storage"]), ("SimpleDesk", []), ("Rug", [])]
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            for count in range(3, 7):
+                expected = controlled_role_counts('bedroom', count)
+                self.assertEqual(count, sum(expected.values()))
+                self.assertEqual(1, expected['bed'])
+                self.assertEqual(1, expected['side_table'])
+                records = self.controlled_records('bedroom', specifications[:count])
+                (work / 'solve_state.json').write_text(json.dumps({'objs': records}))
+                self.assertEqual(count, len(validate_controlled_output(work, 'bedroom', count)))
+                if count < 6:
+                    with self.assertRaises(ValueError): validate_controlled_output(work, 'bedroom')
+            for value in (2, 7, 3.0, True):
+                with self.assertRaises(ValueError): controlled_role_counts('bedroom', value)
+            with self.assertRaises(ValueError): controlled_role_counts('living_room', 3)
+        configs, overrides, description = profile_command('controlled-count-fast', 'bedroom', 'Bedroom')
+        self.assertEqual(['fast_solve.gin', 'singleroom.gin'], configs)
+        self.assertIn("restrict_solving.consgraph_filters=['benchmark_controlled']", overrides)
+        self.assertIn('3–6-object', description)
 
     def test_resume_reclassifies_an_incomplete_controlled_scene(self):
         with tempfile.TemporaryDirectory() as folder:

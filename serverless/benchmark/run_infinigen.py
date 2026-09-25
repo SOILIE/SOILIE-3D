@@ -6,6 +6,7 @@ and cannot be presented as equivalent to LayoutGPT's bounding-box response.
 """
 import argparse
 from datetime import datetime, UTC
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,9 +19,10 @@ from serverless.benchmark.run_batch import run_lock, terminate_tree, write_json
 from serverless.benchmark.infinigen_metadata import asset_label, generated_instances, has_tag
 from serverless.benchmark.timing import record_session
 from serverless.benchmark.supervise import command as supervised
+from serverless.benchmark.infinigen_task import CONTROLLED_PROFILES, controlled_role_counts
 
 COMMIT = "fb7991e06580639202a4687937082cb63e931eb0"
-PROFILES = {"controlled-six-fast", "default", "tutorial-fast", "matched-furniture-fast"}
+PROFILES = CONTROLLED_PROFILES | {"default", "tutorial-fast", "matched-furniture-fast"}
 
 
 def controlled_roles(records, room_type):
@@ -70,28 +72,26 @@ def controlled_roles(records, room_type):
     return roles
 
 
-def validate_controlled_output(work, room_type):
+def validate_controlled_output(work, room_type, object_count=6):
     state = json.loads((work/"solve_state.json").read_text())
     records = state.get("objs")
     if not isinstance(records, dict):
         raise ValueError("Controlled output has no solver object records")
     roles = controlled_roles(records, room_type)
-    expected = ({"bed", "storage", "side_table", "desk", "floor_lamp", "rug"}
-                if room_type == "bedroom"
-                else {"sofa", "tv_stand", "storage", "side_table", "coffee_table", "rug"})
-    if len(roles) != 6 or set(roles) != expected:
+    expected = {role for role, count in controlled_role_counts(room_type, object_count).items() if count}
+    if len(roles) != object_count or set(roles) != expected:
         raise ValueError(f"Expected one instance of each controlled role; observed {roles}")
     return roles
 
 
-def revalidate_controlled_checkpoints(rows, output, room_type):
+def revalidate_controlled_checkpoints(rows, output, room_type, object_count=6):
     """Correct old success-only checkpoints before a controlled run resumes."""
     for index, row in enumerate(rows):
         if row.get("status") != "complete":
             continue
         try:
             row["controlledRoles"] = validate_controlled_output(
-                output/f"scene-{room_type}-{index:03d}", room_type
+                output/f"scene-{room_type}-{index:03d}", room_type, object_count
             )
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             row["status"] = "failed"
@@ -107,7 +107,7 @@ def profile_command(profile, room_type, parent):
     overrides = ["compose_indoors.terrain_enabled=False",
                  f"restrict_solving.restrict_parent_rooms=['{parent}']"]
     description = "Default single-room solver and full procedural population"
-    if profile in {"controlled-six-fast", "tutorial-fast", "matched-furniture-fast"}:
+    if profile in CONTROLLED_PROFILES | {"tutorial-fast", "matched-furniture-fast"}:
         configs.insert(0, "fast_solve.gin")
         overrides.append("restrict_solving.solve_max_rooms=1")
         description = "Official fast_solve single-room profile; reduced solver iterations"
@@ -121,13 +121,16 @@ def profile_command(profile, room_type, parent):
         overrides.append("compose_indoors.solve_small_enabled=False")
         description = ("Official fast_solve single-room profile with its full room-scale furniture "
                        "domain; small decorative-object solving disabled")
-    elif profile == "controlled-six-fast":
+    elif profile in CONTROLLED_PROFILES:
         overrides.extend([
             "restrict_solving.consgraph_filters=['benchmark_controlled']",
             "compose_indoors.solve_small_enabled=False",
         ])
         description = ("Controlled six-object task using Infinigen's pinned solver, assets and "
                        "scene construction with a disclosed benchmark constraint graph")
+        if profile == 'controlled-count-fast':
+            description = ("Controlled 3–6-object bedroom task using Infinigen's pinned solver, assets "
+                           "and scene construction; exact inventory recorded per run")
     return configs, overrides, description
 
 
@@ -157,11 +160,16 @@ def main():
     parser.add_argument("--timeout",type=int,default=21600)
     parser.add_argument("--max-attempts",type=int,default=0)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="default")
+    parser.add_argument('--object-count', type=int, choices=range(3, 7), default=6)
     parser.add_argument("--bedroom-seed-offset",type=int,default=0,
                         help="Non-negative deterministic offset used to create disjoint benchmark shards")
     parser.add_argument("--living-room-seed-offset",type=int,default=0,
                         help="Non-negative deterministic offset added after the living-room base seed")
     args = parser.parse_args()
+    if args.profile == 'controlled-count-fast' and args.room_types != ['bedroom']:
+        parser.error('Variable-count profile is restricted to bedrooms')
+    if args.object_count != 6 and args.profile != 'controlled-count-fast':
+        parser.error('Non-six counts require the explicit controlled-count-fast profile')
     if (args.per_room < 1 or args.max_attempts < 0 or args.bedroom_seed_offset < 0
             or args.living_room_seed_offset < 0):
         parser.error("counts and seed offsets must be non-negative, and --per-room must be positive")
@@ -188,6 +196,12 @@ def main():
         # two-room campaigns. A single-room supplement has its own directory.
         if args.room_types != ['bedroom', 'living_room']:
             config['roomTypes'] = list(dict.fromkeys(args.room_types))
+        if args.profile == 'controlled-count-fast':
+            config['objectCount'] = args.object_count
+            config['controlledRoleCounts'] = controlled_role_counts('bedroom', args.object_count)
+            config['controlImplementation'] = {
+                name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+                for name in ('infinigen_controlled_entry.py', 'infinigen_task.py')}
         manifest = args.output/"run.json"
         if manifest.exists() and json.loads(manifest.read_text()) != config:
             raise RuntimeError("Resume configuration changed")
@@ -200,8 +214,8 @@ def main():
             if room_type not in args.room_types:
                 continue
             existing = checkpoint_rows(args.output, room_type)
-            if args.profile == "controlled-six-fast":
-                existing = revalidate_controlled_checkpoints(existing, args.output, room_type)
+            if args.profile in CONTROLLED_PROFILES:
+                existing = revalidate_controlled_checkpoints(existing, args.output, room_type, args.object_count)
             completed = sum(row.get("status") == "complete" for row in existing)
             index = len(existing)
             while completed < args.per_room:
@@ -226,7 +240,7 @@ def main():
                 if configs != config["configs"] or description != config["profileDescription"]:
                     raise RuntimeError("An Infinigen profile must retain one disclosed configuration across room types")
                 entrypoint = (Path(__file__).with_name("infinigen_controlled_entry.py")
-                              if args.profile == "controlled-six-fast"
+                              if args.profile in CONTROLLED_PROFILES
                               else args.repository/"infinigen_examples/generate_indoors.py")
                 command = [str(args.blender),"--background","--threads","4","--python-use-system-env","--python-exit-code","2",
                            "--python",str(entrypoint),"--","--seed",seed,"--task","coarse",
@@ -234,6 +248,9 @@ def main():
                 environment = os.environ.copy()
                 environment["PYTHONPATH"] = str(args.site_packages)+os.pathsep+str(args.repository)
                 environment["PYTHONHASHSEED"] = "0"
+                # Set explicitly so an unrelated inherited variable cannot alter
+                # the frozen six-object task on a subsequent invocation.
+                environment['SOILIE_INFINIGEN_BEDROOM_COUNT'] = str(args.object_count)
                 # Standalone Blender resolves some relative resources using PWD,
                 # which subprocess cwd alone does not rewrite in the environment.
                 environment["PWD"] = str(args.repository)
@@ -245,9 +262,9 @@ def main():
                     try:
                         process.wait(timeout=args.timeout)
                         if process.returncode == 0 and (work/"scene.blend").exists() and (work/"solve_state.json").exists():
-                            if args.profile == "controlled-six-fast":
+                            if args.profile in CONTROLLED_PROFILES:
                                 try:
-                                    row["controlledRoles"] = validate_controlled_output(work, room_type)
+                                    row["controlledRoles"] = validate_controlled_output(work, room_type, args.object_count)
                                     row["status"] = "complete"
                                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                                     row["errorCode"] = "CONTROLLED_COMPOSITION_MISMATCH"

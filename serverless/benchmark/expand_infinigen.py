@@ -1,7 +1,7 @@
 """Resume two local room-type workers until each has 120 eligible review pairs.
 
 The already frozen pairs remain fixed. New scenes use consecutive disjoint
-seeds, the same six-role profile, and matching variables only. No quality score
+seeds, a disclosed inventory schedule, and matching variables only. No quality score
 selects a scene. Blender files are losslessly compressed after export to keep
 the campaign below the local disk budget; original bytes remain recoverable.
 """
@@ -18,12 +18,86 @@ import time
 
 from serverless.benchmark.geometry import measure
 from serverless.benchmark.run_batch import run_lock, write_json
-from serverless.benchmark.stimuli import select_pairs, digest
+from serverless.benchmark.stimuli import select_pairs, digest, semantic_signature
 from serverless.benchmark.supervise import command as supervised
+from serverless.benchmark.infinigen_task import BEDROOM_COUNT_CYCLE, controlled_role_counts
 
 ROOT = Path(__file__).resolve().parents[2]
 ROOMS = ('bedroom', 'living_room')
 OFFSETS = {'bedroom': 4000, 'living_room': 5000}
+
+
+def matching_capacity(pool, protocols, room, counts=(6,)):
+    """Upper bound for the permitted inventories, independent of quality.
+
+    More baseline generations cannot create new unique SOILIE counterparts.
+    Semantic and density gates can only reduce this count, never increase it.
+    """
+    reserved = set()
+    for protocol in protocols:
+        conditions = {case['id']: case['comparisonCondition'] for case in protocol['cases']}
+        reserved.update(row['soilieScene'] for row in protocol['stimulusEvidence']
+                        if conditions[row['caseId']] == 'infinigen_controlled'
+                        and row['matchingStratum'][0] == room)
+    anchor = {'bedroom': 'bed', 'living_room': 'sofa'}[room]
+    candidates = {count: set() for count in counts}
+    for row in pool:
+        scene = row['scene']
+        if scene['model'] != 'soilie' or scene['roomType'] != room or scene['id'] in reserved:
+            continue
+        signature = semantic_signature(scene)
+        count = sum(signature.values())
+        if count in candidates and signature[anchor] == 1:
+            candidates[count].add(scene['id'])
+    available = sum(map(len, candidates.values()))
+    return {'roomType': room, 'furnitureCounts': list(counts), 'anchor': anchor, 'anchorCount': 1,
+            'availableByCount': {str(n): len(peers) for n, peers in candidates.items()},
+            'frozenPairs': len(reserved), 'remainingInventoryPeers': available,
+            'maximumTotalPairs': len(reserved) + available,
+            'scope': 'Inventory-only upper bound; semantic and density gates can reduce it.'}
+
+
+def bedroom_schedule(output, enabled, pool, protocols):
+    """Freeze the authorized input amendment without rewriting original records.
+
+    An already-started attempt retains its original configuration. New count
+    assignments depend only on the attempt index, never success or geometry.
+    """
+    path = output / 'bedroom-count-schedule.json'
+    if not enabled:
+        if path.exists():
+            raise ValueError('Resume requires --vary-bedroom-counts for the frozen amendment')
+        return None
+    campaign_hash = sha_file(output / 'campaign.json')
+    expected = {'schemaVersion': 1, 'campaignSha256': campaign_hash,
+                'profile': 'controlled-count-fast', 'countCycle': list(BEDROOM_COUNT_CYCLE),
+                'inventories': {str(n): controlled_role_counts('bedroom', n) for n in BEDROOM_COUNT_CYCLE},
+                'assignment': 'Cycle by new attempt index; failures advance the same fixed sequence.',
+                'qualitySelection': False, 'preserveFrozenPairs': True}
+    if path.exists():
+        schedule = json.loads(path.read_bytes())
+        if any(schedule.get(key) != value for key, value in expected.items()):
+            raise ValueError('Bedroom count schedule changed')
+        if type(schedule.get('startAttempt')) is not int or schedule['startAttempt'] < 0:
+            raise ValueError('Invalid bedroom count schedule offset')
+        return schedule
+    checkpoint = output / 'bedroom/checkpoint.json'
+    state = json.loads(checkpoint.read_bytes()) if checkpoint.exists() else {'attempts': []}
+    start = len(state['attempts'])
+    # Preserve an interrupted or completed-but-not-yet-imported six-object run.
+    while (output / 'bedroom' / f'attempt-{start:03d}' / 'run.json').exists():
+        start += 1
+    schedule = {**expected, 'startAttempt': start,
+                'checkpointAtAmendmentSha256': sha_file(checkpoint) if checkpoint.exists() else None,
+                'inventoryCapacity': matching_capacity(pool, protocols, 'bedroom', BEDROOM_COUNT_CYCLE)}
+    write_json(path, schedule)
+    return schedule
+
+
+def attempt_task(room, index, schedule=None):
+    if room == 'bedroom' and schedule and index >= schedule['startAttempt']:
+        return schedule['profile'], schedule['countCycle'][(index - schedule['startAttempt']) % len(schedule['countCycle'])]
+    return 'controlled-six-fast', 6
 
 
 def wait_for_disk(directory):
@@ -101,9 +175,23 @@ def room_worker(room, args, pool, protocols, base_count):
         state = json.loads(state_file.read_bytes()) if state_file.exists() else {
             'roomType': room, 'existingPairs': base_count, 'targetPairs': args.target,
             'attempts': [], 'selectedPairs': [], 'complete': False}
+        counts = BEDROOM_COUNT_CYCLE if room == 'bedroom' and args.bedroom_schedule else (6,)
+        capacity = matching_capacity(pool, protocols, room, counts)
+        write_json(directory / 'matching-capacity.json', capacity)
+        if capacity['maximumTotalPairs'] < args.target:
+            print(json.dumps({'status': 'matching-capacity-limit', **capacity,
+                              'targetPairs': args.target}), flush=True)
+            # Stop only this room type; another feasible room worker continues.
+            # Preserve all attempts and selected pairs for the next agreed design.
+            return {**state, 'capacityLimit': capacity}
         common = ['--repository', str(args.repository), '--site-packages', str(args.site_packages),
                   '--blender', str(args.blender)]
         while base_count + len(state['selectedPairs']) < args.target:
+            # An operator can request a clean per-room checkpoint stop without
+            # killing a native generation or conflating pause time with compute.
+            if (directory / 'STOP').exists():
+                print(json.dumps({'roomType': room, 'status': 'paused-at-checkpoint'}), flush=True)
+                return state
             index = len(state['attempts'])
             if index >= args.max_attempts: raise RuntimeError('Reached fixed attempt ceiling for ' + room)
             wait_for_disk(directory)
@@ -111,14 +199,20 @@ def room_worker(room, args, pool, protocols, base_count):
             work.mkdir(exist_ok=True)
             attempt_file = work / f'attempt-{room}-000.json'
             seed = OFFSETS[room] + index
+            profile, object_count = attempt_task(room, index, args.bedroom_schedule)
             if not attempt_file.exists():
                 run_command([sys.executable, '-m', 'serverless.benchmark.run_infinigen', *common,
                     '--output', str(work), '--per-room', '1', '--room-types', room,
-                    '--profile', 'controlled-six-fast', '--timeout', '3600', '--max-attempts', '1',
+                    '--profile', profile, '--object-count', str(object_count),
+                    '--timeout', '3600', '--max-attempts', '1',
                     '--' + room.replace('_', '-') + '-seed-offset', str(seed)], work / 'generation-controller.log', 3750)
             attempt = json.loads(attempt_file.read_bytes())
+            run_config = json.loads((work / 'run.json').read_bytes())
+            if run_config['profile'] != profile or run_config.get('objectCount', 6) != object_count:
+                raise ValueError('Attempt configuration does not match its frozen input schedule')
             entry = {'seed': attempt['seed'], 'status': attempt['status'],
-                     'generationSeconds': attempt['generationSeconds'], 'id': attempt['id']}
+                     'generationSeconds': attempt['generationSeconds'], 'id': attempt['id'],
+                     'profile': profile, 'objectCount': object_count}
             if attempt['status'] == 'complete':
                 exported = work / 'export.json'
                 if not exported.exists():
@@ -164,6 +258,8 @@ def main():
         parser.add_argument('--' + key.replace('_', '-'), type=Path, required=True)
     parser.add_argument('--target', type=int, default=120)
     parser.add_argument('--max-attempts', type=int, default=200)
+    parser.add_argument('--vary-bedroom-counts', action='store_true',
+                        help='Apply the authorized, immutable 3–6-object bedroom continuation schedule')
     args = parser.parse_args()
     if args.target != 120 or args.max_attempts < 100 or args.max_attempts > 200:
         parser.error('Expected 120 pairs per room, with at most 200 additional attempts per room')
@@ -194,13 +290,22 @@ def main():
         path = args.output / 'campaign.json'
         if path.exists() and json.loads(path.read_bytes()) != config: raise ValueError('Campaign configuration changed')
         write_json(path, config)
+        args.bedroom_schedule = bedroom_schedule(args.output, args.vary_bedroom_counts, rows, protocols)
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(room_worker, room, args,
                 [row for row in rows if row['scene']['model'] == 'soilie' and row['scene']['roomType'] == room],
                 protocols, counts[room]) for room in ROOMS]
             results = [future.result() for future in futures]
-        write_json(args.output / 'complete.json', {'complete': all(row['complete'] for row in results),
-                                                  'pairs': {row['roomType']: args.target for row in results}})
+        complete = all(row['complete'] for row in results)
+        summary = {'complete': complete,
+                   'pairs': {row['roomType']: row['existingPairs'] + len(row['selectedPairs']) for row in results}}
+        # The streaming uploader treats complete.json as a terminal marker.
+        # Never emit it while a room is awaiting a study-design decision.
+        if complete:
+            write_json(args.output / 'complete.json', summary)
+        else:
+            summary['capacityLimits'] = [row['capacityLimit'] for row in results if 'capacityLimit' in row]
+            write_json(args.output / 'needs-decision.json', summary)
 
 
 if __name__ == '__main__': main()

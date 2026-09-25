@@ -38,12 +38,14 @@ publishing private account data. API round-trip time is not JSON loading time.
 
 `serverless.benchmark.expand_infinigen` retains the existing 20 matched rooms
 of each type and targets 100 additional matched rooms per type. Two local
-workers each use four Blender threads. The pinned initial Indoors release,
-`controlled-six-fast` profile and six role constraints remain unchanged.
+workers each use four Blender threads. The pinned initial Indoors release and
+native asset generation, placement and solving remain unchanged. Living rooms
+retain `controlled-six-fast`. New bedrooms use `controlled-count-fast`, with
+counts assigned in a repeating 3, 4, 5, 6 sequence before generation.
 Concurrent runs are for geometry and review coverage, not isolated timing claims.
 
 ```powershell
-wsl -- .codex/linux-env/bin/python -m serverless.benchmark.expand_infinigen --output .codex/benchmark/infinigen-expanded-120 --evidence .codex/benchmark/soilie-platform-grid-final/evidence --original-protocol .codex/benchmark/soilie-platform-grid-final/review/set-b/protocol.json --supplement-protocol .codex/benchmark/soilie-platform-grid-final/review-extension/set-b/protocol.json --repository .codex/infinigen --site-packages .codex/infinigen-env/lib/python3.10/site-packages --blender .codex/tools/blender-3.6.0-linux-x64/blender
+wsl -- .codex/linux-env/bin/python -m serverless.benchmark.expand_infinigen --output .codex/benchmark/infinigen-expanded-120 --evidence .codex/benchmark/soilie-platform-grid-final/evidence --original-protocol .codex/benchmark/soilie-platform-grid-final/review/set-b/protocol.json --supplement-protocol .codex/benchmark/soilie-platform-grid-final/review-extension/set-b/protocol.json --repository .codex/infinigen --site-packages .codex/infinigen-env/lib/python3.10/site-packages --blender .codex/tools/blender-3.6.0-linux-x64/blender --vary-bedroom-counts
 ```
 
 The same command resumes checkpoints. A lock prevents duplicate controllers.
@@ -54,6 +56,22 @@ pairs separately. The controller stops at 120 pairs per type or 200 new attempts
 per type. Below 15 GiB free disk, workers wait between scenes until verified
 uploads restore at least 20 GiB of headroom. This wait does not enter generation
 timings or change an active scene's watchdog.
+
+Bedroom inventories are nested: bed, bedside table and floor lamp (3), then
+storage (4), desk (5), and rug (6). These are solver input constraints; no object
+is deleted from a generated room. The same bedside-distance objective remains
+active at every size. Composition validation requires exactly one of every
+requested role, rejecting missing, extra or duplicate instances.
+
+`bedroom-count-schedule.json` freezes the amendment's first attempt, count cycle,
+role inventories, source campaign hash and pre-generation capacity audit.
+Already-started six-object attempts finish under their original configuration;
+completed rooms and frozen reviews are unchanged. Failed attempts advance the
+same fixed schedule. The source SOILIE cohort remains exactly 10,000 rooms.
+Inventory capacity is an upper bound, not a promise of eligible matches: the
+semantic and density requirements below still apply. A deficient capacity stops
+that room worker rather than generating indefinitely. A per-room `STOP` file
+requests a clean stop after its current checkpoint; remove it before resuming.
 
 Matching preserves room type, furniture-instance count and bed/sofa count,
 requires at least one-third duplicate-aware object-family agreement, and limits
@@ -175,7 +193,7 @@ selected for visual review. A closed API batch is required: uncertain, omitted,
 duplicate or unparsable calls prevent silently publishing a success-only cost.
 Only explicit public fields are exported; account receipts are never copied.
 
-This preview is not a release. The expanded six-object Infinigen corpus must
+This preview is not a release. The expanded controlled-inventory Infinigen corpus must
 still be frozen and added, followed by the remaining AI reviews. `aiReview.ready`
 stays false until version-matched review exports exist. Website review exports
 must carry the same `cohortSha256`; the browser rejects mismatched results.
