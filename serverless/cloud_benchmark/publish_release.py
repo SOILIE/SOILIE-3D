@@ -53,6 +53,13 @@ def release_files(directory):
         # Validate recursively without reserializing, preserving signed hashes.
         packed(json.loads(body))
         files[name] = ('application/json', body)
+    if comparison.get('layoutgptPhysicalScale'):
+        metadata = comparison['layoutgptPhysicalScale']
+        body = (directory / 'layoutgpt-scale.json').read_bytes()
+        if metadata['file'] != 'layoutgpt-scale.json' or hashlib.sha256(body).hexdigest() != metadata['sha256']:
+            raise ValueError('LayoutGPT physical scale evidence differs')
+        packed(json.loads(body))
+        files['layoutgpt-scale.json'] = ('application/json', body)
     images = set()
     for example in comparison.get('illustrations', []):
         url = example['image']

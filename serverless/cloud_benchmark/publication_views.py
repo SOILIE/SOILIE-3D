@@ -172,7 +172,7 @@ def verified_reviews(directory, cohort_sha):
 
 
 def compile_views(base, evidence, layoutgpt, native, rates, output,
-                  expansion=None, controlled=None, reviews=None):
+                  expansion=None, controlled=None, reviews=None, layoutgpt_scale=None):
     raw = (evidence / 'measured-scenes.json').read_bytes()
     cohort = json.loads((evidence / 'cohort.json').read_bytes())
     document = json.loads(base.read_bytes())
@@ -206,6 +206,13 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
             additions.extend(measured)
             checkpoints[room] = checksum
     rows = merge_geometry(rows, additions)
+    # Scale is additional measurement evidence, not a change to reviewed boxes.
+    # Keep the original scene digest and dimensionless metrics byte-for-byte.
+    scale_document = None
+    if layoutgpt_scale:
+        from serverless.benchmark.layoutgpt_scale import apply_clearance
+        scale_document = json.loads(layoutgpt_scale.read_bytes())
+        apply_clearance(rows, scale_document)
     document.update(schemaVersion=4,
         models={model: model_summary(model, [row for row in rows if row['scene']['model'] == model]) for model in LABELS},
         modelsByRoomType=room_models(rows), comparisons=compare(rows),
@@ -260,8 +267,16 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
                         raise ValueError('Published geometry differs from reviewed geometry')
         document['aiReview'].update(ready=True, pairsPerRoomPerBaseline=120,
                                     manifestSha256=sha((reviews / 'review-manifest.json').read_bytes()))
-    document['evidenceDigest'] = sha(json.dumps(document, sort_keys=True, separators=(',', ':')).encode())
     output.mkdir(parents=True, exist_ok=True)
+    if scale_document:
+        document['layoutgptPhysicalScale'] = {'rooms': len(scale_document['rooms']),
+            'file': 'layoutgpt-scale.json', 'sha256': sha(layoutgpt_scale.read_bytes()),
+            'method': scale_document['method'], 'source': scale_document['scaleImplementation']}
+        # Preserve the bytes whose hash the document certifies, even if the
+        # caller supplied an equivalent JSON file with different formatting.
+        if layoutgpt_scale.resolve() != (output / 'layoutgpt-scale.json').resolve():
+            shutil.copyfile(layoutgpt_scale, output / 'layoutgpt-scale.json')
+    document['evidenceDigest'] = sha(json.dumps(document, sort_keys=True, separators=(',', ':')).encode())
     # Reproduce the retained explanatory image from its measured scene, rather
     # than relying on an untracked image from a previous website build.
     from serverless.benchmark.stimuli import diagram
@@ -298,7 +313,8 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
         'cohortSha256': cohort['measurementsSha256'], 'baseSha256': sha(base.read_bytes()),
         'layoutgptSha256': [sha(path.read_bytes()) for path in layoutgpt], 'nativeSha256': sha(native.read_bytes()),
         'ratesSha256': sha(rates.read_bytes()), 'expansionCheckpointsSha256': checkpoints,
-        'aiReviewsReady': bool(reviews)})
+        'aiReviewsReady': bool(reviews),
+        'layoutgptPhysicalScaleSha256': sha(layoutgpt_scale.read_bytes()) if layoutgpt_scale else None})
     print(json.dumps({'models': {key: value['n'] for key, value in document['models'].items()},
                       'recordedApiCalls': len(calls), 'aiReviewsReady': bool(reviews)}), flush=True)
 
@@ -311,6 +327,7 @@ def main():
     parser.add_argument('--expansion', type=Path)
     parser.add_argument('--controlled', type=Path, action='append', default=[])
     parser.add_argument('--reviews', type=Path)
+    parser.add_argument('--layoutgpt-scale', type=Path)
     compile_views(**vars(parser.parse_args()))
 
 

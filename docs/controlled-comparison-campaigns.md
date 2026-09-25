@@ -260,6 +260,25 @@ Only explicit public fields are exported; account receipts are never copied.
 
 ### Final release gate and publication
 
+Physical clearance can include LayoutGPT without retrieving substitute meshes.
+Prepare its source-room metadata and scale evidence:
+
+```powershell
+wsl -- .codex/linux-env/bin/python -m serverless.benchmark.layoutgpt_scale --evidence .codex/benchmark/soilie-platform-grid-final/evidence/measured-scenes.json --released .codex/benchmark/layoutgpt/gpt4.bedroom.k-similar.k_8.px_regular.json --exports .codex/benchmark/layoutgpt-controlled/export.json --exports .codex/benchmark/layoutgpt-controlled-supplement/export.json --cache .codex/layoutgpt-scale-cache --living-cache .codex/benchmark/layoutgpt-controlled/data --output .codex/layoutgpt-scale.json
+```
+
+Pass `--layoutgpt-scale .codex/layoutgpt-scale.json` to `publication_views`.
+It checks exact prediction hashes and complete coverage. Only the clearance
+metric changes; the frozen geometry and AI review hashes remain identical.
+The authors' `render_from_files.py` uses the shorter metadata floor side / 256
+to denormalize pixel predictions. Released prompt dimensions need not reproduce
+the current metadata's normalized extent; preserve that supplied rectangle
+rather than substitute another floor. Controlled calls additionally validate
+their known prompt preprocessing. Metadata files are CRC-checked against the
+authors' archive and individually SHA-256-pinned in the public supplement.
+Mesh support, below-floor mesh depth and solid collision remain unavailable
+for these box-only LayoutGPT outputs. Do not assign them synthetic zeroes.
+
 Add `--expansion .codex/benchmark/infinigen-expanded-120`,
 `--controlled .codex/benchmark/infinigen-controlled-living-supplement/export.json`
 and `--reviews <completed-review-export>` to the publication command. Both
