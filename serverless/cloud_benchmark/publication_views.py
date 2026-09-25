@@ -124,8 +124,8 @@ def measured_cost(sources, calls, rates, native=None):
     prices = [token_charge(row['inputTokens'], row['outputTokens'], rates['gpt4']) for row in calls]
     soilie = summarize([worker_scenario(value, rates['lambda'])['usd'] for value in seconds])
     layout = summarize(prices)
-    result = {'schemaVersion': 3, 'currency': 'USD', 'roomType': 'living_room', 'rateCard': rates,
-        'scope': 'One 3–6-object living-room proposal, excluding images, evaluation, orchestration and downstream contact correction.',
+    result = {'schemaVersion': 3, 'currency': 'USD', 'recordedApiRoomType': 'living_room', 'rateCard': rates,
+        'scope': 'Per-room generation-stage estimates for bedrooms and living rooms. SOILIE requests 3–6 objects; LayoutGPT API calls request 3–6 living-room objects; Infinigen uses its room-scale furniture workload. Images, evaluation, orchestration and downstream contact correction are excluded.',
         'soilie': {'usd': soilie, 'seconds': summarize(seconds), 'memoryMb': 4096,
             'ephemeralStorageMb': 10240,
             'basis': 'Measured AWS Lambda generation-stage seconds priced at public 4 GB x86-64 compute, 10 GB temporary-storage and request rates. Not complete billed invocation time.'},
@@ -135,7 +135,7 @@ def measured_cost(sources, calls, rates, native=None):
             'requestedObjectCounts': dict(sorted(Counter(row['requestedObjects'] for row in calls).items())),
             'basis': 'Recorded prompt and completion tokens from GPT-4 living-room calls, priced at public token rates. Four retrieved examples and an explicit 3–6-object instruction.'},
         'freeTier': {'monthlyLayouts': 600, 'accountUsageIncluded': False,
-            'assumptions': 'One invocation per room, using the observed generation-stage mean as total billed duration; no retries or other account usage. Extra invocation overhead would increase the estimate.',
+            'assumptions': '600 SOILIE living rooms per month, one invocation per room, using the observed living-room generation-stage mean as total billed duration; no retries or other account usage. Extra invocation overhead would increase the estimate.',
             'allowanceAvailable': monthly_lambda_budget(600, summarize(seconds)['mean'], 4096, 10240,
                                                        rates['lambda'], 400000, 1000000),
             'allowanceExhausted': monthly_lambda_budget(600, summarize(seconds)['mean'], 4096, 10240, rates['lambda'])},
