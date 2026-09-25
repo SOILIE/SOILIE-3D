@@ -167,6 +167,34 @@ future extensions. It does not infer whether an external reviewer is running.
 Only publish the final aggregate after every included pair has its required
 reviews; partial packets are not complete evidence.
 
+### Combined, room-specific review reports
+
+`serverless.cloud_benchmark.review_reports` reads the immutable study databases,
+checks every selected response against its assignment and exact prompt, and
+combines disjoint reviewed pairs. Source versions, case IDs and protocol hashes
+remain in the export. The original LayoutGPT bedroom cases and controlled living
+cases are included; the seven released living cases are outside this selection.
+Repeated presentations contribute only to consistency checks. Preferences and
+pair-clustered intervals are recomputed per question and room type; questions
+are never merged into an overall score.
+
+```powershell
+python -m serverless.cloud_benchmark.review_reports --evidence .codex/benchmark/soilie-platform-grid-final/evidence --original .codex/benchmark/soilie-platform-grid-final/review --extension .codex/benchmark/soilie-platform-grid-final/review-extension --extra-export .codex/benchmark/layoutgpt-controlled/export.json --extra-export .codex/benchmark/infinigen-controlled-living-supplement/export.json --output .codex/benchmark/soilie-platform-grid-final/review-preview --preview
+```
+
+An explicit `--preview` permits completed subsets for local inspection, but sets
+`releaseEligible: false`. Without it, each baseline must have exactly 120 pairs
+per room type and all ten reviewer slots complete on every pair. Use
+`--additional` for a later frozen review directory and `--extra-export` for its
+source geometry. Identical questions, reviewer configuration and matching rules
+are required across inputs. Reused scene IDs or incomplete judgements are errors.
+
+Outputs contain compact summaries, downloadable responses, selected SVG stimuli
+and `review-manifest.json` with report hashes and the final geometry-cohort hash.
+Private credentials, session IDs and database files are not exported. These files
+do not enable website publication automatically; the final comparison build must
+verify the manifest and completed generation coverage before setting `aiReview.ready`.
+
 ## Publication preparation
 
 `serverless.cloud_benchmark.publish` derives the four-condition SOILIE stage
