@@ -95,7 +95,7 @@ def main():
     def export_attempt(attempt):
         directory = Path(attempt["outputDirectory"])
         artifact = directory/"geometry.json"
-        command = [str(args.blender),"--background",str(directory/"scene.blend"),"--threads","4",
+        command = [str(args.blender),"--background",str(directory/"scene.blend"),"--threads",str(config.get('blenderThreads', 4)),
                    "--python-use-system-env","--python-exit-code","2","--python",str(exporter),"--",
                    "--state",str(directory/"solve_state.json"),"--room-type",attempt["roomType"],
                    "--id",attempt["id"],"--output",str(artifact)]

@@ -20,7 +20,10 @@ try {
     const cases = [];
     let prompt;
     for (const set of ['set-a', 'set-b']) {
-      const packet = JSON.parse(await readFile(join(folder, `${set}.json`), 'utf8'));
+      let raw;
+      try { raw = await readFile(join(folder, `${set}.json`), 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      const packet = JSON.parse(raw);
       if (prompt && prompt !== packet.prompt) throw new Error('Reviewer instructions differ across sets');
       prompt = packet.prompt;
       for (const item of packet.cases) {
@@ -38,6 +41,7 @@ try {
         cases.push({ set, caseId: item.caseId, title: item.title, image: destination });
       }
     }
+    if (!cases.length || !prompt) throw new Error('No frozen reviewer cases');
     // Sessions already independently shuffle/balance each baseline. Interleave
     // their cases deterministically to avoid a visible block of one generator.
     cases.sort((a, b) => createHash('sha256').update(reviewer + a.caseId).digest('hex').localeCompare(createHash('sha256').update(reviewer + b.caseId).digest('hex')));

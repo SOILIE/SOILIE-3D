@@ -143,6 +143,43 @@ and frozen reviewer materials independently of these unused generation copies.
 
 ## Review release gate
 
+### Parallel expansion after one room stratum finishes
+
+Resume `expand_infinigen` with `--workers 6 --blender-threads 1` when only
+one room type remains unfinished. Six native processes receive consecutive
+seeds from the frozen inventory schedule. Checkpoints commit in seed order,
+not completion order. A started run retains its original thread setting;
+new runs record the requested setting. The original campaign and model inputs
+are unchanged; separate `execution-*.json` receipts record scheduling changes.
+These concurrent expansion timings remain excluded from isolated latency plots.
+
+Per-attempt `expansion-entry.json` receipts preserve finished work across a
+controller interruption. Only the coordinator updates the room checkpoint.
+Keep the S3 streaming uploader running alongside generation. On Windows, use
+a hidden `Start-Process` with logs redirected into the campaign directory to
+keep both workers independent of an IDE terminal session.
+
+### Freeze a completed room type while the other continues
+
+`serverless.cloud_benchmark.expanded_reviews` checks the completed room's
+checkpoint, geometry checksums and exact selected pairs before preparing ten
+reviewer sessions with the existing prompts. It rejects unfinished strata and
+does not modify earlier pairs or responses. Use a new output directory for
+each frozen increment, then render its neutral image packets:
+
+```powershell
+python -m serverless.cloud_benchmark.expanded_reviews --evidence .codex/benchmark/soilie-platform-grid-final/evidence --original .codex/benchmark/soilie-platform-grid-final/review --extension .codex/benchmark/soilie-platform-grid-final/review-extension --campaign .codex/benchmark/infinigen-expanded-120 --output .codex/benchmark/soilie-platform-grid-final/review-wave-3 --room-types living_room --layoutgpt .codex/benchmark/layoutgpt-controlled-supplement/export.json
+node serverless/cloud_benchmark/render_packets.mjs .codex/benchmark/soilie-platform-grid-final/review-wave-3 C:/Users/mike/Dropbox/Projects/Websites/SOILIE-3D-WEB/.codex/browser
+```
+
+The optional LayoutGPT supplement contributes just its remaining unreviewed
+pair. For the subsequent bedroom increment, omit `--layoutgpt` and use
+`--room-types bedroom` in another output directory. Submit each complete
+answer file through `serverless.cloud_benchmark.submit_reviews`; combine
+finished increments through `review_reports --additional`, including their
+`source-scenes.json` files as `--extra-export` inputs. Private session files
+are not public research artifacts.
+
 AI reviewers can work on already frozen, validated pairs while the remaining
 Infinigen scenes generate. Preserve collected judgements on unchanged pairs;
 never append to a packet while its reviewer is running. Each reviewer receives

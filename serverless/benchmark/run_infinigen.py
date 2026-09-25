@@ -161,6 +161,7 @@ def main():
     parser.add_argument("--max-attempts",type=int,default=0)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="default")
     parser.add_argument('--object-count', type=int, choices=range(3, 7), default=6)
+    parser.add_argument('--blender-threads', type=int, choices=range(1, 9), default=4)
     parser.add_argument("--bedroom-seed-offset",type=int,default=0,
                         help="Non-negative deterministic offset used to create disjoint benchmark shards")
     parser.add_argument("--living-room-seed-offset",type=int,default=0,
@@ -187,7 +188,7 @@ def main():
         )
         config = {"schemaVersion":1,"model":"infinigen","commit":COMMIT,"tag":"indoors-initial",
                   "targetPerRoom":args.per_room,"timeoutSeconds":args.timeout,"configs":profile_configs,
-                  "profile":args.profile,"fastSolve":args.profile != "default","terrainEnabled":False,"blenderThreads":4,
+                  "profile":args.profile,"fastSolve":args.profile != "default","terrainEnabled":False,"blenderThreads":args.blender_threads,
                   "seedOffsets":{"bedroom":args.bedroom_seed_offset,"living_room":args.living_room_seed_offset},
                   "stage":"coarse task: solving, procedural meshes and scene serialization; no image rendering",
                   "profileDescription":profile_description,
@@ -242,7 +243,7 @@ def main():
                 entrypoint = (Path(__file__).with_name("infinigen_controlled_entry.py")
                               if args.profile in CONTROLLED_PROFILES
                               else args.repository/"infinigen_examples/generate_indoors.py")
-                command = [str(args.blender),"--background","--threads","4","--python-use-system-env","--python-exit-code","2",
+                command = [str(args.blender),"--background","--threads",str(args.blender_threads),"--python-use-system-env","--python-exit-code","2",
                            "--python",str(entrypoint),"--","--seed",seed,"--task","coarse",
                            "--output_folder",str(work),"-g",*configs,"-p",*overrides]
                 environment = os.environ.copy()

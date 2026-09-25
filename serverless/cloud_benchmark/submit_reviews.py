@@ -6,6 +6,7 @@ from pathlib import Path
 
 from serverless.study.service import StudyService
 from serverless.study.store import SQLiteStudyStore
+from serverless.cloud_benchmark.review_work import validate_answers
 
 
 def submit(root, reviewer):
@@ -16,7 +17,10 @@ def submit(root, reviewer):
     supplied=Counter((row['set'],row['caseId']) for row in answers)
     if set(supplied)!=required or any(count!=1 for count in supplied.values()):
         raise ValueError('Exactly one judgement is required per assigned case, including repeats')
+    validate_answers(assignments, answers)
     for name in ('set-a','set-b'):
+        if not any(row['set'] == name for row in assignments):
+            continue
         cohort=root/name; state=cohort/'private'
         protocol=json.loads((cohort/'protocol.json').read_bytes())
         session=json.loads((state/(reviewer+'.json')).read_bytes())

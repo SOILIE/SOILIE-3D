@@ -1,4 +1,4 @@
-"""Resume two local room-type workers until each has 120 eligible review pairs.
+"""Resume bounded local workers until each room type has 120 eligible pairs.
 
 The already frozen pairs remain fixed. New scenes use consecutive disjoint
 seeds, a disclosed inventory schedule, and matching variables only. No quality score
@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -167,6 +168,75 @@ def run_command(command, log, seconds):
     if result.returncode: raise RuntimeError('Campaign stage failed; inspect ' + str(log))
 
 
+def run_attempt(room, index, args):
+    """Own one attempt directory; only the coordinator writes room checkpoints.
+
+    Reuse the thread count of interrupted runs. New workers do not mutate a
+    started seed's inventory or configuration, and never resample on failure.
+    """
+    directory = args.output / room
+    work = directory / f'attempt-{index:03d}'
+    work.mkdir(exist_ok=True)
+    receipt = work / 'expansion-entry.json'
+    if receipt.exists():
+        return json.loads(receipt.read_bytes())
+    attempt_file = work / f'attempt-{room}-000.json'
+    seed = OFFSETS[room] + index
+    profile, object_count = attempt_task(room, index, args.bedroom_schedule)
+    config_path = work / 'run.json'
+    threads = (json.loads(config_path.read_bytes())['blenderThreads']
+               if config_path.exists() else args.blender_threads)
+    common = ['--repository', str(args.repository), '--site-packages', str(args.site_packages),
+              '--blender', str(args.blender)]
+    if not attempt_file.exists():
+        run_command([sys.executable, '-m', 'serverless.benchmark.run_infinigen', *common,
+            '--output', str(work), '--per-room', '1', '--room-types', room,
+            '--profile', profile, '--object-count', str(object_count), '--blender-threads', str(threads),
+            '--timeout', '3600', '--max-attempts', '1',
+            '--' + room.replace('_', '-') + '-seed-offset', str(seed)], work / 'generation-controller.log', 3750)
+    attempt = json.loads(attempt_file.read_bytes())
+    run_config = json.loads(config_path.read_bytes())
+    if run_config['profile'] != profile or run_config.get('objectCount', 6) != object_count:
+        raise ValueError('Attempt configuration does not match its frozen input schedule')
+    entry = {'seed': attempt['seed'], 'status': attempt['status'],
+             'generationSeconds': attempt['generationSeconds'], 'id': attempt['id'],
+             'profile': profile, 'objectCount': object_count, 'blenderThreads': threads}
+    if attempt['status'] == 'complete':
+        exported = work / 'export.json'
+        if not exported.exists():
+            run_command([sys.executable, '-m', 'serverless.benchmark.import_infinigen', *common,
+                '--run', str(work), '--output', str(exported), '--timing-ineligible'],
+                work / 'export-controller.log', 1000)
+        document = json.loads(exported.read_bytes())
+        if document['invalidArtifacts'] or len(document['scenes']) != 1:
+            raise ValueError('A completed expansion scene must have validated geometry')
+        scene = document['scenes'][0]
+        measured = work / 'measured.json'
+        write_json(measured, {'scene': scene, 'metrics': measure(scene)})
+        entry.update(export=str(exported.relative_to(args.output)),
+                     measured=str(measured.relative_to(args.output)), sceneId=scene['id'],
+                     exportSha256=sha_file(exported), measuredSha256=sha_file(measured))
+    else:
+        entry['errorCode'] = attempt['errorCode']
+    blend = work / f'scene-{room}-000' / 'scene.blend'
+    if blend.exists() or blend.with_suffix('.blend.gz').exists():
+        entry['archive'] = compress_blend(blend, directory)
+    write_json(receipt, entry)
+    return entry
+
+
+def ordered_attempts(room, start, count, args):
+    """Commit in seed order, never completion-speed or quality order.
+
+    A bounded batch is drained even if the target is reached mid-batch. Durable
+    per-attempt receipts let restart import finished work without regenerating it.
+    """
+    with ThreadPoolExecutor(max_workers=count) as executor:
+        futures = [executor.submit(run_attempt, room, index, args) for index in range(start, start + count)]
+        for future in futures:
+            yield future.result()
+
+
 def room_worker(room, args, pool, protocols, base_count):
     directory = args.output / room
     directory.mkdir(parents=True, exist_ok=True)
@@ -184,8 +254,6 @@ def room_worker(room, args, pool, protocols, base_count):
             # Stop only this room type; another feasible room worker continues.
             # Preserve all attempts and selected pairs for the next agreed design.
             return {**state, 'capacityLimit': capacity}
-        common = ['--repository', str(args.repository), '--site-packages', str(args.site_packages),
-                  '--blender', str(args.blender)]
         while base_count + len(state['selectedPairs']) < args.target:
             # An operator can request a clean per-room checkpoint stop without
             # killing a native generation or conflating pause time with compute.
@@ -195,59 +263,23 @@ def room_worker(room, args, pool, protocols, base_count):
             index = len(state['attempts'])
             if index >= args.max_attempts: raise RuntimeError('Reached fixed attempt ceiling for ' + room)
             wait_for_disk(directory)
-            work = directory / f'attempt-{index:03d}'
-            work.mkdir(exist_ok=True)
-            attempt_file = work / f'attempt-{room}-000.json'
-            seed = OFFSETS[room] + index
-            profile, object_count = attempt_task(room, index, args.bedroom_schedule)
-            if not attempt_file.exists():
-                run_command([sys.executable, '-m', 'serverless.benchmark.run_infinigen', *common,
-                    '--output', str(work), '--per-room', '1', '--room-types', room,
-                    '--profile', profile, '--object-count', str(object_count),
-                    '--timeout', '3600', '--max-attempts', '1',
-                    '--' + room.replace('_', '-') + '-seed-offset', str(seed)], work / 'generation-controller.log', 3750)
-            attempt = json.loads(attempt_file.read_bytes())
-            run_config = json.loads((work / 'run.json').read_bytes())
-            if run_config['profile'] != profile or run_config.get('objectCount', 6) != object_count:
-                raise ValueError('Attempt configuration does not match its frozen input schedule')
-            entry = {'seed': attempt['seed'], 'status': attempt['status'],
-                     'generationSeconds': attempt['generationSeconds'], 'id': attempt['id'],
-                     'profile': profile, 'objectCount': object_count}
-            if attempt['status'] == 'complete':
-                exported = work / 'export.json'
-                if not exported.exists():
-                    run_command([sys.executable, '-m', 'serverless.benchmark.import_infinigen', *common,
-                        '--run', str(work), '--output', str(exported), '--timing-ineligible'],
-                        work / 'export-controller.log', 1000)
-                document = json.loads(exported.read_bytes())
-                if document['invalidArtifacts'] or len(document['scenes']) != 1:
-                    raise ValueError('A completed expansion scene must have validated geometry')
-                scene = document['scenes'][0]
-                metric = measure(scene)
-                measured = work / 'measured.json'
-                write_json(measured, {'scene': scene, 'metrics': metric})
-                entry.update(export=str(exported.relative_to(args.output)),
-                             measured=str(measured.relative_to(args.output)), sceneId=scene['id'],
-                             exportSha256=sha_file(exported), measuredSha256=sha_file(measured))
-            else:
-                entry['errorCode'] = attempt['errorCode']
-            blend = work / f'scene-{room}-000' / 'scene.blend'
-            if blend.exists() or blend.with_suffix('.blend.gz').exists():
-                entry['archive'] = compress_blend(blend, directory)
-            state['attempts'].append(entry)
-            additions = []
-            for row in state['attempts']:
-                if 'measured' not in row: continue
-                path = args.output / row['measured']
-                if sha_file(path) != row['measuredSha256']: raise ValueError('Changed exported scene')
-                additions.append(json.loads(path.read_bytes()))
-            state['selectedPairs'] = matching(pool, additions, protocols, args.target - base_count)
-            state['complete'] = base_count + len(state['selectedPairs']) == args.target
-            state['updatedAtUnix'] = time.time()
-            write_json(state_file, state)
-            print(json.dumps({'roomType': room, 'attemptedNew': len(state['attempts']),
-                'validNewScenes': len(additions), 'matchedPairs': base_count + len(state['selectedPairs']),
-                'targetPairs': args.target, 'complete': state['complete']}), flush=True)
+            count = min(args.workers, args.max_attempts - index,
+                        args.target - base_count - len(state['selectedPairs']))
+            for entry in ordered_attempts(room, index, count, args):
+                state['attempts'].append(entry)
+                additions = []
+                for row in state['attempts']:
+                    if 'measured' not in row: continue
+                    path = args.output / row['measured']
+                    if sha_file(path) != row['measuredSha256']: raise ValueError('Changed exported scene')
+                    additions.append(json.loads(path.read_bytes()))
+                state['selectedPairs'] = matching(pool, additions, protocols, args.target - base_count)
+                state['complete'] = base_count + len(state['selectedPairs']) == args.target
+                state['updatedAtUnix'] = time.time()
+                write_json(state_file, state)
+                print(json.dumps({'roomType': room, 'attemptedNew': len(state['attempts']),
+                    'validNewScenes': len(additions), 'matchedPairs': base_count + len(state['selectedPairs']),
+                    'targetPairs': args.target, 'complete': state['complete']}), flush=True)
         return state
 
 
@@ -260,6 +292,9 @@ def main():
     parser.add_argument('--max-attempts', type=int, default=200)
     parser.add_argument('--vary-bedroom-counts', action='store_true',
                         help='Apply the authorized, immutable 3–6-object bedroom continuation schedule')
+    parser.add_argument('--workers', type=int, choices=range(1, 7), default=1,
+                        help='Concurrent attempts per room; multiworker resume requires only one unfinished room')
+    parser.add_argument('--blender-threads', type=int, choices=range(1, 5), default=4)
     args = parser.parse_args()
     if args.target != 120 or args.max_attempts < 100 or args.max_attempts > 200:
         parser.error('Expected 120 pairs per room, with at most 200 additional attempts per room')
@@ -291,6 +326,15 @@ def main():
         if path.exists() and json.loads(path.read_bytes()) != config: raise ValueError('Campaign configuration changed')
         write_json(path, config)
         args.bedroom_schedule = bedroom_schedule(args.output, args.vary_bedroom_counts, rows, protocols)
+        unfinished = [room for room in ROOMS if not (args.output / room / 'checkpoint.json').exists()
+                      or not json.loads((args.output / room / 'checkpoint.json').read_bytes())['complete']]
+        if args.workers > 1 and len(unfinished) > 1:
+            raise ValueError('Multiworker expansion requires only one unfinished room type')
+        # Operational scheduling is separate from immutable sampling/model inputs.
+        execution = {'workersPerRoom': args.workers, 'newAttemptBlenderThreads': args.blender_threads,
+                     'startedAtUnix': time.time(), 'pid': os.getpid(), 'unfinishedRooms': unfinished,
+                     'timingEligible': False, 'commitOrder': 'ascending attempt index'}
+        write_json(args.output / f'execution-{time.time_ns()}.json', execution)
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(room_worker, room, args,
                 [row for row in rows if row['scene']['model'] == 'soilie' and row['scene']['roomType'] == room],

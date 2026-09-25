@@ -3,15 +3,42 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from serverless.benchmark.expand_infinigen import (compress_blend, wait_for_disk, matching_capacity,
-                                                  bedroom_schedule, attempt_task)
+                                                  bedroom_schedule, attempt_task, ordered_attempts, run_attempt)
 
 
 class InfinigenExpansionTests(unittest.TestCase):
+    def test_parallel_attempts_commit_in_seed_order_not_finish_order(self):
+        barrier = threading.Barrier(3)
+        completed = threading.Event()
+        def fake(room, index, args):
+            barrier.wait(timeout=5)
+            if index == 100:
+                self.assertTrue(completed.wait(timeout=5))
+            if index == 102:
+                completed.set()
+            return index
+        with patch('serverless.benchmark.expand_infinigen.run_attempt', side_effect=fake):
+            self.assertEqual([100, 101, 102], list(ordered_attempts('bedroom', 100, 3, None)))
+
+    def test_completed_attempt_receipt_resumes_without_regeneration(self):
+        scratch = Path(__file__).parents[2] / '.codex/tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            folder = root / 'bedroom/attempt-100'
+            folder.mkdir(parents=True)
+            entry = {'seed': 4100, 'status': 'complete'}
+            (folder / 'expansion-entry.json').write_text(json.dumps(entry))
+            with patch('serverless.benchmark.expand_infinigen.run_command') as native:
+                self.assertEqual(entry, run_attempt('bedroom', 100, SimpleNamespace(output=root)))
+                native.assert_not_called()
+
     def test_capacity_counts_distinct_unused_inventory_peers_not_generations(self):
         def scene(identity, labels, room='bedroom'):
             return {'scene': {'id': identity, 'model': 'soilie', 'roomType': room,
