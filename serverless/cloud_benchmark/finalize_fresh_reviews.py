@@ -28,6 +28,11 @@ def finalize(root, evidence, output):
         report['delivery'] = {'medium': 'Immutable paired PNGs and a single assigned prompt text file',
                               'additionalInterfaceReminderShown': False,
                               'numericEvidence': 'Relative box volumes for proportions only; no computed quality scores'}
+        # File-based reviewers receive the frozen combined prompt, not the
+        # separate reminder used by the optional interactive study interface.
+        # Omit that unused UI copy from the public record of their inputs.
+        for reviewer in report['reviewers']:
+            reviewer.pop('interfaceEmphasis', None)
         reports[baseline] = report
     output.mkdir(parents=True, exist_ok=True)
     artifacts = {}
