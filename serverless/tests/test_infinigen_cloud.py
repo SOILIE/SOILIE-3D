@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from serverless.infinigen_cloud.handler import request_parameters, run_construction
 from serverless.infinigen_cloud.campaign import requests, reserve_usd, CAP_USD, accounted_cost
-from serverless.infinigen_cloud.publication import measured_rows
+from serverless.infinigen_cloud.publication import measured_rows, completion_coverage, index_outputs
 from serverless.benchmark.infinigen_task import COMMIT
 from serverless.infinigen_cloud.receipts import attach_billing, valid_result
 from botocore.exceptions import ClientError
@@ -87,6 +87,22 @@ class CloudPilotTests(unittest.TestCase):
         self.assertEqual(result['status'], 'already_claimed')
         launch.assert_not_called()
 
+    def test_data_index_exposes_only_completed_scene_artifacts(self):
+        identity = 'controlled-bedroom-00'
+        folder = 'files/outputs/runtime-pilot-2026-09-25/soilie-infinigen-timing-test/' + identity
+        state = {'entries': {'a': {'status': 'complete', 'result': {'id': identity, 'artifacts': [
+            {'file': name, 'key': folder + '/' + name, 'bytes': 42}
+            for name in ('construction.log.gz', 'scene.blend.gz', 'solve_state.json.gz')]}},
+            'b': {'status': 'failed'}}}
+        client = Mock()
+        client.head_object.return_value = {'ContentLength': 42}
+        with patch('serverless.infinigen_cloud.publication.measured_rows'), patch('serverless.infinigen_cloud.publication.completed_campaign', return_value=state), patch('serverless.benchmark.archive.merge_index', return_value=3) as index:
+            self.assertEqual(index_outputs(Path('fixture'), client)['sceneFiles'], 3)
+            self.assertEqual(set(index.call_args.args[2]), {folder + '/' + name for name in ('scene.blend.gz', 'solve_state.json.gz', 'result.json')})
+            client.head_object.return_value = {'ContentLength': 1}
+            with self.assertRaises(ValueError):
+                index_outputs(Path('fixture'), client)
+
     def test_public_measurements_require_complete_cohort_and_strip_private_fields(self):
         state = {'status': 'complete', 'cleanupComplete': True, 'name': 'private-resource', 'entries': {}}
         for event in requests():
@@ -104,6 +120,17 @@ class CloudPilotTests(unittest.TestCase):
             rows = measured_rows(path)
             self.assertEqual(len(rows), 80)
             self.assertNotIn('private', json.dumps(rows))
+            first = next(iter(state['entries'].values()))
+            first['status'] = first['result']['status'] = 'failed'
+            first['result']['errorCode'] = 'CONSTRUCTION_FAILED'
+            state['status'] = 'needs_review'
+            path.write_text(json.dumps(state))
+            self.assertEqual(len(measured_rows(path)), 79)
+            self.assertEqual(completion_coverage(path)['bedroom']['infinigen'], {'attempted': 20, 'completed': 19, 'notCompleted': 1})
+            first['status'] = 'uncertain'
+            path.write_text(json.dumps(state))
+            with self.assertRaises(ValueError):
+                measured_rows(path)
             state['entries'].pop(next(iter(state['entries'])))
             path.write_text(json.dumps(state))
             with self.assertRaises(ValueError):

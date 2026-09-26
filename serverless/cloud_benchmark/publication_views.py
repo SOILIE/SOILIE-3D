@@ -292,12 +292,14 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
             'stage': 'Twenty fresh API calls using the original K=8 bedroom prompt, 512-token output limit and no count instruction. API request to complete response, including network/provider queue; excludes prompt retrieval, parsing, meshes and rendering. The 423 released bedroom layouts remain the geometry cohort.',
             'evidence': 'measured-api-pilot', 'sourceSha256': sha(bedroom_timing.read_bytes())}
     if infinigen_cloud:
-        from serverless.infinigen_cloud.publication import measured_rows
+        from serverless.infinigen_cloud.publication import measured_rows, completion_coverage
         cloud_rows = measured_rows(infinigen_cloud)
+        cloud_coverage = completion_coverage(infinigen_cloud)
         cloud_models = ('infinigen', 'infinigen_controlled')
         document['timing']['infinigenCloudByRoomType'] = {
             room: {model: {**latency([row['seconds'] for row in cloud_rows if row['roomType'] == room and row['model'] == model]),
-                          'platform': 'AWS Lambda', 'memoryMb': 6144, 'blenderThreads': 4}
+                          'platform': 'AWS Lambda', 'memoryMb': 6144, 'blenderThreads': 4,
+                          'completion': cloud_coverage[room][model]}
                    for model in cloud_models} for room in ROOMS}
         cost = document['cost']
         # Replace hypothetical transferred durations with actual cloud-stage
@@ -309,7 +311,7 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
             for model in cloud_models:
                 cost['byRoomType'][room][model] = summarize([row['usd'] for row in cost['observations'] if row['roomType'] == room and row['model'] == model])
         cost['missing'].pop('infinigenControlled', None)
-        cost['infinigenCloud'] = {'roomsPerCondition': 20, 'memoryMb': 6144,
+        cost['infinigenCloud'] = {'attemptsPerCondition': 20, 'completion': cloud_coverage, 'memoryMb': 6144,
             'sourceSha256': sha(infinigen_cloud.read_bytes()),
             'stage': 'Blender startup, solving, procedural meshes, camera preparation and scene serialization. Excludes validation, compression, artifact transfer and image rendering.'}
         cost['infinigenBasis'] = 'Measured construction-stage durations on 6 GB x86-64 AWS Lambda workers with 10 GB temporary storage, priced at public tariffs. Not complete billed invocation time.'

@@ -36,8 +36,10 @@ output prefix. Private ledgers and logs must not be copied into website files.
 For a corrected packaging pilot, supply `--previous <closed campaign.json>`.
 Its costs remain inside the same $10 ceiling; initialization failures retain
 their full worst-case reservation. Do not reset the budget by starting a new
-folder. `publication.measured_rows` accepts only a complete 80-room cohort and
-strips private receipt fields before the website compiler can consume it.
+folder. `publication.measured_rows` accepts only a closed 80-attempt cohort with
+known outcomes and strips private receipt fields before publication. Latency
+and generation-stage cost distributions describe completed rooms; completion
+counts retain every attempted seed. Never replace a failed seed to fill a curve.
 
 Calls use asynchronous delivery with automatic function-error retries disabled.
 The controller polls each durable S3 result; a conditional S3 claim prevents a
