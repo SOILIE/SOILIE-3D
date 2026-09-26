@@ -27,6 +27,7 @@ def finalize(root, evidence, output):
         report = combine_focused([source_report(root, name, scenes)], cohort['measurementsSha256'])
         report['delivery'] = {'medium': 'Immutable paired PNGs and a single assigned prompt text file',
                               'additionalInterfaceReminderShown': False,
+                              'executionInstructionSummary': 'Inspect every assigned PNG independently in frozen order; do not inspect method identities, prior results or other reviewers. Record the required preference, visible-problem choice, confidence and brief rationale in JSON, saving checkpoints. No aggregate outcome is targeted.',
                               'numericEvidence': 'Relative box volumes for proportions only; no computed quality scores'}
         # File-based reviewers receive the frozen combined prompt, not the
         # separate reminder used by the optional interactive study interface.

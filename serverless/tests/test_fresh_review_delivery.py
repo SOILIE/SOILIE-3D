@@ -55,6 +55,7 @@ class FreshReviewDeliveryTests(unittest.TestCase):
         self.assertEqual('Frozen assigned prompt', report['reviewers'][0]['reviewPrompt'])
         self.assertFalse(report['delivery']['additionalInterfaceReminderShown'])
         self.assertIn('proportions only', report['delivery']['numericEvidence'])
+        self.assertIn('No aggregate outcome is targeted', report['delivery']['executionInstructionSummary'])
 
 
 if __name__ == '__main__':
