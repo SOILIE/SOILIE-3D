@@ -75,24 +75,32 @@ def comparable_inventory(first, second):
     return all(left[name] == right[name] for name in anchors)
 
 
-def diagram(scene, highlight_ids=frozenset(), show_fronts=True):
+def presentation_label(label):
+    """Shared role vocabulary for labels AND colours, never source asset names."""
+    label = ' '.join(label.lower().replace('_', ' ').replace('-', ' ').split())
+    return SEMANTIC_FAMILIES.get(label, label)
+
+
+def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False):
     items = furniture(scene)
     boxes = [(item,Box(item)) for item in items]
     smallest_volume = min(box.volume for _, box in boxes)
-    label_counts = Counter(item["label"] for item in items)
+    label_counts = Counter(presentation_label(item['label']) for item in items)
     label_seen = Counter()
+    labels = {}
     volume_labels = []
-    for item, box in sorted(boxes, key=lambda pair: (pair[0]["label"], pair[0]["id"])):
-        label_seen[item["label"]] += 1
-        label = item["label"].replace("_", " ")
-        if label_counts[item["label"]] > 1:
-            label += f" {label_seen[item['label']]}"
+    # Instance numbering is based on geometry, not source-specific object IDs.
+    for item, box in sorted(boxes, key=lambda pair: (presentation_label(pair[0]['label']), tuple(pair[1].points.mean(axis=0)))):
+        base = presentation_label(item['label'])
+        label_seen[base] += 1
+        label = base + (f' {label_seen[base]}' if label_counts[base] > 1 else '')
+        labels[item['id']] = label
         volume_labels.append(f"{label} {box.volume / smallest_volume:.1f}×")
     regions = room_regions(scene["room"])
     floor = scene["room"]["floorZ"]
     description = ("Plan, oblique, and three-dimensional bird’s-eye views of an indoor arrangement "
-                   + ("with front-direction arrows and " if show_fronts else "with ")
-                   + "relative bounding-box volumes")
+                   + ("with front-direction arrows" if show_fronts else "with labelled boxes")
+                   + (" and relative bounding-box volumes" if show_volumes else ""))
     lines = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1080" role="img" aria-label="{description}">',
              '<rect width="720" height="1080" fill="#f2f4f6"/>',
              '<defs><marker id="front-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#087f8c"/></marker></defs>',
@@ -143,8 +151,8 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True):
             for ring in region.get("holes", []):
                 lines.append(polygon([[x,y,floor] for x,y in ring],"#f2f4f6",1,"#314d62",2.2))
         for index,(item,box) in enumerate(sorted(boxes,key=lambda pair: float(pair[1].points.mean(axis=0)[0]+pair[1].points.mean(axis=0)[1]))):
-            label = item["label"].replace("_"," ")
-            color = PALETTE[int(hashlib.sha256(label.encode()).hexdigest()[:8],16)%len(PALETTE)]
+            label = labels[item['id']]
+            color = PALETTE[int(hashlib.sha256(presentation_label(item['label']).encode()).hexdigest()[:8],16)%len(PALETTE)]
             if item["id"] in highlight_ids:
                 color = "#ed998c"
             if view == "plan":
@@ -188,14 +196,32 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True):
                 lines.append(f'<line x1="{x:.2f}" y1="{y:.2f}" x2="{label_x:.2f}" y2="{label_y:.2f}" stroke="#6b7d8c" stroke-width=".8"/>')
             lines.append(f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-opacity=".9">{escape(label)}</text>')
     lines.extend(['<line x1="24" x2="696" y1="320" y2="320" stroke="#c2cbd3"/>',
-                  '<line x1="24" x2="696" y1="640" y2="640" stroke="#c2cbd3"/>',
-                  '<text x="24" y="1004">Relative bounding-box volumes, normalized to this room’s smallest object:</text>',
+                  '<line x1="24" x2="696" y1="640" y2="640" stroke="#c2cbd3"/>'])
+    # Instructions belong to the assigned prompt, never inside a shared image.
+    # Numeric volume evidence appears only in the proportions-task variant.
+    if show_volumes:
+        lines.extend(['<text x="24" y="1004">Relative bounding-box volumes, normalized to this room’s smallest object:</text>',
                   f'<text x="24" y="1022">{escape(" · ".join(volume_labels[:3]))}</text>',
                   f'<text x="24" y="1040">{escape(" · ".join(volume_labels[3:]))}</text>' if len(volume_labels) > 3 else '',
-                  '<text x="24" y="1058">Judge the relative size differences among the objects present in each room.</text>',
-                  ('<text x="24" y="1076">Values are box volume, not shape/aspect ratio. Cyan arrows mark source-defined fronts.</text>'
-                   if show_fronts else '<text x="24" y="1076">Values are box volume, not shape/aspect ratio.</text>'),'</svg>'])
+                  '<text x="24" y="1058">Values describe box volume, not shape or aspect ratio.</text>'])
+    if show_fronts:
+        lines.append('<text x="24" y="1076">Cyan arrows mark source-defined fronts.</text>')
+    lines.append('</svg>')
     return "\n".join(lines)
+
+
+def stimulus_images(scene, output):
+    """New content hashes preserve old review artifacts as immutable evidence."""
+    paths = {}
+    for variant, volumes in (('default', False), ('proportions', True)):
+        body = diagram(scene, show_volumes=volumes).encode()
+        name = hashlib.sha256(body).hexdigest()[:24] + '.svg'
+        path = output / name
+        if path.exists() and path.read_bytes() != body:
+            raise ValueError('Immutable stimulus filename collision')
+        path.write_bytes(body)
+        paths[variant] = '/benchmarks/stimuli/' + name
+    return paths
 
 
 def review_metrics(row):
@@ -317,21 +343,13 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                                          minimum_semantic_similarity,baselines,
                                          maximum_density_difference):
         pair_id = digest([a,b])[:20]
-        paths = []
-        for scene in (a,b):
-            svg = diagram(scene)
-            checksum = hashlib.sha256(svg.encode()).hexdigest()
-            name = checksum[:24]+".svg"
-            destination = output/name
-            if destination.exists() and destination.read_text(encoding="utf-8") != svg:
-                raise RuntimeError("Immutable stimulus filename collision")
-            destination.write_text(svg,encoding="utf-8",newline="\n")
-            paths.append("/benchmarks/stimuli/"+name)
+        paths = [stimulus_images(scene, output) for scene in (a,b)]
         row_by_id = {row["scene"]["id"]: row for row in rows}
         relation_metrics, comparison_metrics = symmetric_review_metrics(
             row_by_id[a["id"]], row_by_id[b["id"]])
         cases.append({"id":pair_id,"title":key[0].replace("_"," ").title()+" arrangement",
-                      "relationImage":paths[0],"comparisonImage":paths[1],
+                      "relationImage":paths[0]['default'],"comparisonImage":paths[1]['default'],
+                      "profileImages":{'proportions': {'relationImage':paths[0]['proportions'], 'comparisonImage':paths[1]['proportions']}},
                       "relationMetrics":relation_metrics,
                       "comparisonMetrics":comparison_metrics,
                       "comparisonCondition":baseline})
@@ -349,6 +367,7 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                                                                               "minimumSemanticSimilarity":minimum_semantic_similarity,
                                                                               "maximumDensityDifference":maximum_density_difference})[:20],
                 "evidenceMode":evidence_mode,"decisionScope":decision_scope,
+                "presentationPolicy":"neutral-role-labels-v2; instructions in prompt only; volume data only for proportions",
                 "humanEnrollmentEnabled":False,"pilotCollectionEnabled":bool(cases),"cases":cases,
                 "sampling":{"seed":seed,"maximumPairsPerBaseline":limit,"withoutReplacementWithinBaseline":True,
                             "baselines":list(baselines),

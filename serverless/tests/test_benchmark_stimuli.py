@@ -142,12 +142,24 @@ class StimulusTests(unittest.TestCase):
         self.assertIn("Oblique view",svg)
         self.assertIn("3D bird’s-eye view",svg)
         self.assertIn('class="front"',svg)
-        self.assertIn("Judge the relative size differences",svg)
+        self.assertNotIn("Judge",svg)
         self.assertIn("Cyan arrows mark source-defined fronts",svg)
         self.assertIn('viewBox="0 0 720 1080"',svg)
-        self.assertIn("Relative bounding-box volumes", svg)
-        self.assertIn("bed 1.0×", svg)
+        self.assertNotIn("Relative bounding-box volumes", svg)
+        proportions = diagram(scene, show_volumes=True)
+        self.assertIn("Relative bounding-box volumes", proportions)
+        self.assertIn("bed 1.0×", proportions)
+        self.assertNotIn("Judge", proportions)
         self.assertNotIn("soilie",svg)
+
+    def test_source_aliases_have_identical_visible_labels_and_colours(self):
+        scene = fixture('soilie', 1)['scene']
+        alias = deepcopy(scene)
+        alias['objects'][0]['label'] = 'double_bed'
+        alias['objects'][0]['id'] = 'model_specific_asset'
+        for volumes in (False, True):
+            self.assertEqual(diagram(scene, show_volumes=volumes), diagram(alias, show_volumes=volumes))
+            self.assertNotIn('double bed', diagram(alias, show_volumes=volumes))
 
     def test_geometry_illustration_can_omit_unpublished_front_axes(self):
         scene = fixture("soilie",1)["scene"]

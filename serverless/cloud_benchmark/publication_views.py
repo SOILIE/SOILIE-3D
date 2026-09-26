@@ -379,11 +379,14 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
     for example in document['illustrations']:
         pair = example['highlightedPair']
         body = diagram(by_id[example['sceneId']], {pair['a'], pair['b']}, show_fronts=False).encode()
-        name = Path(example['image']).name
-        if sha(body)[:24] != Path(name).stem:
-            raise ValueError('Reproduced explanatory diagram differs')
+        name = sha(body)[:24] + '.svg'
+        example['image'] = 'benchmarks/illustrations/' + name
         (output / 'illustrations').mkdir(exist_ok=True)
         (output / 'illustrations' / name).write_bytes(body)
+    # Explanatory figures use the current neutral renderer; reviewed stimuli
+    # remain the exact immutable bytes their recorded reviewers were shown.
+    document.pop('evidenceDigest')
+    document['evidenceDigest'] = sha(json.dumps(document, sort_keys=True, separators=(',', ':')).encode())
     write_json(output / 'comparison.json', document)
     write_support_evidence(rows, output)
     # Compact downloadable row-level metrics, without private sessions, machine

@@ -152,9 +152,10 @@ class StudyService:
             assignments = []
             for case in sorted(cases, key=lambda case: self.signature(session_id+":order:"+case["id"])):
                 flip = sides[case["id"]]
+                images = case.get('profileImages', {}).get(claims['promptProfile'], case)
                 assignments.append({"caseId": case["id"], "title": case["title"],
-                                    "leftImage": case["comparisonImage"] if flip else case["relationImage"],
-                                    "rightImage": case["relationImage"] if flip else case["comparisonImage"],
+                                    "leftImage": images["comparisonImage"] if flip else images["relationImage"],
+                                    "rightImage": images["relationImage"] if flip else images["comparisonImage"],
                                     "leftMetrics": case.get("comparisonMetrics", []) if flip else case.get("relationMetrics", []),
                                     "rightMetrics": case.get("relationMetrics", []) if flip else case.get("comparisonMetrics", []),
                                     "leftCondition": case["comparisonCondition"] if flip else "soilie",

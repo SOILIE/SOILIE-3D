@@ -38,6 +38,19 @@ class StudyServiceTests(unittest.TestCase):
         self.assertEqual("test-model",stored["model"])
         self.assertEqual("overlap",stored["promptProfile"])
 
+    def test_proportions_images_are_not_shown_for_other_questions(self):
+        document = protocol()
+        document['studyVersion'] = 'dimension-images-v2'
+        for case in document['cases']:
+            case['profileImages'] = {'proportions': {'relationImage': '/volume-a.svg', 'comparisonImage': '/volume-b.svg'}}
+        service = StudyService(document, self.store, b'test-secret', True, clock=lambda: 1000)
+        for profile in ('proportions', 'orientation', 'relationships', 'access', 'room_function'):
+            session = service.start({'invitation': service.invite('test-' + profile, profile, 'test-model')})
+            for case in session['cases']:
+                for field in ('leftImage', 'rightImage'):
+                    self.assertEqual(case[field].startswith('/volume-'), profile == 'proportions')
+            self.assertEqual(session['cases'], service.resume(session['sessionId'], session)['cases'])
+
     def test_balanced_opaque_stable_assignments(self):
         stored = self.store.get(self.session["sessionId"])
         main = [case for case in stored["assignments"] if not case["repeatOf"]]

@@ -78,8 +78,9 @@ def release_files(directory):
         images.add('illustrations/' + Path(url).name)
     for name in ('ai-pilot-responses.json', 'ai-pilot-infinigen-responses.json'):
         for pair in json.loads(files[name][1])['stimuli']:
-            for field in ('soilieImage', 'baselineImage'):
-                url = pair[field]
+            urls = [variant[field] for variant in [pair, *pair.get('profileImages', {}).values()]
+                    for field in ('soilieImage', 'baselineImage')]
+            for url in urls:
                 if not re.fullmatch(r'/benchmarks/stimuli/[a-f0-9]{24}\.svg', url):
                     raise ValueError('Unexpected stimulus path')
                 images.add('stimuli/' + Path(url).name)

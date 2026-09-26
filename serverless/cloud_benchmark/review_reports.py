@@ -85,6 +85,8 @@ def combine_focused(reports, cohort_sha, *, target_per_room=120, preview=False):
                 or report.get('reviewerConfiguration') != {'model': 'GPT-5.6 Sol', 'reasoningEffort': 'Extra High'}):
             raise ValueError('Distinct, complete ten-reviewer focused AI tasks required')
         versions.add(version)
+        if report.get('presentationPolicy') != reports[0].get('presentationPolicy'):
+            raise ValueError('Do not combine different stimulus presentation policies')
         if any(report['sampling'].get(key) != reports[0]['sampling'].get(key) for key in matching_rules):
             raise ValueError('Matching rules differ across selected tasks')
         roster = {row['reviewerId']: row for row in report['reviewers']}
@@ -208,8 +210,9 @@ def main():
         image_folder.mkdir(exist_ok=True)
         for (root, _room), selected in zip(sources, selected_reports):
             for stimulus in selected['stimuli']:
-                for field in ('soilieImage', 'baselineImage'):
-                    url = stimulus[field]
+                urls = [variant[field] for variant in [stimulus, *stimulus.get('profileImages', {}).values()]
+                        for field in ('soilieImage', 'baselineImage')]
+                for url in urls:
                     source = root / 'site' / url.lstrip('/')
                     destination = image_folder / Path(url).name
                     if not destination.exists():

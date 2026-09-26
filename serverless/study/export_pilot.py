@@ -317,9 +317,12 @@ def aggregate(store, protocol):
             "sampling":protocol.get("sampling"),
             "matchingDescription":matching_description(protocol),
             "evidenceMode":protocol.get("evidenceMode", "visual_only"),
+            "presentationPolicy":protocol.get('presentationPolicy'),
             "stimulusEvidence":protocol.get("stimulusEvidence",[]),
             "stimuli":[{"caseId":case["id"],"soilieImage":case["relationImage"],
-                        "baselineImage":case["comparisonImage"],"baseline":case["comparisonCondition"]}
+                        "baselineImage":case["comparisonImage"],"baseline":case["comparisonCondition"],
+                        **({'profileImages': {profile: {'soilieImage': images['relationImage'], 'baselineImage': images['comparisonImage']}
+                                              for profile, images in case['profileImages'].items()}} if case.get('profileImages') else {})}
                        for case in protocol["cases"]],
             "stimulusVersionDigest":hashlib.sha256(json.dumps(protocol,sort_keys=True).encode()).hexdigest(),
             "limitations":limitations,
