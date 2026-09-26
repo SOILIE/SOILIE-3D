@@ -64,3 +64,19 @@ original matching thresholds in the public methods rather than defaulting to a
 different baseline's thresholds. `fresh_reviews` activates explicitly authorized
 new sessions; `review_preflight` verifies geometry, image hashes, neutral labels,
 task-specific volume evidence, prompts and 60/60 side balance before review.
+
+## Repeat-consistency acceptance
+
+The release check requires at least 36 agreements among 40 reversed-side repeats
+(90%). This operational threshold was requested while collection was running,
+before aggregate results were inspected; it was not a preregistered accuracy
+criterion. The two rooms trade places without any geometry or label changes.
+Choosing the same room agrees; a tie must remain a tie. Repeated presentations
+never add preference votes. The finalizer checks delivered images against frozen
+assignments and recomputes agreement from the unedited individual responses.
+
+Report counts overall, by dimension, by reviewer and by baseline. The small,
+clustered control sample measures observed stability, not correctness or a
+population reliability guarantee. A failure blocks automatic AI-result release
+and preserves every control for diagnosis; do not delete disagreements or rerun
+selected controls to pass. Quantitative geometry and timing results are separate.

@@ -24,6 +24,7 @@ from serverless.cloud_benchmark.evidence import sha
 from serverless.cloud_benchmark.publish import timing_conditions
 from serverless.cloud_benchmark.expanded_reviews import completed_rows
 from serverless.benchmark.review_annotations import PRESENTATION_VERSION
+from serverless.cloud_benchmark.repeat_consistency import repeat_consistency
 
 ROOMS = ('bedroom', 'living_room')
 
@@ -207,7 +208,7 @@ def verified_reviews(directory, cohort_sha):
     if (manifest.get('releaseEligible') is not True or manifest.get('cohortSha256') != cohort_sha
             or set(manifest['comparisons']) != expected):
         raise ValueError('Reviews do not certify this completed cohort')
-    files = []
+    files, recorded_reports = [], {}
     for baseline, stem in (('layoutgpt', 'ai-pilot'), ('infinigen_controlled', 'ai-pilot-infinigen')):
         report = manifest['comparisons'][baseline]
         names = {stem + suffix for suffix in ('-summary.json', '-responses.json')}
@@ -224,7 +225,14 @@ def verified_reviews(directory, cohort_sha):
                 raise ValueError('Incomplete reviewer export')
             if not str(document.get('presentationPolicy', '')).startswith(PRESENTATION_VERSION + ';'):
                 raise ValueError('Fresh reviews with verified functional fronts and neutral labels are required')
+            if document.get('repeatConsistency') != manifest.get('repeatConsistency'):
+                raise ValueError('Repeat-consistency disclosure differs from release manifest')
+            if name.endswith('-responses.json'):
+                recorded_reports[baseline] = document
             files.append(name)
+    measured = {key: value for key, value in repeat_consistency(recorded_reports).items() if key != 'controls'}
+    if not measured['passed'] or manifest.get('repeatConsistency') != measured:
+        raise ValueError('Repeat-consistency release check failed')
     return files
 
 

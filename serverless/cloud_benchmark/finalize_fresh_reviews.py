@@ -7,7 +7,9 @@ import shutil
 
 from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.cloud_benchmark.review_reports import source_report, combine_focused, FILES
+from serverless.cloud_benchmark.repeat_consistency import audit_repeat_assignments, repeat_consistency
 from serverless.study.export_pilot import public_summary
+from serverless.study.store import SQLiteStudyStore
 
 
 def finalize(root, evidence, output):
@@ -25,6 +27,9 @@ def finalize(root, evidence, output):
     reports = {}
     for name, baseline in (('set-a', 'layoutgpt'), ('set-b', 'infinigen_controlled')):
         report = combine_focused([source_report(root, name, scenes)], cohort['measurementsSha256'])
+        for session in SQLiteStudyStore(root / name / 'private/pilot.sqlite3').sessions():
+            packet = json.loads((root / 'packets' / session['reviewerId'] / (name + '.json')).read_bytes())
+            audit_repeat_assignments(session['assignments'], packet['cases'])
         report['delivery'] = {'medium': 'Immutable paired PNGs and a single assigned prompt text file',
                               'additionalInterfaceReminderShown': False,
                               'executionInstructionSummary': 'Inspect every assigned PNG independently in frozen order; do not inspect method identities, prior results or other reviewers. Record the required preference, visible-problem choice, confidence and brief rationale in JSON, saving checkpoints. No aggregate outcome is targeted.',
@@ -35,6 +40,16 @@ def finalize(root, evidence, output):
         for reviewer in report['reviewers']:
             reviewer.pop('interfaceEmphasis', None)
         reports[baseline] = report
+    consistency = repeat_consistency(reports)
+    # Keep the complete diagnostic even when release is blocked. Never delete
+    # disagreements, selectively rerun them, or quietly reuse older votes.
+    write_json(root / 'repeat-consistency.json', consistency)
+    if not consistency['passed']:
+        raise ValueError(f"AI release requires 90% repeat agreement; observed "
+                         f"{consistency['agreements']}/{consistency['comparisons']}. "
+                         'Investigate repeat-consistency.json without altering saved judgements.')
+    for report in reports.values():
+        report['repeatConsistency'] = {key: value for key, value in consistency.items() if key != 'controls'}
     output.mkdir(parents=True, exist_ok=True)
     artifacts = {}
     for baseline, report in reports.items():
@@ -56,6 +71,7 @@ def finalize(root, evidence, output):
                       for suffix in ('-responses.json', '-summary.json')}}
     write_json(output / 'review-manifest.json', {'schemaVersion': 1, 'cohortSha256': cohort['measurementsSha256'],
         'comparisons': artifacts, 'releaseEligible': True,
+        'repeatConsistency': {key: value for key, value in consistency.items() if key != 'controls'},
         'preflightSha256': hashlib.sha256((root / 'preflight.json').read_bytes()).hexdigest()})
     print(json.dumps({'releaseEligible': True, 'pairs': 480,
                       'responsesIncludingRepeats': sum(len(r['responses']) for r in reports.values())}))

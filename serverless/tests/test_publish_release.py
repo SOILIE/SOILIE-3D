@@ -16,16 +16,24 @@ class ReleaseTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        # These tests isolate archive integrity/transport; repeat scoring is
+        # exercised against raw vote fixtures in test_repeat_consistency.
+        consistency = {'passed': True, 'agreements': 36, 'comparisons': 40}
+        gate = patch('serverless.cloud_benchmark.publication_views.repeat_consistency', return_value=consistency)
+        gate.start()
+        self.addCleanup(gate.stop)
         image = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
         self.image_name = hashlib.sha256(image).hexdigest()[:24] + '.svg'
         (self.root / 'stimuli').mkdir()
         (self.root / 'stimuli' / self.image_name).write_bytes(image)
         for name in PUBLIC_FILES: self.write(name, {})
         reports = {'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10,
+                   'repeatConsistency': consistency,
                    'presentationPolicy': PRESENTATION_VERSION + '; neutral',
                    'stimuli': [{'soilieImage': '/benchmarks/stimuli/' + self.image_name,
                                 'baselineImage': '/benchmarks/stimuli/' + self.image_name}]}
-        manifest = {'releaseEligible': True, 'cohortSha256': 'cohort', 'comparisons': {}}
+        manifest = {'releaseEligible': True, 'cohortSha256': 'cohort', 'comparisons': {},
+                    'repeatConsistency': consistency}
         for baseline, stem in (('layoutgpt', 'ai-pilot'), ('infinigen_controlled', 'ai-pilot-infinigen')):
             files = {}
             for suffix in ('-summary.json', '-responses.json'):

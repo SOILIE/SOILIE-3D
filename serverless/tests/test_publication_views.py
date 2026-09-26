@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
 
 from serverless.cloud_benchmark.publication_views import (completed_calls, measured_cost, native_timing,
                                                          room_models, merge_geometry, verified_reviews, mesh_check_coverage)
@@ -45,18 +46,29 @@ class PublicationViewsTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as directory:
             root = Path(directory)
-            manifest = {'releaseEligible': True, 'cohortSha256': 'cohort', 'comparisons': {}}
+            # Exact control scoring has separate synthetic-fixture tests.
+            consistency = {'passed': True, 'agreements': 36, 'comparisons': 40}
+            mocked = patch('serverless.cloud_benchmark.publication_views.repeat_consistency', return_value=consistency)
+            mocked.start()
+            self.addCleanup(mocked.stop)
+            manifest = {'releaseEligible': True, 'cohortSha256': 'cohort', 'comparisons': {},
+                        'repeatConsistency': consistency}
             for baseline, stem in (('layoutgpt', 'ai-pilot'), ('infinigen_controlled', 'ai-pilot-infinigen')):
                 files = {}
                 for suffix in ('-summary.json', '-responses.json'):
                     path = root / (stem + suffix)
                     path.write_text(json.dumps({'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10,
+                                                'repeatConsistency': consistency,
                                                 'presentationPolicy': PRESENTATION_VERSION + '; neutral'}))
                     files[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
                 manifest['comparisons'][baseline] = {'releaseEligible': True,
                     'pairs': {'bedroom': 120, 'living_room': 120}, 'files': files}
             (root / 'review-manifest.json').write_text(json.dumps(manifest))
             self.assertEqual(4, len(verified_reviews(root, 'cohort')))
+            with patch('serverless.cloud_benchmark.publication_views.repeat_consistency',
+                       return_value={'passed': False, 'agreements': 35, 'comparisons': 40}):
+                with self.assertRaisesRegex(ValueError, 'Repeat-consistency release check'):
+                    verified_reviews(root, 'cohort')
             # Even hash-consistent complete votes cannot validate superseded inputs.
             stale = root / 'ai-pilot-summary.json'
             stale.write_text(json.dumps({'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10,
