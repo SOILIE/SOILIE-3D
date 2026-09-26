@@ -52,11 +52,11 @@ def compile_responses(folder, parser_path):
                 else: unparsed.append(line)
             except (ValueError, KeyError, TypeError): unparsed.append(line)
         attempt.update(parsedObjects=len(objects), unparsedLines=len(unparsed),
-                       countSatisfied=len(objects) == request['requestedObjects'],
+                       countSatisfied=len(objects) == request['requestedObjects'] if request['requestedObjects'] is not None else None,
                        finishReason=response['choices'][0]['finish_reason'])
         try:
             scene = normalize({'prompt': request['request']['messages'][-1]['content'], 'object_list': objects},
-                              'living_room', index, checksum)
+                              plan.get('roomType', 'living_room'), index, checksum)
             scene['id'] = 'layoutgpt-' + request['id']
             scene['stage'] = 'api-final-layout'
             scene['benchmarkVariant'] = plan['variant']
@@ -77,7 +77,7 @@ def compile_responses(folder, parser_path):
               'reservedUncertainUsd': sum(row['reservedUsd'] for row in ledger['entries'].values() if row.get('actualUsd') is None)}
     write_json(folder / 'export.json', result)
     print(json.dumps({'attempted': len(attempts), 'validGeometry': len(scenes),
-        'requestedCountSatisfied': sum(row.get('countSatisfied', False) for row in attempts),
+        'requestedCountSatisfied': sum(row.get('countSatisfied') is True for row in attempts),
         'unparsedLines': sum(row.get('unparsedLines', 0) for row in attempts),
         'furnitureCounts': dict(Counter(row['metrics']['objectCount'] for row in rows)),
         'actualApiUsd': result['actualApiUsd']}), flush=True)

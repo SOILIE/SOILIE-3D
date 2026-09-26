@@ -62,18 +62,33 @@ retrieved bounds from the original proposed bounds. No realized LayoutGPT mesh
 measurements have been produced yet.
 
 The official bedroom files contain no original API timers or token receipts.
-Only our living-room proposals have measured request-to-response times and
-returned token usage. Neither JSON loading time nor living-room latency is a
-valid replacement for missing bedroom inference time.
+A separate timing pilot supplies 20 fresh GPT-4 bedroom calls, using the
+original K=8 prompt, a 512-token output limit and no added count instruction.
+Targets are a seeded sample of distinct rectangular test rooms, selected before
+generation (seed 20260925). All 20 parsed successfully with no omitted lines.
+Median request-to-response latency is 5.6409 s; p95 is 8.1275 s. Their returned
+token counts price to $1.78797 total at the public rates. Network/provider
+queueing is included; retrieval, parsing, mesh realization and rendering are
+excluded. The API client runs locally; the GPT model runs at its provider.
+These observations do not replace or augment the 423 released bedrooms in
+geometry comparisons or change the frozen AI review stimuli.
 
 ## Cost distributions
 
 The compiler emits `cost-measurements.json`: 5,000 SOILIE generation-stage
-durations, 121 LayoutGPT token records and 38 isolated Infinigen construction
+durations, 141 LayoutGPT token records (20 bedrooms, 121 living rooms) and 38 isolated Infinigen construction
 durations (20 bedrooms, 18 living rooms). It contains only public numerical
 inputs, anonymous observation identities and fixed public tariffs. No account
 identity, private usage allowances, provider request IDs or billing totals are
 published. The comparison artifact pins the ledger's checksum.
+
+To reproduce the timing pilot preparation, use `layoutgpt_controlled` with
+`--bedroom-pilot` and the pinned upstream `run_layoutgpt_3d.py`. This requires
+the authors' processed metadata, not licensed furniture meshes. The runner
+validates a separate $6.15 maximum reservation for exactly 20 calls and never
+retries ambiguous outcomes. Import with `import_layoutgpt_controlled`, then
+pass the export to `publication_views --bedroom-timing`. Private prompts,
+provider response IDs and operational receipts remain outside public exports.
 
 - SOILIE: measured cloud generation seconds at a 4 GiB x86-64 AWS Lambda tariff,
   10 GiB ephemeral storage (9.5 GiB chargeable), plus one request. This is not

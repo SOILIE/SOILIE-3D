@@ -68,9 +68,11 @@ def room_models(rows):
                    for model in LABELS} for room in ROOMS}
 
 
-def completed_calls(exports):
+def completed_calls(exports, room='living_room'):
     """Require a closed batch; never silently omit rejected or uncertain calls."""
     calls, ids = [], set()
+    if room not in ROOMS:
+        raise ValueError('Unsupported API timing room type')
     for export in exports:
         if not export.get('complete') or export.get('reservedUncertainUsd') != 0:
             raise ValueError('Closed LayoutGPT batch required')
@@ -83,12 +85,15 @@ def completed_calls(exports):
                 raise ValueError('Repeated API attempt across exports')
             ids.add(name)
             scene = scenes.get('layoutgpt-' + name)
+            selection_valid = (attempt.get('countSatisfied') and type(attempt['requestedObjects']) is int
+                               and attempt['requestedObjects'] in (3, 4, 5, 6)) if room == 'living_room' else (
+                               export.get('variant') == 'bedroom-original-prompt-timing'
+                               and attempt['requestedObjects'] is None and attempt.get('finishReason') == 'stop')
             if (attempt['status'] != 'complete' or attempt.get('geometryStatus') != 'complete'
-                    or attempt.get('unparsedLines') != 0 or not attempt.get('countSatisfied')
-                    or type(attempt['requestedObjects']) is not int or attempt['requestedObjects'] not in (3, 4, 5, 6)
-                    or not scene or scene['roomType'] != 'living_room'
+                    or attempt.get('unparsedLines') != 0 or not selection_valid
+                    or not scene or scene['roomType'] != room
                     or scene['provenance']['model'] != 'gpt-4-0613'):
-                raise ValueError('Cost cohort must account for every attempted living-room proposal')
+                raise ValueError('Cost cohort must account for every attempted room proposal')
             usage = attempt['usage']
             for key in ('prompt_tokens', 'completion_tokens'):
                 if type(usage[key]) is not int or usage[key] < 0:
@@ -115,7 +120,7 @@ def latency(seconds):
             'completedPerMinute': 60 * len(seconds) / sum(seconds) if seconds else None}
 
 
-def measured_cost(sources, calls, rates, native=None):
+def measured_cost(sources, calls, rates, native=None, bedroom_calls=None):
     validate_public_rate_card(rates)
     cloud = [row for row in sources if row['platform'] == 'AWS Lambda' and row['roomType'] == 'living_room']
     if len(cloud) != 2500:
@@ -125,7 +130,7 @@ def measured_cost(sources, calls, rates, native=None):
     soilie = summarize([worker_scenario(value, rates['lambda'])['usd'] for value in seconds])
     layout = summarize(prices)
     result = {'schemaVersion': 3, 'currency': 'USD', 'recordedApiRoomType': 'living_room', 'rateCard': rates,
-        'scope': 'Per-room generation-stage estimates for bedrooms and living rooms. SOILIE requests 3–6 objects; LayoutGPT API calls request 3–6 living-room objects; Infinigen uses its room-scale furniture workload. Images, evaluation, orchestration and downstream contact correction are excluded.',
+        'scope': 'Per-room generation-stage estimates for bedrooms and living rooms. SOILIE requests 3–6 objects; LayoutGPT uses its original bedroom prompt and a 3–6-object living-room prompt; Infinigen uses its room-scale furniture workload. Images, evaluation, orchestration and downstream contact correction are excluded.',
         'soilie': {'usd': soilie, 'seconds': summarize(seconds), 'memoryMb': 4096,
             'ephemeralStorageMb': 10240,
             'basis': 'Measured AWS Lambda generation-stage seconds priced at public 4 GB x86-64 compute, 10 GB temporary-storage and request rates. Not complete billed invocation time.'},
@@ -152,11 +157,11 @@ def measured_cost(sources, calls, rates, native=None):
             observations.append({'id': f'soilie-{room}-{index:04d}', 'model': 'soilie',
                 'roomType': room, 'basis': 'measured-generation-stage', 'seconds': seconds,
                 'usd': worker_scenario(seconds, rates['lambda'])['usd']})
-        proposals = calls if room == 'living_room' else []
+        proposals = calls if room == 'living_room' else (bedroom_calls or [])
         for row in proposals:
             observations.append({'id': row['id'], 'model': 'layoutgpt', 'roomType': room,
                 'basis': 'recorded-api-tokens', 'inputTokens': row['inputTokens'],
-                'outputTokens': row['outputTokens'],
+                'outputTokens': row['outputTokens'], 'seconds': row['seconds'],
                 'usd': token_charge(row['inputTokens'], row['outputTokens'], rates['gpt4'])})
         for row in (native or {}).get('attempts', []):
             if row['roomType'] != room or row['status'] != 'complete' or not row.get('timingEligible', True):
@@ -174,6 +179,10 @@ def measured_cost(sources, calls, rates, native=None):
         missing={'layoutgptBedroom': 'These are official released layouts, not timed calls made for this experiment. They contain neither API latency nor token-usage receipts. Living-room calls cannot supply bedroom measurements.',
                  'infinigenControlled': 'Controlled-inventory rooms ran on shared CPU workers. Elapsed time includes contention and no per-room allocated CPU/memory ledger was recorded, so an isolated-runtime cost estimate is not supplied.',
                  'grains': 'No per-room inference usage or matching hardware cost record is available; the paper supplies only a batch timing reference.'})
+    if bedroom_calls:
+        result['missing'].pop('layoutgptBedroom')
+        result['bedroomPilot'] = {'completed': len(bedroom_calls),
+            'basis': 'Fresh GPT-4 bedroom calls using eight retrieved examples and a 512-token output limit, without an object-count instruction. Separate timing/usage pilot, not receipts for the 423 released geometry samples.'}
     return result
 
 
@@ -217,7 +226,7 @@ def verified_reviews(directory, cohort_sha):
 
 
 def compile_views(base, evidence, layoutgpt, native, rates, output,
-                  expansion=None, controlled=None, reviews=None, layoutgpt_scale=None):
+                  expansion=None, controlled=None, reviews=None, layoutgpt_scale=None, bedroom_timing=None):
     raw = (evidence / 'measured-scenes.json').read_bytes()
     cohort = json.loads((evidence / 'cohort.json').read_bytes())
     document = json.loads(base.read_bytes())
@@ -230,6 +239,9 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
     conditions = timing_conditions(cohort['sources'])
     exports = [json.loads(path.read_bytes()) for path in layoutgpt]
     calls = completed_calls(exports)
+    bedroom_calls = completed_calls([json.loads(bedroom_timing.read_bytes())], 'bedroom') if bedroom_timing else []
+    if bedroom_timing and len(bedroom_calls) != 20:
+        raise ValueError('Complete 20-call bedroom timing pilot required')
     # Original bedroom outputs and the controlled living-room calls are separate
     # strata, not a synthetic single inference batch. Selection never uses scores.
     rows = [row for row in json.loads(raw)['rows'] if not
@@ -266,7 +278,7 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
         layoutgptSources={'bedroom': 'Official released GPT-4 layouts, eight retrieved examples.',
             'living_room': 'Recorded GPT-4 calls, four retrieved examples, requested counts cycling 3–6.',
             'exportSha256': [sha(path.read_bytes()) for path in layoutgpt]},
-        cost=measured_cost(cohort['sources'], calls, json.loads(rates.read_bytes()), json.loads(native.read_bytes())),
+        cost=measured_cost(cohort['sources'], calls, json.loads(rates.read_bytes()), json.loads(native.read_bytes()), bedroom_calls),
         # A deliberate gate: final review exports must name this geometry cohort.
         # Do not pair newly measured rooms with earlier website judgement totals.
         aiReview={'ready': False, 'cohortSha256': cohort['measurementsSha256']},
@@ -274,6 +286,11 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
             'infinigenByRoomType': native_timing(json.loads(native.read_bytes())),
             'layoutgptByRoomType': {'living_room': {**latency([row['seconds'] for row in calls]),
                 'stage': 'API request to complete response; includes network and provider queue time. Excludes prompt retrieval, parsing and image rendering.'}}})
+    if bedroom_calls:
+        document['timing']['layoutgptByRoomType']['bedroom'] = {
+            **latency([row['seconds'] for row in bedroom_calls]),
+            'stage': 'Twenty fresh API calls using the original K=8 bedroom prompt, 512-token output limit and no count instruction. API request to complete response, including network/provider queue; excludes prompt retrieval, parsing, meshes and rendering. The 423 released bedroom layouts remain the geometry cohort.',
+            'evidence': 'measured-api-pilot', 'sourceSha256': sha(bedroom_timing.read_bytes())}
     # Selected extreme diagrams were made for the original baseline corpus;
     # retain only those whose source model/corpus has not changed.
     document['illustrations'] = [row for row in document['illustrations'] if row['model'] != 'layoutgpt']
@@ -367,9 +384,12 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
         'layoutgptSha256': [sha(path.read_bytes()) for path in layoutgpt], 'nativeSha256': sha(native.read_bytes()),
         'ratesSha256': sha(rates.read_bytes()), 'expansionCheckpointsSha256': checkpoints,
         'aiReviewsReady': bool(reviews),
-        'layoutgptPhysicalScaleSha256': sha(layoutgpt_scale.read_bytes()) if layoutgpt_scale else None})
+        'layoutgptPhysicalScaleSha256': sha(layoutgpt_scale.read_bytes()) if layoutgpt_scale else None,
+        'layoutgptBedroomTimingSha256': sha(bedroom_timing.read_bytes()) if bedroom_timing else None})
     print(json.dumps({'models': {key: value['n'] for key, value in document['models'].items()},
-                      'recordedApiCalls': len(calls), 'aiReviewsReady': bool(reviews)}), flush=True)
+                      'recordedApiCalls': len(calls) + len(bedroom_calls),
+                      'recordedApiCallsByRoom': {'bedroom': len(bedroom_calls), 'living_room': len(calls)},
+                      'aiReviewsReady': bool(reviews)}), flush=True)
 
 
 def main():
@@ -381,6 +401,7 @@ def main():
     parser.add_argument('--controlled', type=Path, action='append', default=[])
     parser.add_argument('--reviews', type=Path)
     parser.add_argument('--layoutgpt-scale', type=Path)
+    parser.add_argument('--bedroom-timing', type=Path)
     compile_views(**vars(parser.parse_args()))
 
 

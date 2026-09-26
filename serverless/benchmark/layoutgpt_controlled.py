@@ -75,27 +75,29 @@ class RemoteArchive(io.RawIOBase):
         return data
 
 
-def hydrate(output, count, seed, start=0, data_cache=None):
-    with urllib.request.urlopen(REPOSITORY + '/dataset/3D/livingroom_splits.json', timeout=60) as response:
+def hydrate(output, count, seed, start=0, data_cache=None, room='livingroom'):
+    if room not in ('livingroom', 'bedroom'):
+        raise ValueError('Unsupported room type')
+    with urllib.request.urlopen(REPOSITORY + f'/dataset/3D/{room}_splits.json', timeout=60) as response:
         raw_splits = response.read()
     splits = json.loads(raw_splits)
     # Unique held-out room dimensions, not 120 repetitions of 53 floor plans.
     # LayoutGPT's prompt communicates rectangular max length/width; this
     # controlled task does not assess reconstruction of irregular outlines.
-    targets = sorted(splits['test'])
+    targets = sorted(splits['rect_test'] if room == 'bedroom' else splits['test'])
     random.Random(seed).shuffle(targets)
     targets = targets[start:start + count]
     if len(targets) != count or set(targets) & set(splits['rect_train']):
         raise ValueError('Need distinct held-out targets outside the training demonstrations')
-    names = {f'data_output/livingroom/{name}/boxes.npz' for name in targets + splits['rect_train']}
-    names.add('data_output/livingroom/dataset_stats.txt')
+    names = {f'data_output/{room}/{name}/boxes.npz' for name in targets + splits['rect_train']}
+    names.add(f'data_output/{room}/dataset_stats.txt')
     url = download_url()
     with urllib.request.urlopen(urllib.request.Request(url, headers={'Range': 'bytes=-1'}), timeout=60) as response:
         size = int(response.headers['Content-Range'].split('/')[-1])
     with zipfile.ZipFile(RemoteArchive(url, size)) as archive:
         entries = {row.filename: row for row in archive.infolist() if row.filename in names}
     if set(entries) != names:
-        raise ValueError('Authors archive lacks requested livingroom metadata')
+        raise ValueError('Authors archive lacks requested room metadata')
     directory = data_cache or output / 'data'
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -123,7 +125,7 @@ def hydrate(output, count, seed, start=0, data_cache=None):
             raise ValueError('Cached dataset CRC or length mismatch')
         return {'file': relative.as_posix(), 'sha256': hashlib.sha256(data).hexdigest()}
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=16) as pool:
         hashes = list(pool.map(one, entries.values()))
     plan = {'sourceCommit': COMMIT, 'dataSource': DATA_URL, 'archiveBytes': size,
             'splitSha256': hashlib.sha256(raw_splits).hexdigest(), 'seed': seed,
@@ -133,8 +135,10 @@ def hydrate(output, count, seed, start=0, data_cache=None):
     return plan
 
 
-def prepare(output, source, count=120, seed=20260925, start=0, previous_batch=None):
-    if (count, start) not in ((120, 0), (1, 120)):
+def prepare(output, source, count=120, seed=20260925, start=0, previous_batch=None, bedroom_pilot=False):
+    if bedroom_pilot and (count != 20 or start or previous_batch):
+        raise ValueError('Bedroom timing pilot requires exactly 20 new requests')
+    if not bedroom_pilot and (count, start) not in ((120, 0), (1, 120)):
         raise ValueError('Only the approved 120 proposals or one next held-out supplement may be prepared')
     output.mkdir(parents=True, exist_ok=True)
     if (output / 'requests.json').exists():
@@ -151,7 +155,8 @@ def prepare(output, source, count=120, seed=20260925, start=0, previous_batch=No
                     'accountedUsd': sum(row['actualUsd'] for row in ledger['entries'].values())}
     if bool(previous) != bool(start):
         raise ValueError('A supplement must carry forward the settled batch spending')
-    manifest = hydrate(output, count, seed, start, previous_batch / 'data' if previous_batch else None)
+    room = 'bedroom' if bedroom_pilot else 'livingroom'
+    manifest = hydrate(output, count, seed, start, previous_batch / 'data' if previous_batch else None, room)
     # Extract unchanged pure functions, avoiding the legacy script's CLI,
     # model downloads and top-level API call. No prompt is hand-reconstructed.
     raw = source.read_text(encoding='utf-8')
@@ -163,7 +168,7 @@ def prepare(output, source, count=120, seed=20260925, start=0, previous_batch=No
     nodes = [node for node in ast.parse(raw).body if isinstance(node, ast.FunctionDef) and node.name in functions]
     if len(nodes) != len(functions): raise ValueError('Missing original prompt function')
     gpt2, gpt4 = tiktoken.get_encoding('gpt2'), tiktoken.get_encoding('cl100k_base')
-    args = SimpleNamespace(room='livingroom', normalize=True, unit='px', icl_type='k-similar',
+    args = SimpleNamespace(room=room, normalize=True, unit='px', icl_type='k-similar',
                            test=False, gpt_input_length_limit=7000)
     scope = {'np': np, 'Image': Image, 'op': __import__('os').path, 'args': args,
              'tokenizer': lambda text: {'input_ids': gpt2.encode(text)}}
@@ -179,25 +184,34 @@ def prepare(output, source, count=120, seed=20260925, start=0, previous_batch=No
     training = {key: prompts[key] for key in manifest['trainingIds']}
     requests = []
     for index, name in enumerate(manifest['targetIds'], start=start):
-        messages = scope['form_prompt_for_chatgpt'](prompts[name], 4, stats, training,
+        messages = scope['form_prompt_for_chatgpt'](prompts[name], 8 if bedroom_pilot else 4, stats, training,
                                                   features, target_features[name])
-        requested = 3 + index % 4
-        messages[-1]['content'] = messages[-1]['content'].replace('Layout:\n',
-            f'Generate exactly {requested} furniture instances. Use one CSS line per instance; '
-            'count repeated furniture instances separately.\nLayout:\n')
+        requested = None if bedroom_pilot else 3 + index % 4
+        if not bedroom_pilot:
+            messages[-1]['content'] = messages[-1]['content'].replace('Layout:\n',
+                f'Generate exactly {requested} furniture instances. Use one CSS line per instance; '
+                'count repeated furniture instances separately.\nLayout:\n')
+        output_limit = 512 if bedroom_pilot else 1024
         tokens = 3 + sum(3 + len(gpt4.encode(row['role'])) + len(gpt4.encode(row['content'])) for row in messages)
-        if tokens + 1024 > 8192: raise ValueError('Prompt exceeds GPT-4 context allowance')
-        payload = {'model': 'gpt-4', 'messages': messages, 'temperature': .7, 'max_tokens': 1024,
+        if tokens + output_limit > 8192: raise ValueError('Prompt exceeds GPT-4 context allowance')
+        payload = {'model': 'gpt-4', 'messages': messages, 'temperature': .7, 'max_tokens': output_limit,
                    'top_p': 1, 'frequency_penalty': 0, 'presence_penalty': 0, 'stop': 'Condition:', 'n': 1}
-        requests.append({'id': f'controlled-living-{index:03d}', 'sourceRoomId': name,
+        request_id = f'bedroom-timing-{index:03d}' if bedroom_pilot else f'controlled-living-{index:03d}'
+        requests.append({'id': request_id, 'sourceRoomId': name,
                          'requestedObjects': requested, 'estimatedInputTokens': tokens,
                          'request': payload, 'requestSha256': hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()})
-    write_json(output / 'requests.json', {'schemaVersion': 1, 'variant': 'living-room-count-conditioned',
-        'sourceCommit': COMMIT, 'requests': requests, 'budgetUsd': 35, 'previousBatch': previous,
-        'methods': 'Original K=4 retrieved rectangular-training examples and GPT-4 CSS prompt; one added count instruction cycling 3–6. Unique held-out room dimensions from the full test split use the original rectangular max-length/width prompt. No quality-based selection.'})
+    methods = ('Original K=8 retrieved rectangular-training examples and GPT-4 bedroom CSS prompt; '
+               '512-token output limit, no count instruction. Seeded sample of 20 distinct rectangular test rooms, '
+               'independent of quality scores. Fresh API timing/usage pilot, not timing receipts for the released layouts.'
+               if bedroom_pilot else 'Original K=4 retrieved rectangular-training examples and GPT-4 CSS prompt; one added count instruction cycling 3–6. Unique held-out room dimensions from the full test split use the original rectangular max-length/width prompt. No quality-based selection.')
+    write_json(output / 'requests.json', {'schemaVersion': 1,
+        'variant': 'bedroom-original-prompt-timing' if bedroom_pilot else 'living-room-count-conditioned',
+        'roomType': 'bedroom' if bedroom_pilot else 'living_room',
+        'sourceCommit': COMMIT, 'requests': requests, 'budgetUsd': 6.15 if bedroom_pilot else 35,
+        'previousBatch': previous, 'methods': methods})
     print(json.dumps({'prepared': len(requests), 'minimumInputTokens': min(r['estimatedInputTokens'] for r in requests),
         'maximumInputTokens': max(r['estimatedInputTokens'] for r in requests),
-        'maximumEstimatedTokenCostUsd': sum(r['estimatedInputTokens'] * .00003 + 1024 * .00006 for r in requests)}), flush=True)
+        'maximumEstimatedTokenCostUsd': sum(r['estimatedInputTokens'] * .00003 + r['request']['max_tokens'] * .00006 for r in requests)}), flush=True)
 
 
 def main():
@@ -205,9 +219,11 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--previous-batch', type=Path)
+    parser.add_argument('--bedroom-pilot', action='store_true')
     args = parser.parse_args()
-    prepare(args.output, args.source, count=1 if args.previous_batch else 120,
-            start=120 if args.previous_batch else 0, previous_batch=args.previous_batch)
+    prepare(args.output, args.source, count=20 if args.bedroom_pilot else 1 if args.previous_batch else 120,
+            start=120 if args.previous_batch else 0, previous_batch=args.previous_batch,
+            bedroom_pilot=args.bedroom_pilot)
 
 
 if __name__ == '__main__': main()

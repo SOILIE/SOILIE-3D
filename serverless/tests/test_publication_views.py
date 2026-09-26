@@ -87,6 +87,29 @@ class PublicationViewsTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError): completed_calls([data])
         with self.assertRaises(ValueError): completed_calls([self.export(), self.export()])
 
+    def test_original_bedroom_pilot_keeps_no_count_constraint_and_separate_timing(self):
+        data = self.export()
+        data['variant'] = 'bedroom-original-prompt-timing'
+        data['rows'][0]['scene']['roomType'] = 'bedroom'
+        data['attempts'][0].update(requestedObjects=None, countSatisfied=None, finishReason='stop')
+        calls = completed_calls([data], 'bedroom')
+        self.assertEqual(1, len(calls))
+        self.assertEqual(4, calls[0]['seconds'])
+        with self.assertRaises(ValueError): completed_calls([data])
+        for field, value in [('finishReason', 'length'), ('geometryStatus', 'invalid'), ('requestedObjects', 3)]:
+            changed = deepcopy(data)
+            changed['attempts'][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): completed_calls([changed], 'bedroom')
+        rates = {'currency': 'USD', 'lambda': {'source': AWS_URL,
+            'computeUsdPerGbSecond': .0000166667, 'storageUsdPerGbSecond': .000000034, 'requestUsd': .0000002},
+            'gpt4': {'source': GPT4_URL, 'inputUsdPerMillion': 30, 'outputUsdPerMillion': 60}}
+        sources = [{'platform': 'AWS Lambda', 'roomType': 'living_room', 'generationSeconds': 10}] * 2500
+        result = measured_cost(sources, completed_calls([self.export()]), rates, bedroom_calls=calls)
+        self.assertEqual(1, result['byRoomType']['bedroom']['layoutgpt']['n'])
+        self.assertAlmostEqual(.072, result['byRoomType']['bedroom']['layoutgpt']['mean'])
+        self.assertNotIn('layoutgptBedroom', result['missing'])
+        self.assertIn('Separate timing/usage pilot', result['bedroomPilot']['basis'])
+
     def test_native_timing_keeps_rooms_separate_and_excludes_shared_cpu(self):
         data = {'attempts': [
             {'roomType': 'bedroom', 'status': 'complete', 'generationSeconds': 20},

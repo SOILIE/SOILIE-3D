@@ -26,15 +26,27 @@ const save = (path, value) => {
   const temp = path + '.new'; writeFileSync(temp, JSON.stringify(value, null, 2)); renameSync(temp, path);
 };
 
+export function validatePlan(plan, limit) {
+  const bedroom = plan.variant === 'bedroom-original-prompt-timing';
+  const budget = bedroom ? 6.15 : 35;
+  const count = bedroom ? 20 : plan.previousBatch ? 1 : 120;
+  if (plan.budgetUsd !== budget || plan.requests.length !== count || (bedroom && plan.previousBatch) ||
+      !Number.isInteger(limit) || limit < 1 || limit > count) throw new Error('Unexpected approved plan or spending cap');
+  if (bedroom && plan.roomType !== 'bedroom') throw new Error('Bedroom pilot room type changed');
+  for (const row of plan.requests) {
+    const request = row.request;
+    if (request.model !== 'gpt-4' || request.max_tokens !== (bedroom ? 512 : 1024) || request.n !== 1 ||
+        !Array.isArray(request.messages) || !Number.isSafeInteger(row.estimatedInputTokens) ||
+        row.estimatedInputTokens < 1 || row.estimatedInputTokens + request.max_tokens > 8192) throw new Error('Unexpected inference configuration');
+  }
+}
+
 export async function run(folder, credentialFile, limit = null) {
   folder = resolve(folder);
   const raw = readFileSync(join(folder, 'requests.json'));
   const plan = JSON.parse(raw);
   limit ??= plan.requests.length;
-  if (plan.budgetUsd !== 35 || plan.requests.length !== (plan.previousBatch ? 1 : 120) ||
-      !Number.isInteger(limit) || limit < 1 || limit > plan.requests.length) {
-    throw new Error('Expected the approved US$35 plan or its one-call supplement');
-  }
+  validatePlan(plan, limit);
   let previousBatchUsd = 0;
   if (plan.previousBatch) {
     // Windows invokes this runner; the preparation step may use WSL paths.
@@ -48,20 +60,15 @@ export async function run(folder, credentialFile, limit = null) {
     previousBatchUsd = accounted(previous);
     if (Math.abs(previousBatchUsd - plan.previousBatch.accountedUsd) > 1e-9) throw new Error('Previous spending differs');
   }
-  for (const row of plan.requests) {
-    const request = row.request;
-    if (request.model !== 'gpt-4' || request.max_tokens !== 1024 || request.n !== 1 ||
-        !Array.isArray(request.messages) || row.estimatedInputTokens + 1024 > 8192) throw new Error('Unexpected inference configuration');
-  }
   const lockPath = join(folder, 'inference.lock');
   const lock = openSync(lockPath, 'wx');
   writeFileSync(lock, JSON.stringify({ pid: process.pid }));
   try {
     const ledgerPath = join(folder, 'inference-ledger.json');
     const ledger = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath)) : {
-      schemaVersion: 1, planSha256: sha(raw), budgetUsd: 35, previousBatchUsd, rate: RATE, entries: {},
+      schemaVersion: 1, planSha256: sha(raw), budgetUsd: plan.budgetUsd, previousBatchUsd, rate: RATE, entries: {},
     };
-    if (ledger.planSha256 !== sha(raw) || ledger.budgetUsd !== 35 || (ledger.previousBatchUsd || 0) !== previousBatchUsd) throw new Error('Resume plan or budget changed');
+    if (ledger.planSha256 !== sha(raw) || ledger.budgetUsd !== plan.budgetUsd || (ledger.previousBatchUsd || 0) !== previousBatchUsd) throw new Error('Resume plan or budget changed');
     // Credential material is used only in the authorization header. Neither
     // the path nor its contents is copied into publication or invocation logs.
     const secret = process.env.OPENAI_API_KEY || (credentialFile
@@ -111,7 +118,7 @@ export async function run(folder, credentialFile, limit = null) {
     await Promise.all(Array.from({ length: 3 }, worker));
     console.log(JSON.stringify({ attempted: Object.keys(ledger.entries).length,
       complete: Object.values(ledger.entries).filter(row => row.status === 'complete').length,
-      accountedUsd: accounted(ledger), budgetUsd: 35 }));
+      accountedUsd: accounted(ledger), budgetUsd: ledger.budgetUsd }));
   } finally { closeSync(lock); unlinkSync(lockPath); }
 }
 

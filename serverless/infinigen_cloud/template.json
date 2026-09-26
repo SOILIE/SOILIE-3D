@@ -1,0 +1,35 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Temporary budgeted Infinigen runtime measurements; no public endpoint",
+  "Parameters": {
+    "ImageUri": {"Type": "String"},
+    "OutputBucket": {"Type": "String"},
+    "OutputPrefix": {"Type": "String"}
+  },
+  "Resources": {
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {"LogGroupName": {"Fn::Sub": "/aws/lambda/${AWS::StackName}"}, "RetentionInDays": 14}
+    },
+    "Role": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]},
+        "Policies": [{"PolicyName": "pilot-output-only", "PolicyDocument": {"Version": "2012-10-17", "Statement": [
+          {"Effect": "Allow", "Action": ["s3:PutObject", "s3:AbortMultipartUpload"], "Resource": {"Fn::Sub": "arn:aws:s3:::${OutputBucket}/${OutputPrefix}/*"}},
+          {"Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"], "Resource": {"Fn::GetAtt": ["LogGroup", "Arn"]}}
+        ]}}]
+      }
+    },
+    "Function": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "FunctionName": {"Ref": "AWS::StackName"}, "PackageType": "Image",
+        "Code": {"ImageUri": {"Ref": "ImageUri"}}, "Role": {"Fn::GetAtt": ["Role", "Arn"]},
+        "Architectures": ["x86_64"], "MemorySize": 6144, "Timeout": 900,
+        "EphemeralStorage": {"Size": 10240}, "ReservedConcurrentExecutions": 20,
+        "Environment": {"Variables": {"OUTPUT_BUCKET": {"Ref": "OutputBucket"}, "OUTPUT_PREFIX": {"Ref": "OutputPrefix"}}}
+      }
+    }
+  }
+}
