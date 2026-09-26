@@ -16,6 +16,51 @@ stage, not an inherent inability of LayoutGPT to produce furnished scenes.
 Measuring contacts after retrieval requires the actual retrieved assets and
 transforms, not substituting SOILIE assets or treating boxes as mesh surfaces.
 
+### Realization prerequisites and verified access blocker
+
+The pinned LayoutGPT checkout is available locally under
+`.codex/layoutgpt-realization/source` at commit
+`fc31954962553e5b65bf267a904a6930d50b1f5e`. The authors' public preprocessed
+archive is reachable. Its ZIP directory contains 88,293 entries, including
+both furniture indexes, but **no OBJ furniture meshes**. The extracted indexes
+are retained in `.codex/layoutgpt-realization/metadata/`:
+
+| File | SHA256 |
+| --- | --- |
+| `threed_future_model_bedroom.pkl` | `9dd2659bdb5d8a825215e00afdeae836a346a59e58cae3492df34f77bbd5027a` |
+| `threed_future_model_livingroom.pkl` | `cdb429ca4e192d49da09411a36937556329ce015be111741b84019e388a7707f` |
+
+The source's `get_textured_objects` calls
+`ThreedFutureDataset.get_closest_furniture_to_box`, selecting a same-category
+asset by squared half-size distance. It uses the asset's dataset scale, centers
+its bounds, then applies the predicted rotation and translation. It does not
+stretch the mesh to exactly fill the predicted box. The pickles do not cache
+the computed `size` property; selection itself needs asset bounds/meshes.
+Use these upstream functions and preserve retrieved dimensions, object
+instances and transforms. Do not replace missing assets with SOILIE models,
+change placement, ground floating meshes, or silently remove objects.
+
+The access audit checked both official download routes with HTTP and Chromium:
+`https://tianchi.aliyun.com/dataset/98063` redirects to the general dataset
+listing; `https://tianchi.aliyun.com/specials/promotion/alibaba-3d-future`
+renders the provider's 404 page. Neither exposes a mesh download in that
+unauthenticated session. The authors' [research-use agreement](https://terms.aliyun.com/legal-agreement/terms/suit_bu1_ali_cloud/suit_bu1_ali_cloud202004171628_60052.html)
+and [dataset-maintainer contact](https://github.com/3D-FRONT-FUTURE/3D-FUTURE-ToolBox#contact)
+remain reachable. This is a missing authorized asset source, not a technical
+claim that mesh realization is impossible. A licensed local archive or valid
+provider download link is needed; third-party mirrors do not establish access
+rights. Do not publish raw licensed furniture in the public S3 archive.
+
+Once assets are accessible, realize all 423 released bedrooms and 121 recorded
+living rooms without additional GPT calls. Keep proposed-box metrics and frozen
+AI review inputs intact, and record mesh realization as a downstream stage with
+source/index/asset hashes. Run `mesh_contact.measure_contacts` and
+`solid_overlap.measure` on the realized objects without corrective movement.
+Verify a bedroom and a living room against upstream OBJ export before batch
+processing; attach results to matching scene IDs, and distinguish changed
+retrieved bounds from the original proposed bounds. No realized LayoutGPT mesh
+measurements have been produced yet.
+
 The official bedroom files contain no original API timers or token receipts.
 Only our living-room proposals have measured request-to-response times and
 returned token usage. Neither JSON loading time nor living-room latency is a
