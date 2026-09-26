@@ -226,6 +226,13 @@ def focused_dimension_results(protocol, responses, reviewers, room_type=None):
 
 def matching_description(protocol):
     sampling = protocol.get('sampling') or {}
+    sources = sampling.get('sourceSampling')
+    if sources:
+        rules = {(row['minimumSemanticSimilarity'], row['maximumFurnitureDensityDifference']) for row in sources}
+        if len(rules) != 1:
+            raise ValueError('Multiple matching policies require an explicit stratified methods description')
+        similarity, density = next(iter(rules))
+        sampling = {**sampling, 'minimumSemanticSimilarity': similarity, 'maximumFurnitureDensityDifference': density}
     similarity = sampling.get('minimumSemanticSimilarity', .4)
     density = sampling.get('maximumFurnitureDensityDifference', .25)
     return (f'Pairs share room type, exact furniture-instance count and room-anchor count '
@@ -318,6 +325,8 @@ def aggregate(store, protocol):
             "matchingDescription":matching_description(protocol),
             "evidenceMode":protocol.get("evidenceMode", "visual_only"),
             "presentationPolicy":protocol.get('presentationPolicy'),
+            "frontPolicy":protocol.get('frontPolicy'),
+            "labelPolicy":protocol.get('labelPolicy'),
             "stimulusEvidence":protocol.get("stimulusEvidence",[]),
             "stimuli":[{"caseId":case["id"],"soilieImage":case["relationImage"],
                         "baselineImage":case["comparisonImage"],"baseline":case["comparisonCondition"],

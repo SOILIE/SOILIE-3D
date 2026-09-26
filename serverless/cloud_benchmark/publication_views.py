@@ -23,6 +23,7 @@ from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.cloud_benchmark.evidence import sha
 from serverless.cloud_benchmark.publish import timing_conditions
 from serverless.cloud_benchmark.expanded_reviews import completed_rows
+from serverless.benchmark.review_annotations import PRESENTATION_VERSION
 
 ROOMS = ('bedroom', 'living_room')
 
@@ -221,6 +222,8 @@ def verified_reviews(directory, cohort_sha):
             if (document.get('releaseEligible') is not True or document.get('cohortSha256') != cohort_sha
                     or document.get('reviewersCompleted') != 10):
                 raise ValueError('Incomplete reviewer export')
+            if not str(document.get('presentationPolicy', '')).startswith(PRESENTATION_VERSION + ';'):
+                raise ValueError('Fresh reviews with verified functional fronts and neutral labels are required')
             files.append(name)
     return files
 

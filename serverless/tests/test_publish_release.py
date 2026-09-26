@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from serverless.cloud_benchmark.publish_release import PUBLIC_FILES, publish, release_files
+from serverless.benchmark.review_annotations import PRESENTATION_VERSION
 
 
 class ReleaseTests(unittest.TestCase):
@@ -21,6 +22,7 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'stimuli' / self.image_name).write_bytes(image)
         for name in PUBLIC_FILES: self.write(name, {})
         reports = {'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10,
+                   'presentationPolicy': PRESENTATION_VERSION + '; neutral',
                    'stimuli': [{'soilieImage': '/benchmarks/stimuli/' + self.image_name,
                                 'baselineImage': '/benchmarks/stimuli/' + self.image_name}]}
         manifest = {'releaseEligible': True, 'cohortSha256': 'cohort', 'comparisons': {}}

@@ -8,6 +8,7 @@ import tempfile
 from serverless.cloud_benchmark.publication_views import (completed_calls, measured_cost, native_timing,
                                                          room_models, merge_geometry, verified_reviews, mesh_check_coverage)
 from serverless.benchmark.cost import AWS_URL, GPT4_URL
+from serverless.benchmark.review_annotations import PRESENTATION_VERSION
 
 
 class PublicationViewsTests(unittest.TestCase):
@@ -49,12 +50,21 @@ class PublicationViewsTests(unittest.TestCase):
                 files = {}
                 for suffix in ('-summary.json', '-responses.json'):
                     path = root / (stem + suffix)
-                    path.write_text(json.dumps({'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10}))
+                    path.write_text(json.dumps({'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10,
+                                                'presentationPolicy': PRESENTATION_VERSION + '; neutral'}))
                     files[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
                 manifest['comparisons'][baseline] = {'releaseEligible': True,
                     'pairs': {'bedroom': 120, 'living_room': 120}, 'files': files}
             (root / 'review-manifest.json').write_text(json.dumps(manifest))
             self.assertEqual(4, len(verified_reviews(root, 'cohort')))
+            # Even hash-consistent complete votes cannot validate superseded inputs.
+            stale = root / 'ai-pilot-summary.json'
+            stale.write_text(json.dumps({'releaseEligible': True, 'cohortSha256': 'cohort', 'reviewersCompleted': 10,
+                                         'presentationPolicy': 'neutral-role-labels-v2'}))
+            manifest['comparisons']['layoutgpt']['files'][stale.name] = hashlib.sha256(stale.read_bytes()).hexdigest()
+            (root / 'review-manifest.json').write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, 'verified functional fronts'):
+                verified_reviews(root, 'cohort')
             with self.assertRaises(ValueError): verified_reviews(root, 'other')
             (root / 'ai-pilot-summary.json').write_text('{}')
             with self.assertRaises(ValueError): verified_reviews(root, 'cohort')

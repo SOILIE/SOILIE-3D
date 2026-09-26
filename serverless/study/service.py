@@ -24,7 +24,8 @@ PROFILES = {
 }
 FOCUS_PROFILES = {
     "orientation": (
-        "Each object has a cyan arrow marking its source-defined front direction. Compare whether those marked fronts "
+        "Cyan arrows mark functional fronts: bed head-to-foot, seating away from the backrest, desks toward the working edge, and storage toward its accessible face. "
+        "Unmarked objects have no asserted front and must not be scored for facing direction. Compare whether the marked fronts "
         "are oriented sensibly relative to walls, usable room space, and the other objects that are present. "
         "For objects whose shape or function is rotationally symmetric, do not invent a preferred facing direction."
     ),
@@ -139,8 +140,8 @@ class StudyService:
             cases = self.document["cases"]
             # Explicitly balance each baseline, rather than calling coin flips balanced.
             sides = {}
-            for condition in {case["comparisonCondition"] for case in cases}:
-                group = sorted([case for case in cases if case["comparisonCondition"] == condition],
+            for condition, stratum in {(case["comparisonCondition"], case.get('balanceStratum')) for case in cases}:
+                group = sorted([case for case in cases if (case["comparisonCondition"], case.get('balanceStratum')) == (condition, stratum)],
                                key=lambda case: self.signature(session_id+":side:"+case["id"]))
                 # Odd-sized extensions cannot balance within one reviewer. A
                 # frozen roster alternates the extra side across reviewers;

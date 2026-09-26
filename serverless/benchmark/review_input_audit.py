@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from serverless.benchmark.stimuli import digest, stimulus_images, SEMANTIC_FAMILIES
+from serverless.benchmark.review_annotations import ALIASES, FRONT_MEANINGS, PRESENTATION_VERSION, functional_front
 from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.cloud_benchmark.reviews import PLAN
 
@@ -73,6 +74,21 @@ def prepare(benchmarks, scene_paths, output):
     stimuli = output / 'site/benchmarks/stimuli'
     stimuli.mkdir(parents=True, exist_ok=True)
     write_json(output / 'input-audit.json', findings)
+    front_counts = Counter()
+    for scene in scenes.values():
+        if scene.get('fixture'):
+            raise ValueError('Synthetic geometry cannot enter a review packet')
+        for item in scene['objects']:
+            if item.get('kind', 'furniture') == 'furniture':
+                front = functional_front(scene, item)
+                front_counts[(scene['model'], 'marked' if front else 'unmarked')] += 1
+    write_json(output / 'source-scenes.json', {'scenes': list(scenes.values())})
+    write_json(output / 'annotation-audit.json', {
+        'policy': PRESENTATION_VERSION, 'sourceScenes': len(scenes),
+        'counts': [{'model': model, 'status': status, 'objects': count}
+                   for (model, status), count in sorted(front_counts.items())],
+        'geometryChanged': False, 'sourcesVerifiedAgainstRecordedDigests': True,
+        'frontMeanings': FRONT_MEANINGS, 'displayAliases': ALIASES})
     images = {key: stimulus_images(scene, stimuli) for key, scene in sorted(scenes.items())}
     protocols = []
     for report, name in zip(reports, ('set-a', 'set-b')):
@@ -83,20 +99,26 @@ def prepare(benchmarks, scene_paths, output):
             first = images[(row['soilieScene'], row['soilieDigest'])]
             second = images[(row['baselineScene'], row['baselineDigest'])]
             cases.append({'id': row['caseId'], 'title': row['matchingStratum'][0].replace('_', ' ').title() + ' arrangement',
+                'balanceStratum': row['matchingStratum'][0],
                 'relationImage': first['default'], 'comparisonImage': second['default'],
                 'profileImages': {'proportions': {'relationImage': first['proportions'], 'comparisonImage': second['proportions']}},
                 'comparisonCondition': original['baseline']})
             evidence.append(row)
         protocol = {'schemaVersion': 2, 'evidenceMode': 'visual_only', 'decisionScope': 'focus_only',
             'pilotCollectionEnabled': False, 'humanEnrollmentEnabled': False,
-            'presentationPolicy': 'neutral-role-labels-v2; instructions in prompt only; volume data only for proportions',
+            'presentationPolicy': PRESENTATION_VERSION + '; instructions in prompt only; volume data only for proportions',
             'reviewerPlan': PLAN, 'reviewerConfiguration': report['reviewerConfiguration'],
             'cases': cases, 'stimulusEvidence': evidence,
             'sampling': {'selection': 'Exactly the recorded scene pairs, without reselection or consulting votes.',
+                         'sourceSampling': [source['sampling'] for source in report.get('sourceStudies', [])],
+                         'qualityScoresUsed': False,
                          'roomTypePairs': dict(Counter(row['matchingStratum'][0] for row in evidence))},
             'sourceReportSha256': findings['reports'][len(protocols)]['responsesSha256'],
-            'labelPolicy': {'mapping': SEMANTIC_FAMILIES, 'unmapped': 'Lowercase, underscores/hyphens replaced with spaces.',
-                            'duplicates': 'Numbered by position, not asset ID.', 'colours': 'Shared category, never source name.'}}
+            'labelPolicy': {'mapping': ALIASES, 'unmapped': 'Lowercase, underscores/hyphens replaced with spaces.',
+                            'duplicates': 'Numbered by position, not asset ID.', 'colours': 'Shared category, never source name.'},
+            'frontPolicy': {'version': PRESENTATION_VERSION, 'meanings': FRONT_MEANINGS,
+                            'unmarked': 'No asserted functional front; do not score facing.',
+                            'method': 'Source-axis conversion only. No object rotation, geometric inference, or preferred-layout correction.'}}
         protocol['studyVersion'] = 'neutral-inputs-' + digest(protocol)[:20]
         (output / name).mkdir(exist_ok=True)
         write_json(output / name / 'protocol.json', protocol)

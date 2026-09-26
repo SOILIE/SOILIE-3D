@@ -31,7 +31,9 @@ Geometry measurements, generation timings and recorded usage are unaffected.
   source evidence, not reviewer images.
 - Supply the relative-volume table only to proportions reviewers. All other
   dimensions receive the same neutral plan, oblique and bird's-eye views without
-  that table. Keep source-defined fronts and independently fitted panels.
+  that table. Normalize functional fronts using the source coordinate conventions
+  documented in [FRONT_CONVENTIONS.md](FRONT_CONVENTIONS.md). Keep independently
+  fitted panels, with no asserted fronts for symmetric/unsupported categories.
 - Use new image hashes and a new study version. Persist the dimension-specific
   image selection through assignment, reversed-side repeats, export and examples.
 - Keep collection disabled until explicitly authorized. Preparation starts no
@@ -53,3 +55,12 @@ each side of 480 pairs): rendered polygon coordinates match the original images,
 no size instruction remains, and only the proportions variant contains volume
 data. Regression tests cover alias-equivalent labels/colours, unchanged source
 geometry, per-dimension assignment and reload behavior.
+
+The subsequent direction audit found that LayoutGPT's +Z functional axis was
+mistakenly annotated as +X (a quarter-turn error). The v3 display adapter corrects
+that annotation without altering any source corner, orientation or scene digest.
+Fresh review preparation also balances sides within room type, and retains the
+original matching thresholds in the public methods rather than defaulting to a
+different baseline's thresholds. `fresh_reviews` activates explicitly authorized
+new sessions; `review_preflight` verifies geometry, image hashes, neutral labels,
+task-specific volume evidence, prompts and 60/60 side balance before review.

@@ -15,6 +15,9 @@ def fixture(model,index):
              "room":{"polygon":[[0,0],[4,0],[4,4],[0,4]],"floorZ":0},
              "objects":[{"id":"a","label":"bed","corners":box_corners([1,1,.5],[1,1,1]),"frontDirection":[1,0]},
                         {"id":"b","label":"desk","corners":box_corners([3,3,.5],[1,1,1],30),"frontDirection":[.8660254,.5]}]}
+    scene['fixture'] = True
+    for item in scene['objects']:
+        item['frontConvention'] = 'fixture functional front'
     return {"scene":scene,"metrics":measure(scene)}
 
 
@@ -143,7 +146,7 @@ class StimulusTests(unittest.TestCase):
         self.assertIn("3D bird’s-eye view",svg)
         self.assertIn('class="front"',svg)
         self.assertNotIn("Judge",svg)
-        self.assertIn("Cyan arrows mark source-defined fronts",svg)
+        self.assertIn("Cyan arrows mark functional fronts",svg)
         self.assertIn('viewBox="0 0 720 1080"',svg)
         self.assertNotIn("Relative bounding-box volumes", svg)
         proportions = diagram(scene, show_volumes=True)

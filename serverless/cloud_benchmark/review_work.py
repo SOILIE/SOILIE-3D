@@ -51,8 +51,10 @@ def status(output):
     Never print judgements, private routing, session credentials or model sides.
     """
     manifest = load(output / 'manifest.json')
+    roster = manifest.get('reviewers') or {f'reviewer-{i+1:02d}': {'profile': profile}
+                                        for i, profile in enumerate(manifest['reviewerPlan'])}
     reviewers = {}
-    for reviewer, entry in manifest['reviewers'].items():
+    for reviewer, entry in roster.items():
         folder = output / 'packets' / reviewer
         work = load(folder / 'cases.json')
         row = {'profile': entry['profile'], 'assigned': len(work),
@@ -76,7 +78,8 @@ def status(output):
         reviewers[reviewer] = row
     totals = {key: sum(row[key] for row in reviewers.values()) for key in ('assigned', 'written', 'saved')}
     result = {'scope': 'This frozen missing-work queue only; counts include repeat presentations.',
-              'frozenPairs': manifest['frozenPairs'], 'reviewers': reviewers, 'totals': totals,
+              'frozenPairs': manifest.get('frozenPairs', sum(row['pairs'] for row in manifest.get('protocols', []))),
+              'reviewers': reviewers, 'totals': totals,
               'queueComplete': all(row['state'] == 'saved' for row in reviewers.values())}
     print(json.dumps(result), flush=True)
     return result

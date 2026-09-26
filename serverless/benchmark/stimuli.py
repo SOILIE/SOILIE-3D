@@ -8,13 +8,13 @@ from collections import Counter, defaultdict
 import hashlib
 from html import escape
 import json
-import math
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError
 
 from serverless.benchmark.geometry import Box, furniture, room_regions
+from serverless.benchmark.review_annotations import functional_front, presentation_label, PRESENTATION_VERSION
 
 SEED = 20260913
 PALETTE = ("#a3cff5", "#edbe96", "#bdb1eb", "#9fcbb0", "#edd590", "#b9c6d7")
@@ -73,12 +73,6 @@ def comparable_inventory(first, second):
         return False
     anchors = {"bedroom": ("bed",), "living_room": ("sofa",)}.get(first["roomType"], ())
     return all(left[name] == right[name] for name in anchors)
-
-
-def presentation_label(label):
-    """Shared role vocabulary for labels AND colours, never source asset names."""
-    label = ' '.join(label.lower().replace('_', ' ').replace('-', ' ').split())
-    return SEMANTIC_FAMILIES.get(label, label)
 
 
 def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False):
@@ -175,10 +169,8 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
             center = box.points.mean(axis=0)
             if view == "plan":
                 center[2] = floor
-            if show_fronts:
-                front = item.get("frontDirection")
-                if front is None or len(front) != 2 or not all(math.isfinite(float(value)) for value in front):
-                    raise ValueError(f"Object {item.get('id')} lacks a finite front direction")
+            front = functional_front(scene, item) if show_fronts else None
+            if front is not None:
                 front = np.asarray(front,dtype=float)
                 length = float(np.linalg.norm(front))
                 if length <= 1e-9:
@@ -205,7 +197,7 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
                   f'<text x="24" y="1040">{escape(" · ".join(volume_labels[3:]))}</text>' if len(volume_labels) > 3 else '',
                   '<text x="24" y="1058">Values describe box volume, not shape or aspect ratio.</text>'])
     if show_fronts:
-        lines.append('<text x="24" y="1076">Cyan arrows mark source-defined fronts.</text>')
+        lines.append('<text x="24" y="1076">Cyan arrows mark functional fronts; unmarked objects have no asserted front.</text>')
     lines.append('</svg>')
     return "\n".join(lines)
 
@@ -367,7 +359,7 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                                                                               "minimumSemanticSimilarity":minimum_semantic_similarity,
                                                                               "maximumDensityDifference":maximum_density_difference})[:20],
                 "evidenceMode":evidence_mode,"decisionScope":decision_scope,
-                "presentationPolicy":"neutral-role-labels-v2; instructions in prompt only; volume data only for proportions",
+                "presentationPolicy":PRESENTATION_VERSION + "; instructions in prompt only; volume data only for proportions",
                 "humanEnrollmentEnabled":False,"pilotCollectionEnabled":bool(cases),"cases":cases,
                 "sampling":{"seed":seed,"maximumPairsPerBaseline":limit,"withoutReplacementWithinBaseline":True,
                             "baselines":list(baselines),
@@ -381,7 +373,7 @@ def freeze(rows, output, protocol_path, seed=SEED, limit=12, previous_protocols=
                             "cohortScenes":dict(Counter(row["scene"]["model"] for row in rows)),
                             "cohortSceneIdsSha256":digest(sorted(row["scene"]["id"] for row in rows)),
                             "scope":"Completed scenes available in this frozen snapshot, not subsequent benchmark completions",
-                            "visualEvidence":"Method-blind final oriented boxes shown as plan, oblique, and high-angle bird’s-eye views. A cyan arrow marks every source-defined object front. Each room is independently fitted to the same canvas; absolute cross-panel scale is not implied.",
+                            "visualEvidence":"Method-blind final oriented boxes shown as plan, oblique, and high-angle bird’s-eye views. Cyan arrows mark established functional fronts; unmarked objects have no asserted front. Each room is independently fitted to the same canvas; absolute cross-panel scale is not implied.",
                             "numericEvidence":"Only per-room measurements available for both rooms in a pair are shown. Unavailable values are omitted rather than displayed as zero or used as evidence for either side."},
                 "stimulusEvidence":evidence}
     if reviewer_plan:

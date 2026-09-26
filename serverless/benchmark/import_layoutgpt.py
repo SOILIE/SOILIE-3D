@@ -2,12 +2,12 @@
 import argparse
 import hashlib
 import json
-import math
 from pathlib import Path
 import re
 from urllib.request import urlopen
 
 from serverless.benchmark.geometry import box_corners
+from serverless.benchmark.review_annotations import layoutgpt_front, LAYOUTGPT_FRONT
 
 COMMIT = "fc31954962553e5b65bf267a904a6930d50b1f5e"
 FILES = {"bedroom": "gpt4.bedroom.k-similar.k_8.px_regular.json",
@@ -37,11 +37,10 @@ def normalize(layout, room_type, index, checksum):
         if min(size) <= 0:
             raise ValueError("Non-positive released object dimensions")
         yaw = -float(box["orientation"])
-        angle = math.radians(yaw)
         objects.append({"id": f"object-{number:03d}", "label": label, "kind": "furniture",
                         "corners": box_corners(center, size, yaw),
-                        "frontDirection": [math.cos(angle), math.sin(angle)],
-                        "frontConvention": "released local +X orientation heading"})
+                        "frontDirection": layoutgpt_front(box['orientation']),
+                        "frontConvention": LAYOUTGPT_FRONT})
     return {"schemaVersion": 1, "id": f"layoutgpt-{room_type}-{index:04d}", "model": "layoutgpt",
             "roomType": room_type, "units": "px", "stage": "released-final-layout", "objects": objects,
             "room": {"polygon": [[0,0],[width,0],[width,depth],[0,depth]], "floorZ": 0},

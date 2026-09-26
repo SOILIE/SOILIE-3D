@@ -70,6 +70,18 @@ class StudyServiceTests(unittest.TestCase):
             self.service.respond(self.session["sessionId"],dict(response,judgement="right"))
         self.assertEqual(409,caught.exception.status)
 
+    def test_side_assignment_is_balanced_separately_for_each_room_type(self):
+        document = protocol()
+        document['studyVersion'] = 'room-balanced'
+        for i, case in enumerate(document['cases']):
+            case['balanceStratum'] = 'bedroom' if i < 6 else 'living_room'
+        service = StudyService(document, self.store, b'test-secret', True, clock=lambda: 1000)
+        session = service.start({'invitation': service.invite('reviewer-01', 'orientation', 'test-model')})
+        assignments = self.store.get(session['sessionId'])['assignments']
+        for room in ('bedroom', 'living_room'):
+            ids = {case['id'] for case in document['cases'] if case['balanceStratum'] == room}
+            self.assertEqual(3, sum(row['caseId'] in ids and row['leftCondition'] == 'soilie' for row in assignments if not row['repeatOf']))
+
     def test_single_pair_extension_balances_across_frozen_reviewer_roster(self):
         document = protocol()
         document.update(studyVersion='single-pair-extension', cases=document['cases'][:1],
@@ -162,7 +174,8 @@ class StudyServiceTests(unittest.TestCase):
         self.assertIn("Judge only the assigned dimension",session["rubric"])
         self.assertIn("object sets are fixed experimental inputs",session["rubric"])
         self.assertIn("An object having no conventional counterpart is not a defect",session["rubric"])
-        self.assertIn("cyan arrow marking its source-defined front direction",session["rubric"])
+        self.assertIn("Cyan arrows mark functional fronts",session["rubric"])
+        self.assertIn("Unmarked objects have no asserted front",session["rubric"])
         self.assertIn("explicit front-direction arrows",session["rubric"])
         self.assertNotIn("leftMetrics",session["cases"][0])
         with self.assertRaises(ValueError):

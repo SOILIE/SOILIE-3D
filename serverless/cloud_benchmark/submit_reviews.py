@@ -1,12 +1,14 @@
 """Import independent reviewers' answers through the real immutable service."""
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 
 from serverless.study.service import StudyService
 from serverless.study.store import SQLiteStudyStore
 from serverless.cloud_benchmark.review_work import validate_answers
+from serverless.cloud_benchmark.checkpoint import write_json
 
 
 def submit(root, reviewer):
@@ -33,6 +35,9 @@ def submit(root, reviewer):
         result=service.resume(session['sessionId'],{'sessionToken':session['sessionToken']})
         if len(result['completedCaseIds'])!=len(result['cases']):
             raise ValueError('Incomplete persisted reviewer session')
+    receipt = {'reviewer': reviewer, 'saved': len(answers), 'respondentType': 'ai_pilot',
+               'answersSha256': hashlib.sha256((folder / 'answers.json').read_bytes()).hexdigest()}
+    write_json(folder / 'submitted.json', receipt)
     print(json.dumps({'reviewer':reviewer,'saved':len(answers)}))
 
 
