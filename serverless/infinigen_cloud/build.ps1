@@ -27,5 +27,8 @@ try {
         --background --threads 4 --python-use-system-env --python-exit-code 2 `
         --python-expr "import infinigen, gin, scipy; from serverless.benchmark.infinigen_task import controlled_role_counts; print(controlled_role_counts('bedroom', 3))"
     if ($LASTEXITCODE -ne 0) { throw 'Blender import smoke failed' }
+    docker run --rm --network none --entrypoint python3 soilie-infinigen-timing:pilot `
+        -c "from serverless.infinigen_cloud.handler import request_parameters; print(request_parameters(dict(condition='controlled', roomType='bedroom', index=0)))"
+    if ($LASTEXITCODE -ne 0) { throw 'Lambda handler import smoke failed' }
     Write-Output "Image ready: $bytes stored bytes; $unpackedBytes unpacked filesystem bytes"
 } finally { Pop-Location }

@@ -32,3 +32,18 @@ repository in `finally`; cleanup errors are recorded for follow-up. The
 handler terminates its complete child-process group and clears its `/tmp`
 workspace. Generated scenes and result records remain in the authorized S3
 output prefix. Private ledgers and logs must not be copied into website files.
+
+For a corrected packaging pilot, supply `--previous <closed campaign.json>`.
+Its costs remain inside the same $10 ceiling; initialization failures retain
+their full worst-case reservation. Do not reset the budget by starting a new
+folder. `publication.measured_rows` accepts only a complete 80-room cohort and
+strips private receipt fields before the website compiler can consume it.
+
+Calls use asynchronous delivery with automatic function-error retries disabled.
+The controller polls each durable S3 result; a conditional S3 claim prevents a
+duplicate delivery from running Blender twice. CloudWatch billing reports are
+saved privately before resource cleanup. A lost client response is not a reason
+to regenerate a scene: `receipts.py` can reconcile a closed pilot against its S3
+results and saved CloudWatch evidence. Continue using `--previous <verified
+pilot.json> --reuse-completed`; the same fixed schedule skips verified cases and
+retains all prior spending in the cap.

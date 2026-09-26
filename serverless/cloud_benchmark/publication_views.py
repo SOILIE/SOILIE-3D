@@ -130,7 +130,7 @@ def measured_cost(sources, calls, rates, native=None, bedroom_calls=None):
     soilie = summarize([worker_scenario(value, rates['lambda'])['usd'] for value in seconds])
     layout = summarize(prices)
     result = {'schemaVersion': 3, 'currency': 'USD', 'recordedApiRoomType': 'living_room', 'rateCard': rates,
-        'scope': 'Per-room generation-stage estimates for bedrooms and living rooms. SOILIE requests 3–6 objects; LayoutGPT uses its original bedroom prompt and a 3–6-object living-room prompt; Infinigen uses its room-scale furniture workload. Images, evaluation, orchestration and downstream contact correction are excluded.',
+        'scope': 'Per-room generation-stage costs for bedrooms and living rooms, calculated from recorded usage at public rates. SOILIE requests 3–6 objects; LayoutGPT uses its original bedroom prompt and a 3–6-object living-room prompt. Any hypothetical Infinigen values are separately identified. Images, evaluation, orchestration and downstream contact correction are excluded.',
         'soilie': {'usd': soilie, 'seconds': summarize(seconds), 'memoryMb': 4096,
             'ephemeralStorageMb': 10240,
             'basis': 'Measured AWS Lambda generation-stage seconds priced at public 4 GB x86-64 compute, 10 GB temporary-storage and request rates. Not complete billed invocation time.'},
@@ -226,7 +226,7 @@ def verified_reviews(directory, cohort_sha):
 
 
 def compile_views(base, evidence, layoutgpt, native, rates, output,
-                  expansion=None, controlled=None, reviews=None, layoutgpt_scale=None, bedroom_timing=None):
+                  expansion=None, controlled=None, reviews=None, layoutgpt_scale=None, bedroom_timing=None, infinigen_cloud=None):
     raw = (evidence / 'measured-scenes.json').read_bytes()
     cohort = json.loads((evidence / 'cohort.json').read_bytes())
     document = json.loads(base.read_bytes())
@@ -291,6 +291,29 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
             **latency([row['seconds'] for row in bedroom_calls]),
             'stage': 'Twenty fresh API calls using the original K=8 bedroom prompt, 512-token output limit and no count instruction. API request to complete response, including network/provider queue; excludes prompt retrieval, parsing, meshes and rendering. The 423 released bedroom layouts remain the geometry cohort.',
             'evidence': 'measured-api-pilot', 'sourceSha256': sha(bedroom_timing.read_bytes())}
+    if infinigen_cloud:
+        from serverless.infinigen_cloud.publication import measured_rows
+        cloud_rows = measured_rows(infinigen_cloud)
+        cloud_models = ('infinigen', 'infinigen_controlled')
+        document['timing']['infinigenCloudByRoomType'] = {
+            room: {model: {**latency([row['seconds'] for row in cloud_rows if row['roomType'] == room and row['model'] == model]),
+                          'platform': 'AWS Lambda', 'memoryMb': 6144, 'blenderThreads': 4}
+                   for model in cloud_models} for room in ROOMS}
+        cost = document['cost']
+        # Replace hypothetical transferred durations with actual cloud-stage
+        # observations. Geometry and AI votes remain pinned to their own cohorts.
+        cost['observations'] = [row for row in cost['observations'] if row['model'] != 'infinigen']
+        for row in cloud_rows:
+            cost['observations'].append({**row, 'usd': worker_scenario(row['seconds'], cost['rateCard']['lambda'], 6144)['usd']})
+        for room in ROOMS:
+            for model in cloud_models:
+                cost['byRoomType'][room][model] = summarize([row['usd'] for row in cost['observations'] if row['roomType'] == room and row['model'] == model])
+        cost['missing'].pop('infinigenControlled', None)
+        cost['infinigenCloud'] = {'roomsPerCondition': 20, 'memoryMb': 6144,
+            'sourceSha256': sha(infinigen_cloud.read_bytes()),
+            'stage': 'Blender startup, solving, procedural meshes, camera preparation and scene serialization. Excludes validation, compression, artifact transfer and image rendering.'}
+        cost['infinigenBasis'] = 'Measured construction-stage durations on 6 GB x86-64 AWS Lambda workers with 10 GB temporary storage, priced at public tariffs. Not complete billed invocation time.'
+        cost['scope'] = 'Per-room generation-stage costs for bedrooms and living rooms, calculated from recorded cloud durations and API tokens at public rates. SOILIE places existing meshes; LayoutGPT proposes boxes; Infinigen constructs procedural meshes in room-scale and controlled-inventory conditions. Images, evaluation, orchestration and downstream contact correction are excluded.'
     # Selected extreme diagrams were made for the original baseline corpus;
     # retain only those whose source model/corpus has not changed.
     document['illustrations'] = [row for row in document['illustrations'] if row['model'] != 'layoutgpt']
@@ -385,7 +408,8 @@ def compile_views(base, evidence, layoutgpt, native, rates, output,
         'ratesSha256': sha(rates.read_bytes()), 'expansionCheckpointsSha256': checkpoints,
         'aiReviewsReady': bool(reviews),
         'layoutgptPhysicalScaleSha256': sha(layoutgpt_scale.read_bytes()) if layoutgpt_scale else None,
-        'layoutgptBedroomTimingSha256': sha(bedroom_timing.read_bytes()) if bedroom_timing else None})
+        'layoutgptBedroomTimingSha256': sha(bedroom_timing.read_bytes()) if bedroom_timing else None,
+        'infinigenCloudTimingSha256': sha(infinigen_cloud.read_bytes()) if infinigen_cloud else None})
     print(json.dumps({'models': {key: value['n'] for key, value in document['models'].items()},
                       'recordedApiCalls': len(calls) + len(bedroom_calls),
                       'recordedApiCallsByRoom': {'bedroom': len(bedroom_calls), 'living_room': len(calls)},
@@ -402,6 +426,7 @@ def main():
     parser.add_argument('--reviews', type=Path)
     parser.add_argument('--layoutgpt-scale', type=Path)
     parser.add_argument('--bedroom-timing', type=Path)
+    parser.add_argument('--infinigen-cloud', type=Path)
     compile_views(**vars(parser.parse_args()))
 
 

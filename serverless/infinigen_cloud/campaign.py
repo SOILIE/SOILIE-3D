@@ -14,12 +14,16 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import time
+from copy import deepcopy
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.benchmark.run_batch import run_lock
+from serverless.infinigen_cloud.receipts import attach_billing, valid_result
 
 MEMORY_MB = 6144
 MAX_SECONDS = 930  # Handler timeout plus conservative cold-start allowance.
@@ -36,7 +40,15 @@ def requests():
             for condition in ('room-scale', 'controlled')]
 
 
-def run(output, name, rates_path, profile='darkest', region='ca-central-1'):
+def accounted_cost(state):
+    # Failed initialization can have a separate INIT_REPORT outside the billed
+    # invocation line. Retain the full reservation for all non-successes.
+    return state.get('priorAccountedUsd', 0) + sum(
+        row.get('usagePricedUsd', row['reservedUsd']) if row['status'] == 'complete' else row['reservedUsd']
+        for row in state['entries'].values())
+
+
+def run(output, name, rates_path, profile='darkest', region='ca-central-1', previous=None, reuse_completed=False):
     if not re.fullmatch(r'soilie-infinigen-timing-[a-z0-9-]+', name):
         raise ValueError('Dedicated temporary resource name required')
     output.mkdir(parents=True, exist_ok=True)
@@ -46,21 +58,36 @@ def run(output, name, rates_path, profile='darkest', region='ca-central-1'):
             raise ValueError('Existing campaign is evidence, not permission to repeat paid calls')
         rates = json.loads(rates_path.read_bytes())['lambda']
         reservation = reserve_usd(rates)
-        if reservation * 80 > CAP_USD:
+        prior = json.loads(previous.read_bytes()) if previous else None
+        if prior and (not prior.get('cleanupComplete') or prior['name'] == name):
+            raise ValueError('Previous campaign must be closed and use a different resource name')
+        reused = {}
+        if reuse_completed:
+            if not prior or prior['status'] != 'verified_pilot':
+                raise ValueError('Reuse requires independently reconciled pilot evidence')
+            for identity, row in prior['entries'].items():
+                if row['status'] != 'complete' or not valid_result(row['request'], row['result']):
+                    raise ValueError('Only verified completed cases can be reused')
+                reused[identity] = deepcopy(row)
+        prior_cost = prior.get('priorAccountedUsd', 0) if reused else (accounted_cost(prior) if prior else 0)
+        if prior_cost + sum(row['usagePricedUsd'] for row in reused.values()) + reservation * (80 - len(reused)) > CAP_USD:
             raise ValueError('Worst-case campaign exceeds the spending ceiling')
         session = boto3.Session(profile_name=profile, region_name=region)
         ecr, cfn = session.client('ecr'), session.client('cloudformation')
+        s3, logs = session.client('s3'), session.client('logs')
         client = session.client('lambda', config=Config(read_timeout=960, connect_timeout=30,
                                 retries={'total_max_attempts': 1}, max_pool_connections=24))
         state = {'schemaVersion': 1, 'capUsd': CAP_USD, 'memoryMb': MEMORY_MB,
                  'reservationPerCallUsd': reservation, 'rates': rates, 'name': name,
-                 'entries': {}, 'status': 'preparing', 'cleanupComplete': False}
+                 'priorAccountedUsd': prior_cost,
+                 'previousCampaignSha256': hashlib.sha256(previous.read_bytes()).hexdigest() if previous else None,
+                 'entries': reused, 'status': 'preparing', 'cleanupComplete': False}
         write_json(state_path, state)
         repository_created = stack_created = False
         prefix = 'files/outputs/runtime-pilot-2026-09-25/' + name
         lock = threading.Lock()
         def account():
-            return sum(row.get('usagePricedUsd', reservation) for row in state['entries'].values())
+            return accounted_cost(state)
         try:
             image_size = int(subprocess.check_output(['docker', 'image', 'inspect', 'soilie-infinigen-timing:pilot', '--format', '{{.Size}}'], text=True))
             if image_size >= 9_500_000_000:
@@ -99,26 +126,36 @@ def run(output, name, rates_path, profile='darkest', region='ca-central-1'):
             def invoke(event):
                 identity = f"{event['condition']}-{event['roomType']}-{event['index']:02d}"
                 with lock:
-                    if identity in state['entries'] or account() + reservation > CAP_USD:
+                    if identity in state['entries']:
+                        return state['entries'][identity]['status'] == 'complete'
+                    if account() + reservation > CAP_USD:
                         raise ValueError('Duplicate request or exhausted budget')
                     entry = {'request': event, 'status': 'reserved', 'reservedUsd': reservation}
                     state['entries'][identity] = entry
                     write_json(state_path, state)
                 try:
-                    response = client.invoke(FunctionName=name, InvocationType='RequestResponse',
-                                             LogType='Tail', Payload=json.dumps(event).encode())
-                    body = json.loads(response['Payload'].read())
-                    tail = base64.b64decode(response.get('LogResult', '')).decode(errors='replace')
-                    entry['result'] = body
-                    entry['status'] = 'complete' if not response.get('FunctionError') and body.get('status') == 'complete' else 'failed'
-                    billed = re.search(r'Billed Duration: ([\d.]+) ms', tail)
-                    used = re.search(r'Max Memory Used: (\d+) MB', tail)
-                    entry['logTail'] = tail
-                    if billed:
-                        entry['billedDurationMs'] = float(billed[1])
-                        entry['usagePricedUsd'] = entry['billedDurationMs'] / 1000 * (6 * rates['computeUsdPerGbSecond'] + 9.5 * rates['storageUsdPerGbSecond']) + rates['requestUsd']
-                    if used:
-                        entry['reportedMaxMemoryMb'] = int(used[1])
+                    response = client.invoke(FunctionName=name, InvocationType='Event', Payload=json.dumps(event).encode())
+                    if response['StatusCode'] != 202:
+                        raise ValueError('Async invocation was not accepted')
+                    # Poll the durable receipt, not a fragile 15-minute HTTP
+                    # connection. Never resubmit a call because its reply was lost.
+                    deadline = time.monotonic() + 990
+                    while time.monotonic() < deadline:
+                        try:
+                            payload = s3.get_object(Bucket='soilie3d-data', Key=prefix + '/' + identity + '/result.json')['Body'].read()
+                        except ClientError as error:
+                            if error.response['Error']['Code'] not in ('NoSuchKey', '404'):
+                                raise
+                            time.sleep(5)
+                            continue
+                        body = json.loads(payload)
+                        if not valid_result(event, body):
+                            raise ValueError('Receipt differs from the frozen request')
+                        entry.update(result=body, resultSha256=hashlib.sha256(payload).hexdigest(),
+                                     status='complete' if body['status'] == 'complete' else 'failed')
+                        break
+                    else:
+                        raise TimeoutError('No durable result within the bounded invocation window')
                 except Exception as error:
                     entry.update(status='uncertain', errorCode=type(error).__name__)
                 with lock:
@@ -144,6 +181,17 @@ def run(output, name, rates_path, profile='darkest', region='ca-central-1'):
             cleanup_errors = []
             if stack_created:
                 try:
+                    # Preserve private usage evidence before deleting the log
+                    # group. Missing billing lines keep worst-case reservations.
+                    time.sleep(10)
+                    events = []
+                    for page in logs.get_paginator('filter_log_events').paginate(logGroupName='/aws/lambda/' + name):
+                        events.extend(page.get('events', []))
+                    write_json(output / 'cloudwatch-evidence.json', {'events': events})
+                    attach_billing(state['entries'], events, rates)
+                except Exception as error:
+                    state['billingEvidenceError'] = type(error).__name__
+                try:
                     cfn.delete_stack(StackName=name)
                     cfn.get_waiter('stack_delete_complete').wait(StackName=name, WaiterConfig={'Delay': 10, 'MaxAttempts': 120})
                 except Exception as error:
@@ -166,5 +214,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--name', required=True)
     parser.add_argument('--rates', type=Path, required=True)
+    parser.add_argument('--previous', type=Path, help='Closed pilot ledger whose spending remains inside the same cap')
+    parser.add_argument('--reuse-completed', action='store_true', help='Reuse reconciled pilot cases without repeating paid generation')
     args = parser.parse_args()
-    run(args.output, args.name, args.rates)
+    run(args.output, args.name, args.rates, previous=args.previous, reuse_completed=args.reuse_completed)

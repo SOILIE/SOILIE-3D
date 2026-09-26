@@ -21,6 +21,13 @@
         ]}}]
       }
     },
+    "InvocationPolicy": {
+      "Type": "AWS::Lambda::EventInvokeConfig",
+      "Properties": {
+        "FunctionName": {"Ref": "Function"}, "Qualifier": "$LATEST",
+        "MaximumRetryAttempts": 0, "MaximumEventAgeInSeconds": 60
+      }
+    },
     "Function": {
       "Type": "AWS::Lambda::Function",
       "Properties": {

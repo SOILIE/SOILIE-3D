@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 import time
 
-from serverless.benchmark.run_infinigen import COMMIT, profile_command, validate_controlled_output
+from serverless.benchmark.infinigen_task import COMMIT, profile_command, validate_controlled_output
 from serverless.benchmark.infinigen_metadata import generated_instances
 
 
@@ -51,8 +51,22 @@ def request_parameters(event):
 
 def lambda_handler(event, context):
     import boto3
+    from botocore.exceptions import ClientError
     room, condition, index, seed, count, profile = request_parameters(event)
     identity = f'{condition}-{room}-{index:02d}'
+    s3 = boto3.client('s3')
+    prefix = os.environ['OUTPUT_PREFIX'].rstrip('/') + '/' + identity
+    bucket = os.environ['OUTPUT_BUCKET']
+    # Async delivery is at least once. A conditional claim prevents duplicate
+    # deliveries from starting another paid Blender process for the same case.
+    try:
+        s3.put_object(Bucket=bucket, Key=prefix + '/claim.json',
+                      Body=json.dumps({'id': identity}).encode(),
+                      ContentType='application/json', IfNoneMatch='*')
+    except ClientError as error:
+        if error.response['Error']['Code'] in ('PreconditionFailed', '412'):
+            return {'id': identity, 'status': 'already_claimed'}
+        raise
     root = Path('/opt/infinigen')
     folder = Path(tempfile.mkdtemp(prefix='infinigen-', dir='/tmp'))
     output = folder / 'scene'
@@ -94,9 +108,6 @@ def lambda_handler(event, context):
         result['errorCode'] = type(error).__name__
     # Archive only owned outputs; timing samples never replace the frozen
     # geometry or review cohorts. A successful scene can be restored from S3.
-    s3 = boto3.client('s3')
-    prefix = os.environ['OUTPUT_PREFIX'].rstrip('/') + '/' + identity
-    bucket = os.environ['OUTPUT_BUCKET']
     try:
         artifacts = []
         for path in [log, output / 'solve_state.json', output / 'scene.blend']:
