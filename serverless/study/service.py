@@ -70,6 +70,12 @@ EVIDENCE_RUBRICS = {
 
 
 def review_instructions(document, profile=None):
+    if document.get("rubricVersion"):
+        from serverless.study.clarified_rubric import VERSION, prompt
+        if (document["rubricVersion"] != VERSION or document.get("evidenceMode") != "visual_only"
+                or document.get("decisionScope") != "focus_only"):
+            raise ValueError("Unknown or incompatible versioned rubric")
+        return prompt(profile)
     mode = document.get("evidenceMode", "visual_only")
     if mode not in EVIDENCE_RUBRICS:
         raise ValueError("Unknown study evidence mode")
@@ -171,6 +177,7 @@ class StudyService:
                 repeat["leftCondition"], repeat["rightCondition"] = original["rightCondition"], original["leftCondition"]
                 assignments.append(repeat)
             session = {"sessionId": session_id, "respondentType": "ai_pilot", **claims,
+                       **({"rubricVersion": self.document["rubricVersion"]} if self.document.get("rubricVersion") else {}),
                        "evidenceMode": self.document.get("evidenceMode", "visual_only"),
                        "expiresAt": int(self.clock())+7*86400, "createdAt": int(self.clock()),
                        "decisionScope":self.document.get("decisionScope", "overall"),
@@ -184,7 +191,8 @@ class StudyService:
         # An assignment can outlive a deployment. Never silently change the
         # instructions under which an existing reviewer is completing it.
         pinned_document = {"evidenceMode":session.get("evidenceMode", "visual_only"),
-                           "decisionScope":session.get("decisionScope", "overall")}
+                           "decisionScope":session.get("decisionScope", "overall"),
+                           **({"rubricVersion": session["rubricVersion"]} if session.get("rubricVersion") else {})}
         instructions = review_instructions(pinned_document, session["promptProfile"])
         prompt_hash = hashlib.sha256(prompt_text(pinned_document, session["promptProfile"]).encode()).hexdigest()
         if not hmac.compare_digest(session["promptHash"], prompt_hash):

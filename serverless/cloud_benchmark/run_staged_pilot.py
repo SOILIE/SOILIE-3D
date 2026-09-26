@@ -1,0 +1,180 @@
+"""One fresh Codex process per judgment; never resume a review conversation.
+
+Uses existing local Codex authentication, not a new API key or paid endpoint.
+No model fallback. Invalid answers or tool use halt collection for inspection.
+"""
+import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import threading
+import time
+
+from serverless.cloud_benchmark.staged_pilot import (digest, load_frozen, read, record, results, write_new)
+
+
+def verify_panel_pixels(image, panel, x):
+    if panel.size != (720, 1080) or panel.convert('RGBA').tobytes() != image.crop((x, 66, x + 720, 1146)).convert('RGBA').tobytes():
+        raise ValueError('Panel pixels changed during composition')
+
+
+def preflight(root):
+    from PIL import Image
+    root = Path(root)
+    protocol = load_frozen(root)
+    index = read(root / 'packets/index.json')
+    if set(index) != {row['assignmentId'] for row in protocol['assignments']}:
+        raise ValueError('Incomplete or extra reviewer packets')
+    for row in protocol['assignments']:
+        packet = index[row['assignmentId']]
+        raw = (root / packet['file']).read_bytes()
+        if digest(raw) != packet['imageSha256']:
+            raise ValueError('Packet checksum mismatch')
+        with Image.open(root / packet['file']) as image:
+            if image.size != (1480, 1146):
+                raise ValueError('Unexpected packet dimensions')
+            for side, x in (('left', 10), ('right', 750)):
+                path = root / packet[side + 'Panel']
+                if digest(path.read_bytes()) != packet[side + 'PanelSha256']:
+                    raise ValueError('Panel checksum mismatch')
+                with Image.open(path) as panel:
+                    verify_panel_pixels(image, panel, x)
+        if row['repeatOf']:
+            original = index[row['repeatOf']]
+            if packet['leftPanelSha256'] != original['rightPanelSha256'] or packet['rightPanelSha256'] != original['leftPanelSha256']:
+                raise ValueError('Repeat panels did not swap exactly')
+    repeat_count = sum(bool(row['repeatOf']) for row in protocol['assignments'])
+    if len(index) != 320 or repeat_count != 64:
+        raise ValueError('The approved pilot requires 320 packets and 64 controls')
+    result = {'passed': True, 'protocolSha256': digest(protocol), 'packetIndexSha256': digest(index),
+              'packets': len(index), 'pixelIdenticalSwaps': repeat_count}
+    target = root / 'preflight.json'
+    if target.exists():
+        if read(target) != result:
+            raise ValueError('Preflight changed')
+    else:
+        write_new(target, result)
+    return result
+
+
+def command(executable, workspace, reviewer):
+    return [executable, 'exec', '--ignore-user-config', '--ephemeral', '--skip-git-repo-check',
+            '-C', str(workspace), '--model', reviewer['model'], '-c', 'model_reasoning_effort=' + reviewer['reasoningEffort'],
+            '-c', 'project_doc_max_bytes=0', '-c', 'web_search=disabled', '-c', 'features.memories=false',
+            '-c', 'memories.use_memories=false', '-c', 'memories.generate_memories=false',
+            '-c', 'features.multi_agent=false', '-c', 'features.shell_tool=false',
+            '-c', 'model_instructions_file=' + json.dumps(str(workspace / 'system.txt')),
+            '--output-schema', str(workspace / 'schema.json'), '--image', str(workspace / 'pair.png'),
+            '--output-last-message', str(workspace / 'answer.json'), '--json', '-']
+
+
+def parse_events(raw):
+    events = [json.loads(line) for line in raw.splitlines() if line.strip().startswith('{')]
+    threads = [row['thread_id'] for row in events if row.get('type') == 'thread.started']
+    if len(threads) != 1 or not any(row.get('type') == 'turn.completed' for row in events):
+        raise ValueError('A complete isolated model turn is required')
+    if any(row.get('type') in ('turn.failed', 'error') for row in events):
+        raise ValueError('Model reported an error; no answer may be silently retried')
+    for event in events:
+        if event.get('type', '').startswith('item.') and event.get('item', {}).get('type') not in ('agent_message', 'reasoning'):
+            raise ValueError('Reviewer used a tool; isolate and inspect this attempt')
+    return threads[0], next(row.get('usage', {}) for row in reversed(events) if row.get('type') == 'turn.completed')
+
+
+def run_one(root, protocol, row, executable, stop):
+    if stop.is_set():
+        return None
+    root = Path(root)
+    reviewer = next(value for value in protocol['reviewers'] if value['reviewerId'] == row['reviewerId'])
+    index = read(root / 'packets/index.json')
+    packet = index[row['assignmentId']]
+    # Assignment folders contain one neutral image and the instructions only.
+    # No prior answer, baseline identity or private routing enters the context.
+    workspace = root / 'execution' / row['assignmentId']
+    if workspace.exists():
+        raise ValueError('An unsubmitted attempt exists; inspect it before any retry')
+    workspace.mkdir(parents=True)
+    (workspace / 'system.txt').write_text(reviewer['systemPrompt'], encoding='utf-8')
+    write_new(workspace / 'schema.json', protocol['outputSchema'])
+    shutil.copyfile(root / packet['file'], workspace / 'pair.png')
+    if digest((workspace / 'pair.png').read_bytes()) != packet['imageSha256']:
+        raise ValueError('Delivery image changed')
+    args = command(executable, workspace, reviewer)
+    write_new(workspace / 'invocation.json', {'model': reviewer['model'], 'reasoningEffort': reviewer['reasoningEffort'],
+        'args': args, 'promptHash': reviewer['promptHash'], 'systemPromptHash': reviewer['systemPromptHash'],
+        'imageSha256': packet['imageSha256'], 'newConversation': True})
+    started = time.monotonic()
+    environment = dict(os.environ)
+    # Only use the existing Codex account. An unrelated shell API-key setting
+    # must not silently switch this evaluation to separately billed API usage.
+    for key in ('OPENAI_API_KEY', 'CODEX_API_KEY'):
+        environment.pop(key, None)
+    result = subprocess.run(args, input=reviewer['reviewPrompt'], capture_output=True, text=True,
+                            encoding='utf-8', cwd=workspace, env=environment, timeout=900,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    (workspace / 'events.jsonl').write_text(result.stdout, encoding='utf-8')
+    (workspace / 'stderr.log').write_text(result.stderr, encoding='utf-8')
+    if result.returncode:
+        raise ValueError(f'Codex exited {result.returncode}; inspect the saved attempt')
+    thread, usage = parse_events(result.stdout)
+    answer = read(workspace / 'answer.json')
+    receipt = {'model': reviewer['model'], 'reasoningEffort': reviewer['reasoningEffort'],
+               'promptHash': reviewer['promptHash'], 'systemPromptHash': reviewer['systemPromptHash'],
+               'imageSha256': packet['imageSha256'], 'isolatedContext': True, 'threadId': thread,
+               'usage': usage, 'durationSeconds': time.monotonic() - started,
+               'eventsSha256': digest(result.stdout.encode()), 'runner': 'codex exec --ephemeral'}
+    record(root, row['assignmentId'], answer, receipt)
+    return row['assignmentId']
+
+
+def run(root, executable, workers=3, limit=None):
+    root = Path(root).resolve()
+    if workers not in (1, 2, 3):
+        raise ValueError('Use one to three independent workers')
+    preflight(root)
+    protocol = load_frozen(root)
+    summary = results(root)
+    pending = set(summary['remainingAssignmentIds'])
+    rows = [row for row in protocol['assignments'] if row['assignmentId'] in pending]
+    if limit is not None:
+        rows = rows[:limit]
+    stop = threading.Event()
+    failures = []
+    completed = summary['responses']
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(run_one, root, protocol, row, executable, stop): row for row in rows}
+        for future in as_completed(futures):
+            try:
+                key = future.result()
+                if key:
+                    completed += 1
+                    print(json.dumps({'saved': completed, 'expected': 320}), flush=True)
+            except Exception as error:
+                stop.set()
+                row = futures[future]
+                failures.append({'assignmentId': row['assignmentId'], 'error': str(error)})
+                print(json.dumps({'stopped': True, **failures[-1]}), flush=True)
+    if failures:
+        raise RuntimeError('Collection stopped; saved answers and attempts are preserved')
+    return results(root)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--preflight-only', action='store_true')
+    parser.add_argument('--authorize-review', action='store_true')
+    parser.add_argument('--codex', default=shutil.which('codex'))
+    parser.add_argument('--workers', type=int, default=3)
+    parser.add_argument('--limit', type=int)
+    args = parser.parse_args()
+    if args.preflight_only:
+        print(json.dumps(preflight(args.root)))
+    elif args.authorize_review and args.codex:
+        run(args.root, args.codex, args.workers, args.limit)
+    else:
+        parser.error('Review execution requires --authorize-review and a local Codex executable')

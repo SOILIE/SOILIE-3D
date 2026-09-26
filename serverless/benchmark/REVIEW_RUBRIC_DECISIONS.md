@@ -1,8 +1,9 @@
 # AI review calibration decisions
 
-Status: awaiting researcher choices. Publication and additional reviews are on
-hold. This document records diagnostic evidence and proposed rules, not revised
-prompts or new results. No recorded answer has been changed.
+Status: researcher choices approved; the bounded 32-pair pilot is authorized.
+Publication and the full rerun remain on hold. The agreed rules are implemented
+in `serverless/study/clarified_rubric.py` under `functional-use-v1`. Original
+answers and room-function instructions remain unchanged.
 
 ## Evidence
 
@@ -29,7 +30,23 @@ The twelve inconsistent explanations support the following seven decisions.
 Recommendations concern criteria, not which generator should win. Clearer
 criteria may improve stability but have not yet been tested.
 
-## Decisions awaiting confirmation
+## Approved decisions
+
+The researcher selected the recommendations below, with these authoritative
+clarifications to D2, D4 and D5:
+
+- A coffee table between a correctly aligned sofa and TV is not a penalty merely
+  because it sits between them. Count actual interference with the interaction.
+- Normal tucked-in chairs receive no penalty, including under access. They must
+  be reachable and locally pullable/turnable for use without moving furniture.
+- Access concerns usable areas for all functional objects. A complete non-head
+  bed edge is sufficient; foot-end access counts, but a complete long side is
+  preferable when other factors are equal.
+- Sofas need access along the full front; nightstands need front access. Tall
+  objects should not block a TV's viewing path. Do not infer a TV from its stand.
+
+The alternatives below explain the diagnostic decision points, not additional
+active scoring instructions. The frozen pilot prompt is authoritative.
 
 ### D1. Relationships: useful subgroups or one connected cluster?
 
@@ -78,10 +95,11 @@ using relationships with present objects as a secondary consideration.
 One seating pair changed from a tie because both faced their tables sensibly
 to a preference because one correctly facing group was too compressed.
 
-**Recommended:** assess direction here, and approach distance under access.
-An object facing the appropriate target but too close to it has an access
-problem, not necessarily a direction problem. A usable face pointed into a
-wall can still be a direction problem; explain the facing error specifically.
+**Approved:** assess direction here, and actual usability under access. Do not
+penalize a normally tucked chair on either question. If an approach really is
+unusable after allowing normal local chair movement, that is an access issue,
+not necessarily a direction error. A usable face pointed into a wall can still
+be a direction problem; explain that error specifically.
 
 **Alternative:** include sufficient operating/approach clearance as part of
 orientation as well as access.
@@ -92,12 +110,14 @@ Several judgements first considered only the bed's open area, then penalized a
 blocked chair, desk or storage face. A bed's foot arrow was sometimes treated
 as its only possible approach route.
 
-**Recommended:** assess role-appropriate access to all present functional
-objects, including circulation to them. Beds can be approached from usable
-sides; desks and storage have working/access faces. Do not score every object
-as if its arrow were an entrance. Compare severity and the proportion affected,
-not raw problem counts or the presence of more furniture. Small decorative
-items are not independent destinations requiring a person-sized approach.
+**Approved:** assess role-appropriate access to all present functional objects,
+including circulation to usable areas. A complete non-head bed edge counts;
+foot-end-only access is acceptable, but a long side is preferable when other
+factors are equal. Chairs can be locally pulled/turned without moving furniture;
+sofas require full-front access and nightstands require front access. Tall
+objects must not block an actual TV's viewing path. Do not treat every arrow as
+an entrance. Compare severity and proportion affected, not raw problem counts
+or inventory breadth. Decorative items need no independent person-sized approach.
 
 **Alternative:** prioritize access to the room's main activity (for example,
 the bed), using secondary furniture as a tiebreaker.
@@ -155,7 +175,22 @@ assignments, prompts, image hashes and responses remain in the private frozen
 | 04 | ec041259b593b7ce888c | D6, D7 |
 | 05 | ab2a5979b3183bbb65a7 | D1, D2 |
 
-## Next protocol, after decisions
+## Approved pilot protocol
+
+- Draw 32 pairs by a fixed seed, eight per baseline/room-type stratum. Exclude
+  all previously inspected control pairs; do not consult votes or quality scores.
+- Use two GPT-5.6 Sol / Extra High streams for each of the four revised questions.
+  Each stream receives 32 main cases and eight balanced reversed controls, for
+  320 judgments. Every judgment uses a fresh context and no previous answers.
+- Require at least 15/16 consistent controls in each question. Do not allow high
+  agreement on other questions to conceal a failing question.
+- If accepted without a protocol change, retain all 256 main pilot judgments in
+  the final analysis. Controls do not add preference votes. Otherwise preserve
+  the complete pilot as development evidence and do not relabel it as new data.
+- Commit implementation and the validated checkpoint locally, without bumping
+  versions, pushing or deploying. Stop after reporting the pilot outcome.
+
+## Evidence safeguards
 
 - Keep all original responses immutable. Do not replace individual answers
   with whichever explanation appears preferable.
@@ -169,5 +204,5 @@ assignments, prompts, image hashes and responses remain in the private frozen
   Current SVG redraws have small edge differences; their effect is unproven.
 - Inspect each case in an isolated context without previous reviewer choices.
   Report uncertainty and all controls, even if agreement stays below target.
-- Do not launch reviewers, revise active scoring prompts, change release gates,
-  push, bump versions or publish while these choices are pending.
+- Do not launch the remaining full campaign, weaken acceptance gates, push,
+  bump versions or publish during this pilot step.

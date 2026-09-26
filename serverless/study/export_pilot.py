@@ -272,12 +272,19 @@ def aggregate(store, protocol):
         if not hmac.compare_digest(session["promptHash"], hashlib.sha256(published_prompt.encode()).hexdigest()):
             raise ValueError("Published reviewer prompt differs from the immutable session prompt")
         configuration = protocol.get("reviewerConfiguration") or {}
+        decision_rubric = FOCUS_ONLY_RUBRIC if protocol.get("decisionScope") == "focus_only" else RUBRIC
+        dimension_rubric = FOCUS_PROFILES.get(session["promptProfile"])
+        if protocol.get("rubricVersion"):
+            from serverless.study.clarified_rubric import COMMON, DIMENSIONS
+            decision_rubric, dimension_rubric = COMMON, DIMENSIONS[session["promptProfile"]]
         reviewers.append({"reviewerId":reviewer,"profile":session["promptProfile"],"model":session["model"],
                           "reportedModel":configuration.get("model", session["model"]),
                           "reportedReasoningEffort":configuration.get("reasoningEffort"),
                           "promptHash":session["promptHash"],"reviewPrompt":published_prompt,
-                          "decisionRubric":FOCUS_ONLY_RUBRIC if protocol.get("decisionScope") == "focus_only" else RUBRIC,
-                          "dimensionRubric":FOCUS_PROFILES.get(session["promptProfile"]),
+                          **({"rubricVersion": protocol["rubricVersion"]} if protocol.get("rubricVersion") else {}),
+                          "studyVersion": session["studyVersion"],
+                          "decisionRubric":decision_rubric,
+                          "dimensionRubric":dimension_rubric,
                           "evidenceRubric":EVIDENCE_RUBRICS[session.get("evidenceMode", "visual_only")],
                           "interfaceEmphasis":PROFILES[session["promptProfile"]],
                           "responses":len(main),"votes":dict(votes),

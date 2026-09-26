@@ -1,0 +1,206 @@
+"""Small synthetic fixtures only; never manufacture research judgments."""
+from collections import Counter
+from copy import deepcopy
+import json
+import re
+from pathlib import Path
+import tempfile
+import unittest
+
+from serverless.cloud_benchmark.staged_pilot import (
+    PROFILES, STRATA, VERSION, assignments, digest, load_frozen, record, results,
+    select_pairs, validate_answer, write_new)
+from serverless.cloud_benchmark.run_staged_pilot import command, parse_events, verify_panel_pixels
+from serverless.study.clarified_rubric import prompt
+from serverless.benchmark.geometry import box_corners
+from serverless.benchmark.stimuli import diagram
+from serverless.study.service import review_instructions, StudyService
+from serverless.study.store import SQLiteStudyStore
+
+
+def cases():
+    return [{'pairId': f'{baseline}:{room}:{i}', 'baseline': baseline, 'roomType': room,
+             'title': room, 'relationImage': '/a.svg', 'comparisonImage': '/b.svg',
+             'profileImages': {'proportions': {'relationImage': '/va.svg', 'comparisonImage': '/vb.svg'}}}
+            for baseline, room in STRATA for i in range(12)]
+
+
+class StagedPilotTests(unittest.TestCase):
+    def setUp(self):
+        scratch = Path(__file__).parents[2] / '.codex/tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def test_selection_is_balanced_deterministic_and_excludes_all_calibration_cases(self):
+        source = cases()
+        excluded = {row['pairId'] for row in source[::12]}
+        selected = select_pairs(source, excluded)
+        self.assertEqual(selected, select_pairs(list(reversed(source)), excluded))
+        self.assertEqual({stratum: 8 for stratum in STRATA}, Counter((r['baseline'], r['roomType']) for r in selected))
+        self.assertFalse(excluded.intersection(row['pairId'] for row in selected))
+        with self.assertRaises(ValueError):
+            select_pairs(source[:4], set())
+
+    def test_every_stream_has_balanced_sides_and_eight_correct_reversals(self):
+        selected = select_pairs(cases(), set())
+        for i, profile in enumerate(PROFILES * 2):
+            rows = assignments(selected, f'r{i}', profile)
+            self.assertEqual(40, len(rows))
+            originals = {r['assignmentId']: r for r in rows if not r['repeatOf']}
+            self.assertEqual(32, len(originals))
+            for stratum in STRATA:
+                group = [r for r in originals.values() if (r['baseline'], r['roomType']) == stratum]
+                self.assertEqual(4, sum(r['leftCondition'] == 'soilie' for r in group))
+                self.assertEqual(2, sum(bool(r['repeatOf']) and (r['baseline'], r['roomType']) == stratum for r in rows))
+            for row in rows:
+                self.assertEqual('/v' in row['leftSource'], profile == 'proportions')
+                if row['repeatOf']:
+                    first = originals[row['repeatOf']]
+                    self.assertEqual(first['leftSource'], row['rightSource'])
+                    self.assertEqual(first['rightCondition'], row['leftCondition'])
+
+    def test_agreed_furniture_rules_and_immutable_original_room_function(self):
+        document = {'decisionScope': 'focus_only', 'evidenceMode': 'visual_only'}
+        old = review_instructions(document, 'room_function')
+        for profile in PROFILES:
+            new = review_instructions({**document, 'rubricVersion': VERSION}, profile)
+            self.assertEqual(new, prompt(profile))
+            self.assertIn('clear, meaningful advantage', new)
+            self.assertIn('tucked', new)
+        access = prompt('access')
+        for text in ('Foot-end-only access is acceptable', 'complete accessible long side', 'without moving other furniture',
+                     'full front', 'nightstands need front access', 'TV stand alone', 'Decorative items'):
+            self.assertIn(text, access)
+        self.assertIn('coffee table between a correctly aligned sofa and TV is normal', prompt('relationships'))
+        self.assertIn('not automatically implausible', prompt('proportions'))
+        self.assertEqual(old, review_instructions(document, 'room_function'))
+        with self.assertRaises(ValueError):
+            review_instructions({**document, 'rubricVersion': VERSION}, 'room_function')
+
+    def test_actual_volume_table_is_scale_invariant(self):
+        # Exercise the actual evidence renderer, not an unused ratio helper.
+        # This verifies numerical evidence, not empirical LLM invariance.
+        scene = {'model': 'fixture', 'room': {'polygon': [[0, 0], [6, 0], [6, 6], [0, 6]], 'floorZ': 0},
+                 'objects': [{'id': label, 'label': label, 'corners': box_corners(center, size)}
+                             for label, center, size in [('chair', [1, 1, 1], [1, 1, 2]),
+                                                         ('desk', [3, 3, 1], [2, 1, 2])]]}
+        table = lambda value: re.findall(r'<text x="24" y="10(?:22|40)">(.*?)</text>', diagram(value, show_volumes=True, show_fronts=False))
+        expected = table(scene)
+        self.assertTrue(expected)
+        for factor in (.01, 4, 25):
+            other = deepcopy(scene)
+            other['room']['polygon'] = [[v * factor for v in p] for p in other['room']['polygon']]
+            for item in other['objects']:
+                item['corners'] = [[v * factor for v in p] for p in item['corners']]
+            self.assertEqual(expected, table(other))
+
+    def test_versioned_service_session_survives_reload(self):
+        document = {'studyVersion': 'fixture', 'evidenceMode': 'visual_only', 'decisionScope': 'focus_only',
+                    'rubricVersion': VERSION, 'pilotCollectionEnabled': True, 'reviewerPlan': list(PROFILES),
+                    'cases': [{'id': str(i), 'title': 'Room', 'comparisonCondition': 'baseline',
+                               'relationImage': '/a.svg', 'comparisonImage': '/b.svg'} for i in range(4)]}
+        store = SQLiteStudyStore(self.root / 'study.sqlite3')
+        service = StudyService(document, store, b'fixture', enabled=True)
+        session = service.start({'invitation': service.invite('test', 'access', 'test-model')})
+        self.assertEqual(prompt('access'), session['rubric'])
+        self.assertEqual(VERSION, store.get(session['sessionId'])['rubricVersion'])
+        self.assertEqual(session['rubric'], service.resume(session['sessionId'], session)['rubric'])
+
+    def frozen(self):
+        selected = select_pairs(cases(), set())
+        rows, reviewers = [], []
+        for i, profile in enumerate(p for p in PROFILES for _ in range(2)):
+            reviewer = f'reviewer-{i + 1:02}'
+            rows += assignments(selected, reviewer, profile)
+            reviewers.append({'reviewerId': reviewer, 'profile': profile, 'promptHash': 'prompt', 'systemPromptHash': 'system'})
+        value = {'assignments': rows, 'reviewers': reviewers, 'retainedRoomFunctionSha256': digest([]),
+                 'model': 'gpt-5.6-sol', 'reasoningEffort': 'xhigh'}
+        write_new(self.root / 'protocol.json', value)
+        write_new(self.root / 'protocol-sha256.json', {'sha256': digest(value)})
+        write_new(self.root / 'private/retained-room-function.json', [])
+        write_new(self.root / 'packets/index.json', {r['assignmentId']: {'imageSha256': 'image'} for r in rows})
+        return rows
+
+    def save(self, row, choice='tie'):
+        record(self.root, row['assignmentId'], {'judgement': choice, 'errorChoice': 'neither', 'confidence': 3, 'note': 'Test fixture.'},
+               {'model': 'gpt-5.6-sol', 'reasoningEffort': 'xhigh', 'promptHash': 'prompt', 'systemPromptHash': 'system',
+                'imageSha256': 'image', 'isolatedContext': True, 'threadId': row['assignmentId']})
+
+    def test_complete_controls_threshold_and_missing_only_resume(self):
+        rows = self.frozen()
+        for row in rows[:3]:
+            self.save(row)
+        summary = results(self.root)
+        self.assertFalse(summary['pilotAccepted'])
+        self.assertEqual(317, len(summary['remainingAssignmentIds']))
+        failures = Counter()
+        for row in rows[3:]:
+            # One inconsistent control per dimension still yields 15/16.
+            choice = 'tie'
+            if row['repeatOf'] and failures[row['profile']] == 0:
+                choice = 'left'
+                failures[row['profile']] += 1
+            self.save(row, choice)
+        summary = results(self.root)
+        self.assertTrue(summary['pilotAccepted'])
+        self.assertFalse(summary['releaseEligible'])
+        self.assertEqual(256, summary['mainJudgements'])
+        self.assertEqual(60, summary['agreements'])
+        self.assertEqual(64, summary['comparisons'])
+        with self.assertRaises(FileExistsError):
+            self.save(rows[0])
+
+    def test_low_dimension_cannot_be_hidden_by_other_dimensions(self):
+        rows = self.frozen()
+        failures = 0
+        for row in rows:
+            choice = 'tie'
+            if row['repeatOf'] and row['profile'] == 'relationships' and failures < 2:
+                choice = 'left'
+                failures += 1
+            self.save(row, choice)
+        summary = results(self.root)
+        self.assertEqual(62, summary['agreements'])
+        self.assertFalse(summary['pilotAccepted'])
+
+    def test_prompt_or_retained_evidence_tampering_is_rejected(self):
+        self.frozen()
+        path = self.root / 'private/retained-room-function.json'
+        path.write_text('["changed"]')
+        with self.assertRaisesRegex(ValueError, 'Retained'):
+            load_frozen(self.root)
+
+    def test_executor_pins_model_new_context_and_rejects_tools(self):
+        args = command('codex', self.root, {'model': 'gpt-5.6-sol', 'reasoningEffort': 'xhigh'})
+        self.assertIn('--ephemeral', args)
+        self.assertIn('model_reasoning_effort=xhigh', args)
+        self.assertNotIn('resume', args)
+        events = [{'type': 'thread.started', 'thread_id': 'test'}, {'type': 'turn.completed', 'usage': {}}]
+        self.assertEqual('test', parse_events('\n'.join(map(json.dumps, events)))[0])
+        events.insert(1, {'type': 'item.completed', 'item': {'type': 'command_execution'}})
+        with self.assertRaisesRegex(ValueError, 'tool'):
+            parse_events('\n'.join(map(json.dumps, events)))
+
+    def test_pixel_audit_rejects_even_one_changed_edge_pixel(self):
+        from PIL import Image
+        panel = Image.new('RGB', (720, 1080), 'white')
+        pair = Image.new('RGB', (1480, 1146), 'grey')
+        pair.paste(panel, (10, 66))
+        verify_panel_pixels(pair, panel, 10)
+        pair.putpixel((10, 66), (254, 254, 254))
+        with self.assertRaisesRegex(ValueError, 'pixels'):
+            verify_panel_pixels(pair, panel, 10)
+
+    def test_answer_schema_does_not_accept_extra_fields_or_boolean_confidence(self):
+        answer = {'judgement': 'tie', 'errorChoice': 'neither', 'confidence': 3, 'note': 'Fixture.'}
+        validate_answer(answer)
+        for invalid in ({**answer, 'confidence': True}, {**answer, 'model': 'inferred'},
+                        {**answer, 'note': ''}, {**answer, 'judgement': 'unknown'}):
+            with self.assertRaises(ValueError):
+                validate_answer(invalid)
+
+
+if __name__ == '__main__':
+    unittest.main()
