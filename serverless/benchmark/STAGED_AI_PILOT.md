@@ -4,6 +4,10 @@ The approved pilot tests the four `functional-use-v1` questions on 32 frozen
 pairs before authorizing the remaining 448. Existing room-function responses
 retain their original prompt, study identity and stimulus provenance.
 
+The [completed local checkpoint](results/functional-use-pilot-v1.md) did not
+meet the per-question continuation gate. It remains development evidence;
+no remaining reviews or publication have been authorized.
+
 ## Invariants
 
 Selection uses only a fixed seed, pair IDs, room type and comparison baseline.
@@ -39,13 +43,16 @@ python -m serverless.cloud_benchmark.run_staged_pilot --root PILOT --preflight-o
 python -m serverless.cloud_benchmark.run_staged_pilot --root PILOT --authorize-review --workers 3
 python -m serverless.cloud_benchmark.staged_pilot status --root PILOT
 python -m serverless.cloud_benchmark.staged_pilot finalize --root PILOT
+python -m serverless.cloud_benchmark.staged_pilot checkpoint --root PILOT --output CHECKPOINT_JSON
 ```
 
 The renderer dependency root is the directory containing `node_modules/playwright`
 (the website's `.codex/browser` in this workspace). No development server is used.
 Re-running the collection command processes only missing assignments. An
 unsubmitted execution directory causes a stop: recover its existing valid
-answer rather than overwriting or rerunning it. Protocol preparation and final
+answer with `run_staged_pilot --root PILOT --recover-completed` (as a Python
+module) rather than overwriting or rerunning it. Recovery makes no model calls
+and rejects incomplete/error transcripts. Protocol preparation and final
 checkpoint creation also refuse to overwrite existing evidence.
 
 ## Outputs and interpretation
@@ -54,6 +61,9 @@ checkpoint creation also refuse to overwrite existing evidence.
 counts, exact prompts and hashes. `private/retained-room-function.json` is an
 immutable snapshot of the original responses; private sessions and credentials
 must never enter website assets. Runner outputs remain available for audit.
+The `checkpoint` command exports compact internal evidence for Git, hashing
+private context identifiers and retaining all judgments, including controls and
+disagreements. It does not update website results or upload anything.
 
 A successful pilot is not a completed review or a public release. A passing,
 unchanged protocol permits reusing **all** main pilot judgments; continuation

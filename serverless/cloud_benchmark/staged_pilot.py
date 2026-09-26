@@ -233,11 +233,18 @@ def results(root):
             # Verify saved answers against actual runner output, not just values
             # copied into a result row. This detects post-collection edits.
             execution = Path(root) / 'execution' / key
-            raw_events = (execution / 'events.jsonl').read_bytes()
-            if digest(raw_events) != row['receipt']['eventsSha256']:
+            # subprocess text mode normalizes newlines before hashing; Windows
+            # text files can store CRLF. Validate the same logical UTF-8 text.
+            raw_events = (execution / 'events.jsonl').read_text(encoding='utf-8')
+            if digest(raw_events.encode('utf-8')) != row['receipt']['eventsSha256']:
                 raise ValueError('Runner transcript changed')
             if read(execution / 'answer.json') != {field: row[field] for field in SCHEMA['required']}:
                 raise ValueError('Saved judgment differs from model output')
+            events = [json.loads(line) for line in raw_events.splitlines() if line.strip().startswith('{')]
+            messages = [event['item']['text'] for event in events if event.get('type') == 'item.completed'
+                        and event.get('item', {}).get('type') == 'agent_message']
+            if not messages or json.loads(messages[-1]) != read(execution / 'answer.json'):
+                raise ValueError('Answer file differs from the recorded model response')
             invocation = read(execution / 'invocation.json')
             for field in ('model', 'reasoningEffort', 'promptHash', 'systemPromptHash', 'imageSha256'):
                 if invocation[field] != row['receipt'][field]:
@@ -268,6 +275,15 @@ def results(root):
                 for key, rows in sorted(values.items())}
 
     dimensions = group("profile")
+    main_votes = {}
+    for profile in PROFILES:
+        main_votes[profile] = {}
+        for baseline in ('layoutgpt', 'infinigen_controlled'):
+            selected = [row for row in answers.values() if row['profile'] == profile
+                        and row['baseline'] == baseline and not row['repeatOf']]
+            votes = Counter('tie' if row['judgement'] == 'tie' else row[row['judgement'] + 'Condition'] for row in selected)
+            main_votes[profile][baseline] = {'judgements': len(selected), 'distinctPairs': len({row['pairId'] for row in selected}),
+                                             'votes': {key: votes[key] for key in ('soilie', baseline, 'tie')}}
     complete = len(answers) == len(assignments_by_id) == 320
     accepted = complete and all(dimensions.get(profile, {}).get("comparisons") == 16
                                 and dimensions[profile]["agreements"] >= 15 for profile in PROFILES)
@@ -276,6 +292,7 @@ def results(root):
             "agreements": sum(row["agreed"] for row in controls), "comparisons": len(controls),
             "byDimension": dimensions, "byReviewer": group("reviewerId"), "byBaseline": group("baseline"),
             "byRoomType": group("roomType"), "controls": controls,
+            "mainVotesByDimensionByBaseline": main_votes,
             "remainingAssignmentIds": [key for key in assignments_by_id if key not in answers],
             "retention": "All main pilot judgments may be retained only if accepted and the protocol is unchanged; controls never add preference votes.",
             "interpretation": "Repeat consistency measures observed stability, not correctness or population reliability. No full campaign or publication is authorized."}
@@ -329,15 +346,53 @@ def continuation_inventory(root):
             'fullPairSetSha256': protocol['fullPairSetSha256']}
 
 
+def checkpoint(root, destination):
+    """Export compact committed evidence, without private context identifiers.
+
+    Failed pilots are exported too. This does not turn a checkpoint into a
+    public release and never invokes the website compiler or deployment.
+    """
+    root = Path(root)
+    protocol = load_frozen(root)
+    report = read(root / 'pilot-results.json')
+    current = results(root)
+    if not current['complete'] or any(report[key] != current[key] for key in current):
+        raise ValueError('Completed checkpoint differs from saved judgments')
+    if report['protocolSha256'] != digest(protocol):
+        raise ValueError('Checkpoint protocol differs')
+    for filename, expected in report['responseFileHashes'].items():
+        if digest((root / 'responses' / filename).read_bytes()) != expected:
+            raise ValueError('Checkpoint response changed')
+    saved = [read(path) for path in sorted((root / 'responses').glob('*.json'))]
+    if report['judgements'] != saved or report['reviewers'] != protocol['reviewers']:
+        raise ValueError('Checkpoint evidence differs from frozen collection')
+    document = deepcopy(report)
+    document.pop('remainingAssignmentIds', None)
+    document['artifactType'] = 'internal-ai-calibration-checkpoint'
+    document['sourceProtocolHashes'] = protocol['sourceProtocolHashes']
+    document['pixelPreflight'] = read(root / 'preflight.json')
+    for row in document['judgements']:
+        receipt = row['receipt']
+        receipt['contextSha256'] = digest(receipt.pop('threadId'))
+    write_new(destination, document)
+    return {'written': str(destination), 'judgements': len(document['judgements']),
+            'pilotAccepted': document['pilotAccepted'], 'releaseEligible': False}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "status", "finalize"))
+    parser.add_argument("action", choices=("prepare", "status", "finalize", "checkpoint"))
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--source", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
         result = prepare(args.source, args.root)
         print(json.dumps({"pairs": len(result["selectedPairs"]), "assignments": len(result["assignments"])}))
+    elif args.action == 'checkpoint':
+        if not args.output:
+            parser.error('checkpoint requires --output')
+        print(json.dumps(checkpoint(args.root, args.output)))
     else:
         result = results(args.root) if args.action == "status" else finalize(args.root)
         print(json.dumps({key: value for key, value in result.items() if key not in ("controls", "remainingAssignmentIds")}))

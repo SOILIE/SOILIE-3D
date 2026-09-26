@@ -5,7 +5,6 @@ No model fallback. Invalid answers or tool use halt collection for inspection.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -163,17 +162,49 @@ def run(root, executable, workers=3, limit=None):
     return results(root)
 
 
+def recover_completed(root):
+    """Submit already finished isolated output after interruption, without calls.
+
+    Incomplete/error attempts remain untouched and require investigation. This
+    never replaces an existing response or asks for a new answer to that case.
+    """
+    root = Path(root).resolve()
+    preflight(root)
+    protocol = load_frozen(root)
+    pending = set(results(root)['remainingAssignmentIds'])
+    recovered = 0
+    for row in protocol['assignments']:
+        key = row['assignmentId']
+        workspace = root / 'execution' / key
+        if key not in pending or not workspace.exists():
+            continue
+        if not all((workspace / name).is_file() for name in ('events.jsonl', 'answer.json', 'invocation.json')):
+            raise ValueError('Incomplete execution cannot be recovered or rerun automatically: ' + key)
+        raw = (workspace / 'events.jsonl').read_text(encoding='utf-8')
+        thread, usage = parse_events(raw)
+        invocation = read(workspace / 'invocation.json')
+        receipt = {name: invocation[name] for name in ('model', 'reasoningEffort', 'promptHash', 'systemPromptHash', 'imageSha256')}
+        receipt.update(isolatedContext=True, threadId=thread, usage=usage,
+                       eventsSha256=digest(raw.encode('utf-8')), runner='codex exec --ephemeral', recoveredExistingOutput=True)
+        record(root, key, read(workspace / 'answer.json'), receipt)
+        recovered += 1
+    return {'recovered': recovered, 'modelCalls': 0}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--preflight-only', action='store_true')
     parser.add_argument('--authorize-review', action='store_true')
+    parser.add_argument('--recover-completed', action='store_true')
     parser.add_argument('--codex', default=shutil.which('codex'))
     parser.add_argument('--workers', type=int, default=3)
     parser.add_argument('--limit', type=int)
     args = parser.parse_args()
     if args.preflight_only:
         print(json.dumps(preflight(args.root)))
+    elif args.recover_completed:
+        print(json.dumps(recover_completed(args.root)))
     elif args.authorize_review and args.codex:
         run(args.root, args.codex, args.workers, args.limit)
     else:

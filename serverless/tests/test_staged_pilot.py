@@ -6,11 +6,12 @@ import re
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from serverless.cloud_benchmark.staged_pilot import (
     PROFILES, STRATA, VERSION, assignments, digest, load_frozen, record, results,
-    select_pairs, validate_answer, write_new)
-from serverless.cloud_benchmark.run_staged_pilot import command, parse_events, verify_panel_pixels
+    select_pairs, validate_answer, write_new, finalize, continuation_inventory, checkpoint)
+from serverless.cloud_benchmark.run_staged_pilot import command, parse_events, verify_panel_pixels, recover_completed
 from serverless.study.clarified_rubric import prompt
 from serverless.benchmark.geometry import box_corners
 from serverless.benchmark.stimuli import diagram
@@ -18,11 +19,11 @@ from serverless.study.service import review_instructions, StudyService
 from serverless.study.store import SQLiteStudyStore
 
 
-def cases():
+def cases(count=12):
     return [{'pairId': f'{baseline}:{room}:{i}', 'baseline': baseline, 'roomType': room,
              'title': room, 'relationImage': '/a.svg', 'comparisonImage': '/b.svg',
              'profileImages': {'proportions': {'relationImage': '/va.svg', 'comparisonImage': '/vb.svg'}}}
-            for baseline, room in STRATA for i in range(12)]
+            for baseline, room in STRATA for i in range(count)]
 
 
 class StagedPilotTests(unittest.TestCase):
@@ -109,14 +110,18 @@ class StagedPilotTests(unittest.TestCase):
         self.assertEqual(session['rubric'], service.resume(session['sessionId'], session)['rubric'])
 
     def frozen(self):
-        selected = select_pairs(cases(), set())
+        full = cases(120)
+        selected = select_pairs(full, set())
         rows, reviewers = [], []
         for i, profile in enumerate(p for p in PROFILES for _ in range(2)):
             reviewer = f'reviewer-{i + 1:02}'
             rows += assignments(selected, reviewer, profile)
             reviewers.append({'reviewerId': reviewer, 'profile': profile, 'promptHash': 'prompt', 'systemPromptHash': 'system'})
         value = {'assignments': rows, 'reviewers': reviewers, 'retainedRoomFunctionSha256': digest([]),
-                 'model': 'gpt-5.6-sol', 'reasoningEffort': 'xhigh'}
+                 'model': 'gpt-5.6-sol', 'reasoningEffort': 'xhigh', 'seed': 'fixture',
+                 'sourceProtocolHashes': {'fixture': 'fixture-only'},
+                 'fullPairIds': [row['pairId'] for row in full], 'selectedPairs': [row['pairId'] for row in selected],
+                 'fullPairSetSha256': digest(sorted(row['pairId'] for row in full)), 'excludedCalibrationPairs': []}
         write_new(self.root / 'protocol.json', value)
         write_new(self.root / 'protocol-sha256.json', {'sha256': digest(value)})
         write_new(self.root / 'private/retained-room-function.json', [])
@@ -200,6 +205,69 @@ class StagedPilotTests(unittest.TestCase):
                         {**answer, 'note': ''}, {**answer, 'judgement': 'unknown'}):
             with self.assertRaises(ValueError):
                 validate_answer(invalid)
+
+    def test_passing_checkpoint_retains_all_votes_and_never_authorizes_continuation(self):
+        rows = self.frozen()
+        for row in rows:
+            self.save(row)
+        # Pixel checking is separately covered with actual PIL images. These
+        # synthetic answers never leave this disposable unit-test directory.
+        with patch('serverless.cloud_benchmark.run_staged_pilot.preflight'):
+            self.assertTrue(finalize(self.root)['pilotAccepted'])
+        checkpoint_document = json.loads((self.root / 'pilot-results.json').read_bytes())
+        self.assertEqual(320, len(checkpoint_document['judgements']))
+        inventory = continuation_inventory(self.root)
+        self.assertEqual(256, inventory['reusableMainJudgements'])
+        self.assertFalse(inventory['authorized'])
+        self.assertTrue(all(len(value) == 448 for value in inventory['remainingPairsByReviewer'].values()))
+        write_new(self.root / 'preflight.json', {'fixtureOnly': True})
+        exported = self.root / 'checkpoint.json'
+        self.assertEqual(320, checkpoint(self.root, exported)['judgements'])
+        public = json.loads(exported.read_bytes())
+        self.assertEqual(320, len(public['judgements']))
+        self.assertFalse(public['releaseEligible'])
+        self.assertTrue(all('threadId' not in row['receipt'] and 'contextSha256' in row['receipt'] for row in public['judgements']))
+        altered_report = json.loads((self.root / 'pilot-results.json').read_bytes())
+        altered_report['judgements'][0]['note'] = 'Changed report, not a model answer.'
+        (self.root / 'pilot-results.json').write_text(json.dumps(altered_report))
+        with self.assertRaisesRegex(ValueError, 'Checkpoint evidence differs'):
+            checkpoint(self.root, self.root / 'tampered-export.json')
+        self.assertFalse((self.root / 'tampered-export.json').exists())
+        path = self.root / 'responses' / (rows[0]['assignmentId'] + '.json')
+        value = json.loads(path.read_bytes())
+        value['note'] = 'Changed fixture.'
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'response changed'):
+            continuation_inventory(self.root)
+
+    def test_unknown_and_reused_context_receipts_are_rejected(self):
+        rows = self.frozen()
+        self.save(rows[0])
+        self.save(rows[1])
+        path = self.root / 'responses' / (rows[1]['assignmentId'] + '.json')
+        value = json.loads(path.read_bytes())
+        value['receipt']['threadId'] = rows[0]['assignmentId']
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'contexts were reused'):
+            results(self.root)
+
+    def test_recovery_submits_existing_model_output_without_a_call(self):
+        row = self.frozen()[0]
+        workspace = self.root / 'execution' / row['assignmentId']
+        workspace.mkdir(parents=True)
+        answer = {'judgement': 'tie', 'errorChoice': 'neither', 'confidence': 3, 'note': 'Recovery fixture.'}
+        events = [{'type': 'thread.started', 'thread_id': 'recovery-fixture'},
+                  {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(answer)}},
+                  {'type': 'turn.completed', 'usage': {}}]
+        (workspace / 'events.jsonl').write_text('\n'.join(map(json.dumps, events)), encoding='utf-8')
+        write_new(workspace / 'answer.json', answer)
+        write_new(workspace / 'invocation.json', {'model': 'gpt-5.6-sol', 'reasoningEffort': 'xhigh',
+                  'promptHash': 'prompt', 'systemPromptHash': 'system', 'imageSha256': 'image'})
+        with patch('serverless.cloud_benchmark.run_staged_pilot.preflight'), patch('subprocess.run') as call:
+            self.assertEqual({'recovered': 1, 'modelCalls': 0}, recover_completed(self.root))
+            self.assertEqual({'recovered': 0, 'modelCalls': 0}, recover_completed(self.root))
+            call.assert_not_called()
+        self.assertEqual(1, results(self.root)['responses'])
 
 
 if __name__ == '__main__':
