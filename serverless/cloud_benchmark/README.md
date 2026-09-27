@@ -3,6 +3,54 @@
 Private, finite Lambda execution of the tracked SOILIE placement pipeline.
 The website and its production renderer are not changed by these tools.
 
+## Frozen functional-use-v2 pilot
+
+This is a bounded calibration step, not a new publication or full review. The
+original room-function responses retain their original prompts and stimuli.
+The four revised dimensions use the versioned instructions and observation
+schema in `study/structured_rubric.py`; v1 remains independently resolvable.
+
+- Select 32 pairs (eight per baseline × room type) with seed
+  `functional-use-v2-pilot`. Exclude the 38 earlier inspected controls and all
+  32 v1 pilot pairs. The final 480-pair sample is not changed.
+- Two streams per dimension each receive 32 main cases and eight reversed
+  controls: 256 main judgments and 64 controls. Every judgment has an isolated
+  GPT-5.6 Sol context at Extra High effort, without tools or previous answers.
+- Numbered objects have the same key in all three views. Geometry and functional
+  fronts are unchanged. A room is rasterized once; controls swap identical pixels.
+- Every required object or pair receives a short structured observation.
+  Computed within-room box-volume ratios are supplied only for relative size.
+  Source identities, quality scores and earlier answers are not delivered.
+- Acceptance requires **15/16 exact agreements in every dimension, including
+  ties**. Tie/preference changes and opposite-winner reversals are also reported
+  separately. Decisive agreement excludes pairs with a tie on either viewing;
+  it never replaces the exact-agreement gate.
+
+From the backend repository, prepare a new directory, rasterize it using the
+website's project-local Playwright installation, and preflight it:
+
+```powershell
+$pilotRoot = '.codex/benchmark/soilie-platform-grid-final/review-functional-use-pilot-v2'
+python -m serverless.cloud_benchmark.staged_pilot prepare --source .codex/benchmark/soilie-platform-grid-final/review-functional-fronts-v3 --root $pilotRoot --version functional-use-v2 --previous .codex/benchmark/soilie-platform-grid-final/review-functional-use-pilot-v1
+node serverless/cloud_benchmark/render_staged_pilot.mjs $pilotRoot PATH_TO_WEBSITE/.codex/browser
+python -m serverless.cloud_benchmark.run_staged_pilot --root $pilotRoot --preflight-only
+```
+
+Only with explicit collection authorization, add `--authorize-review --workers 3`
+instead of `--preflight-only`. The runner resumes missing assignments only and
+halts on invalid or interrupted attempts. `--recover-completed` imports a saved,
+completed model response without making another call; it never replaces answers.
+Do not alter a frozen prompt or rerun a disagreement.
+
+After all 320 answers validate, `staged_pilot finalize --root ...` creates the
+local report, and `staged_pilot checkpoint --root ... --output ...` exports all
+answers with exact prompts, schemas, evidence and hashed context identifiers.
+If the pilot passes and its protocol remains unchanged, all 256 main judgments
+are reusable. Otherwise all answers remain development evidence. Controls never
+contribute preference votes. Neither outcome authorizes continuation, a version
+bump, push or deployment. This repeat check does not establish accuracy or
+population reliability.
+
 ## Design
 
 | Room preset | Local | AWS Lambda |

@@ -75,7 +75,7 @@ def comparable_inventory(first, second):
     return all(left[name] == right[name] for name in anchors)
 
 
-def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False):
+def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False, numbered=False):
     items = furniture(scene)
     boxes = [(item,Box(item)) for item in items]
     smallest_volume = min(box.volume for _, box in boxes)
@@ -83,12 +83,16 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
     label_seen = Counter()
     labels = {}
     volume_labels = []
+    key_labels = []
     # Instance numbering is based on geometry, not source-specific object IDs.
     for item, box in sorted(boxes, key=lambda pair: (presentation_label(pair[0]['label']), tuple(pair[1].points.mean(axis=0)))):
         base = presentation_label(item['label'])
         label_seen[base] += 1
         label = base + (f' {label_seen[base]}' if label_counts[base] > 1 else '')
         labels[item['id']] = label
+        key_labels.append((str(len(key_labels) + 1), base if numbered else label))
+        if numbered:
+            labels[item['id']] = key_labels[-1][0]
         volume_labels.append(f"{label} {box.volume / smallest_volume:.1f}×")
     regions = room_regions(scene["room"])
     floor = scene["room"]["floorZ"]
@@ -108,6 +112,7 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
     )
     for view, title, origin_y, project in views:
         label_boxes = []
+        overlays = []
         room3 = [[[x,y,floor] for x,y in region["polygon"]] for region in regions]
         projected = np.asarray([project(p) for ring in room3 for p in ring]
                                + [project(p) for _,box in boxes for p in box.points])
@@ -127,6 +132,10 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
             candidates = ((0, 0), (0, -18), (0, 18), (24, 0), (-24, 0),
                           (24, -18), (-24, -18), (24, 18), (-24, 18),
                           (0, -36), (0, 36), (42, 0), (-42, 0))
+            if numbered:
+                width = height = 26
+                candidates = sorted(((dx, dy) for dx in range(-84, 85, 28) for dy in range(-84, 85, 28)),
+                                    key=lambda value: (value[0] ** 2 + value[1] ** 2, value))
             y_min, y_max = origin_y + 18, origin_y + 276
             for dx, dy in candidates:
                 px = min(696 - width / 2, max(24 + width / 2, x + dx))
@@ -146,6 +155,8 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
                 lines.append(polygon([[x,y,floor] for x,y in ring],"#f2f4f6",1,"#314d62",2.2))
         for index,(item,box) in enumerate(sorted(boxes,key=lambda pair: float(pair[1].points.mean(axis=0)[0]+pair[1].points.mean(axis=0)[1]))):
             label = labels[item['id']]
+            if numbered:
+                lines.append(f'<g data-object="{label}">')
             color = PALETTE[int(hashlib.sha256(presentation_label(item['label']).encode()).hexdigest()[:8],16)%len(PALETTE)]
             if item["id"] in highlight_ids:
                 color = "#ed998c"
@@ -183,15 +194,35 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
                 end_x,end_y = point(arrow_end)
                 lines.append(f'<line class="front" x1="{start_x:.2f}" y1="{start_y:.2f}" x2="{end_x:.2f}" y2="{end_y:.2f}"/>')
             x,y = point(center)
+            if numbered:
+                lines.append('</g>')
+                # Draw all keys after all boxes, so later transparent faces can
+                # never cover earlier keys. The dot anchors each leader exactly.
+                label_x, label_y = label_position(x - 18, y - 18, label)
+                overlays.extend([
+                    f'<g data-object-ref="{label}"><line x1="{x:.2f}" y1="{y:.2f}" x2="{label_x:.2f}" y2="{label_y:.2f}" stroke="white" stroke-width="4"/>',
+                    f'<line x1="{x:.2f}" y1="{y:.2f}" x2="{label_x:.2f}" y2="{label_y:.2f}" stroke="#25384a" stroke-width="1.6"/>',
+                    f'<circle cx="{x:.2f}" cy="{y:.2f}" r="2.4" fill="#25384a"/>',
+                    f'<circle cx="{label_x:.2f}" cy="{label_y:.2f}" r="11" fill="white" stroke="#25384a" stroke-width="1.4"/>',
+                    f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="middle" dominant-baseline="central" style="font-size:14px;font-weight:bold">{label}</text></g>'])
+                continue
             label_x, label_y = label_position(x, y, label)
             if abs(label_x - x) + abs(label_y - y) > 3:
                 lines.append(f'<line x1="{x:.2f}" y1="{y:.2f}" x2="{label_x:.2f}" y2="{label_y:.2f}" stroke="#6b7d8c" stroke-width=".8"/>')
             lines.append(f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-opacity=".9">{escape(label)}</text>')
+        lines.extend(overlays)
     lines.extend(['<line x1="24" x2="696" y1="320" y2="320" stroke="#c2cbd3"/>',
                   '<line x1="24" x2="696" y1="640" y2="640" stroke="#c2cbd3"/>'])
     # Instructions belong to the assigned prompt, never inside a shared image.
     # Numeric volume evidence appears only in the proportions-task variant.
-    if show_volumes:
+    if numbered:
+        if len(key_labels) > 9 or show_volumes:
+            raise ValueError('Numbered panels use up to nine objects and separate numeric evidence')
+        lines.append('<text x="24" y="983" class="title">Object key (same numbers in every view)</text>')
+        for index, (key, label) in enumerate(key_labels):
+            x, y = 24 + (index % 3) * 224, 1008 + (index // 3) * 24
+            lines.append(f'<text data-key="{key}" x="{x}" y="{y}" style="font-size:14px">{key}. {escape(label)}</text>')
+    elif show_volumes:
         lines.extend(['<text x="24" y="1004">Relative bounding-box volumes, normalized to this room’s smallest object:</text>',
                   f'<text x="24" y="1022">{escape(" · ".join(volume_labels[:3]))}</text>',
                   f'<text x="24" y="1040">{escape(" · ".join(volume_labels[3:]))}</text>' if len(volume_labels) > 3 else '',

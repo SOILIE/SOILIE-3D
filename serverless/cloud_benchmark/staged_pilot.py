@@ -55,32 +55,32 @@ def write_new(path, value):
         pending.unlink()
 
 
-def ordered(rows, salt):
-    return sorted(rows, key=lambda row: digest([SEED, salt, row["pairId"]]))
+def ordered(rows, salt, seed=SEED):
+    return sorted(rows, key=lambda row: digest([seed, salt, row["pairId"]]))
 
 
-def select_pairs(cases, excluded):
+def select_pairs(cases, excluded, seed=SEED):
     selected = []
     for stratum in STRATA:
         available = [row for row in cases if (row["baseline"], row["roomType"]) == stratum
                      and row["pairId"] not in excluded]
         if len(available) < 8:
             raise ValueError("Insufficient uninspected pairs in a stratum")
-        selected.extend(ordered(available, "pilot-selection")[:8])
+        selected.extend(ordered(available, "pilot-selection", seed)[:8])
     if len({row["pairId"] for row in selected}) != 32:
         raise ValueError("Duplicate selected pair")
     return selected
 
 
-def assignments(selected, reviewer, profile):
+def assignments(selected, reviewer, profile, version=VERSION, seed=SEED):
     result = []
     for stratum in STRATA:
-        group = ordered([row for row in selected if (row["baseline"], row["roomType"]) == stratum], reviewer + ":sides")
+        group = ordered([row for row in selected if (row["baseline"], row["roomType"]) == stratum], reviewer + ":sides", seed)
         originals = []
         for index, case in enumerate(group):
             images = case.get("profileImages", {}).get(profile, case)
             left, right = ("baseline", "soilie") if index % 2 else ("soilie", "baseline")
-            row = {"assignmentId": digest([VERSION, reviewer, case["pairId"], "main"])[:24],
+            row = {"assignmentId": digest([version, reviewer, case["pairId"], "main"])[:24],
                    "reviewerId": reviewer, "profile": profile, "pairId": case["pairId"],
                    "baseline": case["baseline"], "roomType": case["roomType"], "title": case["title"],
                    "leftCondition": case["baseline"] if left == "baseline" else "soilie",
@@ -91,25 +91,31 @@ def assignments(selected, reviewer, profile):
             originals.append(row)
             result.append(row)
         # Two controls per baseline x room, frozen independently of outcomes.
-        for original in ordered(originals, reviewer + ":controls")[:2]:
+        for original in ordered(originals, reviewer + ":controls", seed)[:2]:
             row = deepcopy(original)
-            row.update(assignmentId=digest([VERSION, reviewer, original["pairId"], "repeat"])[:24], repeatOf=original["assignmentId"])
+            row.update(assignmentId=digest([version, reviewer, original["pairId"], "repeat"])[:24], repeatOf=original["assignmentId"])
             for a, b in (("leftCondition", "rightCondition"), ("leftSource", "rightSource")):
                 row[a], row[b] = row[b], row[a]
             result.append(row)
-    return sorted(result, key=lambda row: digest([SEED, "order", row["assignmentId"]]))
+    return sorted(result, key=lambda row: digest([seed, "order", row["assignmentId"]]))
 
 
-def prepare(source, output):
+def prepare(source, output, version=VERSION, previous=None):
+    from serverless.study import structured_rubric as v2
+    if version not in (VERSION, v2.VERSION):
+        raise ValueError('Unknown pilot rubric version')
+    structured = version == v2.VERSION
+    seed = v2.SEED if structured else SEED
     source, output = Path(source).resolve(), Path(output).resolve()
     if output.exists():
         raise ValueError("Use a new pilot directory; frozen protocols are never overwritten")
     if not read(source / "preflight.json")["passed"]:
         raise ValueError("Source input preflight failed")
-    cases, excluded, retained, source_hashes = [], set(), [], {}
+    cases, excluded, retained, source_hashes, source_evidence = [], set(), [], {}, {}
     for name in ("set-a", "set-b"):
         protocol_path = source / name / "protocol.json"
         protocol = read(protocol_path)
+        source_evidence.update({name + ':' + row['caseId']: row for row in protocol.get('stimulusEvidence', [])})
         source_hashes[name + "/protocol.json"] = digest(protocol_path.read_bytes())
         store = SQLiteStudyStore(source / name / "private/pilot.sqlite3")
         for session in store.sessions():
@@ -135,22 +141,67 @@ def prepare(source, output):
                           "roomType": row["balanceStratum"], "sourceStudyVersion": protocol["studyVersion"]})
     if len(cases) != 480 or len(retained) != 4:
         raise ValueError("Expected 480 frozen pairs and two retained reviewers per baseline")
-    selected = select_pairs(cases, excluded)
+    if structured:
+        if previous is None:
+            raise ValueError('V2 requires its completed v1 development checkpoint')
+        prior = load_frozen(previous)
+        prior_report = read(Path(previous) / 'pilot-results.json')
+        if (prior.get('rubricVersion') != VERSION or not prior_report['complete']
+                or prior_report['protocolSha256'] != digest(prior)
+                or prior['retainedRoomFunctionSha256'] != digest(retained)
+                or prior['fullPairSetSha256'] != digest(sorted(row['pairId'] for row in cases))):
+            raise ValueError('Development checkpoint does not match the fixed sample')
+        excluded.update(prior['selectedPairs'])
+        excluded.update(prior['excludedCalibrationPairs'])
+        if len(excluded) != 70:
+            raise ValueError('The approved v2 exclusion set must contain 70 development pairs')
+    selected = select_pairs(cases, excluded, seed)
+    source_images, inventories, scene_provenance = {}, {}, {}
+    if structured:
+        from serverless.benchmark.numbered_evidence import inventory
+        from serverless.benchmark.stimuli import diagram
+        scenes_path = source / 'source-scenes.json'
+        scene_source = read(scenes_path)
+        scenes = {row['id']: row for row in scene_source['scenes']}
+        source_hashes['source-scenes.json'] = digest(scenes_path.read_bytes())
+        for case in selected:
+            evidence = source_evidence[case['pairId']]
+            case.pop('profileImages', None)
+            for role, field in (('soilie', 'relationImage'), ('baseline', 'comparisonImage')):
+                scene = scenes[evidence[role + 'Scene']]
+                if digest(scene) != evidence[role + 'Digest']:
+                    raise ValueError('Scene geometry/provenance changed since pair selection')
+                content = diagram(scene, numbered=True).encode('utf-8')
+                url = '/benchmarks/stimuli/' + digest(content)[:24] + '.svg'
+                target = output / 'source-images' / Path(url).name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if url not in source_images:
+                    with target.open('xb') as stream:
+                        stream.write(content)
+                    source_images[url] = {'file': 'source-images/' + target.name, 'sha256': digest(content)}
+                    inventories[url] = inventory(scene)
+                scene_provenance[case['pairId'] + ':' + role] = {'sceneId': scene['id'], 'sceneSha256': digest(scene), 'image': url}
+                case[field] = url
     all_assignments, reviewers = [], []
     for index, profile in enumerate(profile for profile in PROFILES for _ in range(2)):
         reviewer = f"reviewer-{index + 1:02}"
-        exact = prompt(profile) + "\n\n" + OUTPUT_INSTRUCTION
-        reviewers.append({"reviewerId": reviewer, "profile": profile, "rubricVersion": VERSION,
+        exact = prompt(profile, version) + "\n\n" + (v2.CHECKLIST if structured else OUTPUT_INSTRUCTION)
+        system = SYSTEM.replace('attached image only', 'attached image and supplied neutral case evidence only') if structured else SYSTEM
+        reviewers.append({"reviewerId": reviewer, "profile": profile, "rubricVersion": version,
                           "reviewPrompt": exact, "promptHash": hashlib.sha256(exact.encode()).hexdigest(),
-                          "systemPrompt": SYSTEM, "systemPromptHash": hashlib.sha256(SYSTEM.encode()).hexdigest(),
+                          "systemPrompt": system, "systemPromptHash": hashlib.sha256(system.encode()).hexdigest(),
                           "reportedModel": "GPT-5.6 Sol", "reportedReasoningEffort": "Extra High",
                           "model": MODEL, "reasoningEffort": EFFORT, "collectionStatus": "new_pilot"})
-        all_assignments.extend(assignments(selected, reviewer, profile))
+        if structured:
+            reviewers[-1].update(checklistInstructions=v2.CHECKLIST, responseSchema=v2.schema(SCHEMA),
+                                 stimulusVersion=v2.STIMULUS_VERSION, evidenceInstruction=v2.EVIDENCE_INSTRUCTION)
+        all_assignments.extend(assignments(selected, reviewer, profile, version, seed))
     # Copy only the neutral SVG inputs required for the pilot. No source scenes,
     # generator names, prior answers or private routing enter an execution folder.
     sources = sorted({row[field] for row in all_assignments for field in ("leftSource", "rightSource")})
-    source_images = {}
     for url in sources:
+        if structured:
+            continue
         if not url.startswith("/benchmarks/stimuli/") or Path(url).suffix != ".svg":
             raise ValueError("Unexpected source image")
         data = (source / "site" / url.lstrip("/")).read_bytes()
@@ -161,19 +212,44 @@ def prepare(source, output):
         with target.open("xb") as stream:
             stream.write(data)
         source_images[url] = {"file": "source-images/" + target.name, "sha256": digest(data)}
-    manifest = {"schemaVersion": 1, "rubricVersion": VERSION, "stage": "pilot",
-                "seed": SEED, "sourceProtocolHashes": source_hashes, "sourceRoot": str(source),
+    manifest = {"schemaVersion": 2 if structured else 1, "rubricVersion": version, "stage": "pilot",
+                "seed": seed, "sourceProtocolHashes": source_hashes, "sourceRoot": str(source),
                 "selectedPairs": [row["pairId"] for row in selected], "excludedCalibrationPairs": sorted(excluded),
                 "fullPairIds": [row["pairId"] for row in cases], "fullPairSetSha256": digest(sorted(row["pairId"] for row in cases)),
                 "reviewers": reviewers, "assignments": all_assignments, "sourceImages": source_images,
                 "acceptance": {"perDimensionAgreementsRequired": 15, "perDimensionComparisons": 16},
                 "expectedMainJudgements": 256, "expectedControls": 64, "model": MODEL, "reasoningEffort": EFFORT,
-                "outputSchema": SCHEMA, "retainedRoomFunctionSha256": digest(retained),
+                "outputSchema": v2.schema(SCHEMA) if structured else SCHEMA, "retainedRoomFunctionSha256": digest(retained),
                 "releaseEligible": False, "fullCampaignAuthorized": False}
+    if structured:
+        from serverless.benchmark.numbered_evidence import task_evidence
+        manifest.update(stimulusVersion=v2.STIMULUS_VERSION, sceneProvenance=scene_provenance,
+                        inventories=inventories, evidenceInstruction=v2.EVIDENCE_INSTRUCTION,
+                        developmentProtocolSha256=digest(prior))
+        for row in all_assignments:
+            row['evidence'] = {side: task_evidence(inventories[row[side + 'Source']], row['profile']) for side in ('left', 'right')}
+            row['evidence']['requiredObservations'] = [{'side': side, 'objects': list(ids)}
+                                                      for side, ids in v2.checklist_keys(row['evidence'], row['profile'])]
+            row['evidenceSha256'] = digest(row['evidence'])
+            row['deliveryPromptHash'] = digest(delivery_prompt(manifest, row).encode('utf-8'))
+        for reviewer in reviewers:
+            example = next(row for row in all_assignments if row['reviewerId'] == reviewer['reviewerId'] and not row['repeatOf'])
+            reviewer['exampleDelivery'] = {'assignmentId': example['assignmentId'],
+                                          'prompt': delivery_prompt(manifest, example),
+                                          'promptHash': example['deliveryPromptHash'],
+                                          'packetPath': 'packets/' + example['assignmentId'] + '.png'}
     write_new(output / "private/retained-room-function.json", retained)
     write_new(output / "protocol.json", manifest)
     write_new(output / "protocol-sha256.json", {"sha256": digest(manifest)})
     return manifest
+
+
+def delivery_prompt(protocol, assignment):
+    reviewer = next(row for row in protocol['reviewers'] if row['reviewerId'] == assignment['reviewerId'])
+    result = reviewer['reviewPrompt']
+    if 'evidence' in assignment:
+        result += '\n\n' + protocol['evidenceInstruction'] + '\n' + json.dumps(assignment['evidence'], sort_keys=True, ensure_ascii=True)
+    return result
 
 
 def load_frozen(root):
@@ -186,7 +262,15 @@ def load_frozen(root):
     return protocol
 
 
-def validate_answer(answer):
+def validate_answer(answer, version=VERSION, evidence=None, profile=None):
+    if version == 'functional-use-v2':
+        from serverless.study.structured_rubric import validate_observations
+        if not isinstance(answer, dict) or set(answer) != set(SCHEMA['required']) | {'observations'}:
+            raise ValueError('Invalid structured response fields')
+        validate_observations(answer, evidence, profile)
+        answer = {key: answer[key] for key in SCHEMA['required']}
+    elif version != VERSION:
+        raise ValueError('Unknown answer schema version')
     if (not isinstance(answer, dict) or set(answer) != set(SCHEMA["required"])
             or answer["judgement"] not in SCHEMA["properties"]["judgement"]["enum"]
             or answer["errorChoice"] not in SCHEMA["properties"]["errorChoice"]["enum"]
@@ -195,27 +279,34 @@ def validate_answer(answer):
         raise ValueError("Invalid isolated judgment")
 
 
-def validate_receipt(receipt, protocol, reviewer, packet):
+def validate_receipt(receipt, protocol, reviewer, packet, assignment=None):
     if (receipt["model"] != protocol["model"] or receipt["reasoningEffort"] != protocol["reasoningEffort"]
             or receipt["promptHash"] != reviewer["promptHash"] or receipt["systemPromptHash"] != reviewer["systemPromptHash"]
             or receipt["imageSha256"] != packet["imageSha256"] or receipt.get("isolatedContext") is not True
             or not receipt.get("threadId")):
         raise ValueError("Judgment delivery/provenance mismatch")
+    if assignment and 'deliveryPromptHash' in assignment:
+        for field in ('deliveryPromptHash', 'evidenceSha256'):
+            if receipt.get(field) != assignment[field]:
+                raise ValueError('Case-specific delivery provenance mismatch')
 
 
 def record(root, assignment_id, answer, receipt):
     protocol = load_frozen(root)
     assignment = next(row for row in protocol["assignments"] if row["assignmentId"] == assignment_id)
     reviewer = next(row for row in protocol["reviewers"] if row["reviewerId"] == assignment["reviewerId"])
-    validate_answer(answer)
+    version = protocol.get('rubricVersion', VERSION)
+    validate_answer(answer, version, assignment.get('evidence'), assignment['profile'])
     packet = read(Path(root) / "packets/index.json")[assignment_id]
-    validate_receipt(receipt, protocol, reviewer, packet)
+    validate_receipt(receipt, protocol, reviewer, packet, assignment)
     path = Path(root) / "responses" / (assignment_id + ".json")
-    write_new(path, {**assignment, **answer, "rubricVersion": VERSION, "promptHash": reviewer["promptHash"], "receipt": receipt})
+    write_new(path, {**assignment, **answer, "rubricVersion": version, "promptHash": reviewer["promptHash"], "receipt": receipt})
 
 
 def results(root):
     protocol = load_frozen(root)
+    version = protocol.get('rubricVersion', VERSION)
+    fields = protocol.get('outputSchema', SCHEMA)['required']
     assignments_by_id = {row["assignmentId"]: row for row in protocol["assignments"]}
     reviewers = {row['reviewerId']: row for row in protocol['reviewers']}
     packets = read(Path(root) / 'packets/index.json') if (Path(root) / 'packets/index.json').exists() else {}
@@ -225,9 +316,9 @@ def results(root):
         key = row["assignmentId"]
         if key not in assignments_by_id or key in answers or any(row[field] != value for field, value in assignments_by_id[key].items()):
             raise ValueError("Unknown, duplicate or changed response assignment")
-        validate_answer({field: row[field] for field in SCHEMA["required"]})
-        validate_receipt(row['receipt'], protocol, reviewers[row['reviewerId']], packets[key])
-        if row['promptHash'] != reviewers[row['reviewerId']]['promptHash'] or row['rubricVersion'] != VERSION:
+        validate_answer({field: row[field] for field in fields}, version, row.get('evidence'), row['profile'])
+        validate_receipt(row['receipt'], protocol, reviewers[row['reviewerId']], packets[key], row)
+        if row['promptHash'] != reviewers[row['reviewerId']]['promptHash'] or row['rubricVersion'] != version:
             raise ValueError('Saved prompt provenance changed')
         if row['receipt'].get('runner') == 'codex exec --ephemeral':
             # Verify saved answers against actual runner output, not just values
@@ -238,7 +329,7 @@ def results(root):
             raw_events = (execution / 'events.jsonl').read_text(encoding='utf-8')
             if digest(raw_events.encode('utf-8')) != row['receipt']['eventsSha256']:
                 raise ValueError('Runner transcript changed')
-            if read(execution / 'answer.json') != {field: row[field] for field in SCHEMA['required']}:
+            if read(execution / 'answer.json') != {field: row[field] for field in fields}:
                 raise ValueError('Saved judgment differs from model output')
             events = [json.loads(line) for line in raw_events.splitlines() if line.strip().startswith('{')]
             messages = [event['item']['text'] for event in events if event.get('type') == 'item.completed'
@@ -249,6 +340,13 @@ def results(root):
             for field in ('model', 'reasoningEffort', 'promptHash', 'systemPromptHash', 'imageSha256'):
                 if invocation[field] != row['receipt'][field]:
                     raise ValueError('Invocation provenance differs from saved judgment')
+            if 'deliveryPromptHash' in row:
+                expected_prompt = delivery_prompt(protocol, row)
+                if (digest(expected_prompt.encode('utf-8')) != row['deliveryPromptHash']
+                        or (execution / 'prompt.txt').read_text(encoding='utf-8') != expected_prompt
+                        or invocation.get('deliveryPromptHash') != row['deliveryPromptHash']
+                        or invocation.get('evidenceSha256') != row['evidenceSha256']):
+                    raise ValueError('Delivered case prompt differs from frozen evidence')
         thread = row["receipt"]["threadId"]
         if thread in threads:
             raise ValueError("Judgment contexts were reused")
@@ -266,6 +364,10 @@ def results(root):
         controls.append({"assignmentId": row["assignmentId"], "repeatOf": row["repeatOf"], "profile": row["profile"],
                          "reviewerId": row["reviewerId"], "baseline": row["baseline"], "roomType": row["roomType"],
                          "agreed": choose(row) == choose(original)})
+        if version == 'functional-use-v2':
+            first, second = choose(original), choose(row)
+            controls[-1]['transition'] = ('same_tie' if first == second == 'tie' else 'same_winner' if first == second
+                                         else 'tie_preference_change' if 'tie' in (first, second) else 'winner_reversal')
 
     def group(field):
         values = defaultdict(list)
@@ -287,7 +389,7 @@ def results(root):
     complete = len(answers) == len(assignments_by_id) == 320
     accepted = complete and all(dimensions.get(profile, {}).get("comparisons") == 16
                                 and dimensions[profile]["agreements"] >= 15 for profile in PROFILES)
-    return {"rubricVersion": VERSION, "complete": complete, "pilotAccepted": accepted,
+    summary = {"rubricVersion": version, "complete": complete, "pilotAccepted": accepted,
             "releaseEligible": False, "responses": len(answers), "mainJudgements": sum(not row["repeatOf"] for row in answers.values()),
             "agreements": sum(row["agreed"] for row in controls), "comparisons": len(controls),
             "byDimension": dimensions, "byReviewer": group("reviewerId"), "byBaseline": group("baseline"),
@@ -296,6 +398,18 @@ def results(root):
             "remainingAssignmentIds": [key for key in assignments_by_id if key not in answers],
             "retention": "All main pilot judgments may be retained only if accepted and the protocol is unchanged; controls never add preference votes.",
             "interpretation": "Repeat consistency measures observed stability, not correctness or population reliability. No full campaign or publication is authorized."}
+    if version == 'functional-use-v2':
+        def transitions(rows):
+            counts = Counter(row['transition'] for row in rows)
+            decisive = counts['same_winner'] + counts['winner_reversal']
+            return {**{key: counts[key] for key in ('same_tie', 'same_winner', 'tie_preference_change', 'winner_reversal')},
+                    'comparisons': len(rows), 'decisiveComparisons': decisive,
+                    'decisiveAgreementPct': 100 * counts['same_winner'] / decisive if decisive else None}
+        summary['repeatTransitions'] = {'overall': transitions(controls)}
+        for field in ('profile', 'reviewerId', 'baseline'):
+            summary['repeatTransitions'][field] = {key: transitions([row for row in controls if row[field] == key])
+                                                     for key in sorted({row[field] for row in controls})}
+    return summary
 
 
 def finalize(root):
@@ -316,6 +430,10 @@ def finalize(root):
                             'excludedCalibrationPairs': protocol['excludedCalibrationPairs'], 'qualityScoresUsed': False},
               "retainedRoomFunction": [{key: value for key, value in row.items() if key != "responses"}
                                        for row in read(root / "private/retained-room-function.json")]}
+    if protocol.get('rubricVersion') == 'functional-use-v2':
+        report.update(stimulusVersion=protocol['stimulusVersion'], responseSchema=protocol['outputSchema'],
+                      evidenceInstruction=protocol['evidenceInstruction'], sceneProvenance=protocol['sceneProvenance'],
+                      developmentProtocolSha256=protocol['developmentProtocolSha256'])
     # This is a checkpoint, NOT an AI release. The existing publication gate is
     # deliberately untouched. All answers survive even when calibration fails.
     write_new(root / "pilot-results.json", report)
@@ -385,9 +503,11 @@ if __name__ == "__main__":
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--source", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument('--version', choices=(VERSION, 'functional-use-v2'), default=VERSION)
+    parser.add_argument('--previous', type=Path)
     args = parser.parse_args()
     if args.action == "prepare":
-        result = prepare(args.source, args.root)
+        result = prepare(args.source, args.root, args.version, args.previous)
         print(json.dumps({"pairs": len(result["selectedPairs"]), "assignments": len(result["assignments"])}))
     elif args.action == 'checkpoint':
         if not args.output:

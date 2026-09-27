@@ -275,8 +275,9 @@ def aggregate(store, protocol):
         decision_rubric = FOCUS_ONLY_RUBRIC if protocol.get("decisionScope") == "focus_only" else RUBRIC
         dimension_rubric = FOCUS_PROFILES.get(session["promptProfile"])
         if protocol.get("rubricVersion"):
-            from serverless.study.clarified_rubric import COMMON, DIMENSIONS
-            decision_rubric, dimension_rubric = COMMON, DIMENSIONS[session["promptProfile"]]
+            from serverless.study.clarified_rubric import rubric
+            common, dimensions = rubric(protocol['rubricVersion'])
+            decision_rubric, dimension_rubric = common, dimensions[session["promptProfile"]]
         reviewers.append({"reviewerId":reviewer,"profile":session["promptProfile"],"model":session["model"],
                           "reportedModel":configuration.get("model", session["model"]),
                           "reportedReasoningEffort":configuration.get("reasoningEffort"),

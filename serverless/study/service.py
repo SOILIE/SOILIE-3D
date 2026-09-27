@@ -71,11 +71,11 @@ EVIDENCE_RUBRICS = {
 
 def review_instructions(document, profile=None):
     if document.get("rubricVersion"):
-        from serverless.study.clarified_rubric import VERSION, prompt
-        if (document["rubricVersion"] != VERSION or document.get("evidenceMode") != "visual_only"
+        from serverless.study.clarified_rubric import prompt
+        if (document.get("evidenceMode") != "visual_only"
                 or document.get("decisionScope") != "focus_only"):
             raise ValueError("Unknown or incompatible versioned rubric")
-        return prompt(profile)
+        return prompt(profile, document['rubricVersion'])
     mode = document.get("evidenceMode", "visual_only")
     if mode not in EVIDENCE_RUBRICS:
         raise ValueError("Unknown study evidence mode")

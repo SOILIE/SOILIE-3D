@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 
-from serverless.cloud_benchmark.staged_pilot import (digest, load_frozen, read, record, results, write_new)
+from serverless.cloud_benchmark.staged_pilot import (digest, load_frozen, read, record, results, write_new, delivery_prompt)
 
 
 def verify_panel_pixels(image, panel, x):
@@ -25,10 +25,20 @@ def preflight(root):
     from PIL import Image
     root = Path(root)
     protocol = load_frozen(root)
+    for source in protocol['sourceImages'].values():
+        if digest((root / source['file']).read_bytes()) != source['sha256']:
+            raise ValueError('Frozen source SVG changed')
     index = read(root / 'packets/index.json')
     if set(index) != {row['assignmentId'] for row in protocol['assignments']}:
         raise ValueError('Incomplete or extra reviewer packets')
     for row in protocol['assignments']:
+        if 'evidence' in row:
+            if digest(row['evidence']) != row['evidenceSha256'] or digest(delivery_prompt(protocol, row).encode('utf-8')) != row['deliveryPromptHash']:
+                raise ValueError('Frozen case evidence or prompt changed')
+            if row['repeatOf']:
+                original_row = next(value for value in protocol['assignments'] if value['assignmentId'] == row['repeatOf'])
+                if any(row['evidence'][side] != original_row['evidence'][other] for side, other in (('left', 'right'), ('right', 'left'))):
+                    raise ValueError('Reversed evidence did not swap the same rooms')
         packet = index[row['assignmentId']]
         raw = (root / packet['file']).read_bytes()
         if digest(raw) != packet['imageSha256']:
@@ -103,7 +113,11 @@ def run_one(root, protocol, row, executable, stop):
     if digest((workspace / 'pair.png').read_bytes()) != packet['imageSha256']:
         raise ValueError('Delivery image changed')
     args = command(executable, workspace, reviewer)
-    write_new(workspace / 'invocation.json', {'model': reviewer['model'], 'reasoningEffort': reviewer['reasoningEffort'],
+    prompt_text = delivery_prompt(protocol, row)
+    extra = {field: row[field] for field in ('deliveryPromptHash', 'evidenceSha256') if field in row}
+    if extra:
+        (workspace / 'prompt.txt').write_text(prompt_text, encoding='utf-8')
+    write_new(workspace / 'invocation.json', {**extra, 'model': reviewer['model'], 'reasoningEffort': reviewer['reasoningEffort'],
         'args': args, 'promptHash': reviewer['promptHash'], 'systemPromptHash': reviewer['systemPromptHash'],
         'imageSha256': packet['imageSha256'], 'newConversation': True})
     started = time.monotonic()
@@ -112,7 +126,7 @@ def run_one(root, protocol, row, executable, stop):
     # must not silently switch this evaluation to separately billed API usage.
     for key in ('OPENAI_API_KEY', 'CODEX_API_KEY'):
         environment.pop(key, None)
-    result = subprocess.run(args, input=reviewer['reviewPrompt'], capture_output=True, text=True,
+    result = subprocess.run(args, input=prompt_text, capture_output=True, text=True,
                             encoding='utf-8', cwd=workspace, env=environment, timeout=900,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     (workspace / 'events.jsonl').write_text(result.stdout, encoding='utf-8')
@@ -121,7 +135,7 @@ def run_one(root, protocol, row, executable, stop):
         raise ValueError(f'Codex exited {result.returncode}; inspect the saved attempt')
     thread, usage = parse_events(result.stdout)
     answer = read(workspace / 'answer.json')
-    receipt = {'model': reviewer['model'], 'reasoningEffort': reviewer['reasoningEffort'],
+    receipt = {**extra, 'model': reviewer['model'], 'reasoningEffort': reviewer['reasoningEffort'],
                'promptHash': reviewer['promptHash'], 'systemPromptHash': reviewer['systemPromptHash'],
                'imageSha256': packet['imageSha256'], 'isolatedContext': True, 'threadId': thread,
                'usage': usage, 'durationSeconds': time.monotonic() - started,
@@ -184,6 +198,7 @@ def recover_completed(root):
         thread, usage = parse_events(raw)
         invocation = read(workspace / 'invocation.json')
         receipt = {name: invocation[name] for name in ('model', 'reasoningEffort', 'promptHash', 'systemPromptHash', 'imageSha256')}
+        receipt.update({name: invocation[name] for name in ('deliveryPromptHash', 'evidenceSha256') if name in invocation})
         receipt.update(isolatedContext=True, threadId=thread, usage=usage,
                        eventsSha256=digest(raw.encode('utf-8')), runner='codex exec --ephemeral', recoveredExistingOutput=True)
         record(root, key, read(workspace / 'answer.json'), receipt)

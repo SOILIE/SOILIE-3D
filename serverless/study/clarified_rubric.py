@@ -67,7 +67,17 @@ DIMENSIONS = {
 }
 
 
-def prompt(profile):
-    if profile not in DIMENSIONS:
+def rubric(version=VERSION):
+    if version == VERSION:
+        return COMMON, DIMENSIONS
+    if version == 'functional-use-v2':
+        from serverless.study.structured_rubric import COMMON as common, DIMENSIONS as dimensions
+        return common, dimensions
+    raise ValueError('Unknown frozen rubric version')
+
+
+def prompt(profile, version=VERSION):
+    common, dimensions = rubric(version)
+    if profile not in dimensions:
         raise ValueError("Clarified rubric applies only to the four revised dimensions")
-    return COMMON + "Assigned dimension: " + profile + ". " + DIMENSIONS[profile]
+    return common + "Assigned dimension: " + profile + ". " + dimensions[profile]
