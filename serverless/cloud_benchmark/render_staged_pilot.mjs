@@ -28,8 +28,14 @@ try {
     panels[url] = { file, sha256: hash(png), data: png.toString('base64') };
   }
   const index = {};
+  const composed = new Map();
   for (const row of protocol.assignments) {
     const left = panels[row.leftSource], right = panels[row.rightSource];
+    const cacheKey = JSON.stringify([left.sha256, right.sha256, row.title]);
+    if (protocol.stage === 'full_counterbalanced' && composed.has(cacheKey)) {
+      index[row.assignmentId] = composed.get(cacheKey);
+      continue;
+    }
     // Render labels separately; no case IDs, reviewer IDs or generator names
     // occur in the image. drawImage copies the 720x1080 pixels without scaling.
     const data = await page.evaluate(async ({ left, right, title }) => {
@@ -50,6 +56,7 @@ try {
     await writeFile(join(root, file), bytes, { flag: 'wx' });
     index[row.assignmentId] = { file, imageSha256: hash(bytes),
       leftPanel: left.file, rightPanel: right.file, leftPanelSha256: left.sha256, rightPanelSha256: right.sha256 };
+    composed.set(cacheKey, index[row.assignmentId]);
   }
   await writeFile(join(root, 'packets/index.json'), JSON.stringify(index, null, 2) + '\n', { flag: 'wx' });
   console.log(JSON.stringify({ panels: Object.keys(panels).length, packets: Object.keys(index).length }));

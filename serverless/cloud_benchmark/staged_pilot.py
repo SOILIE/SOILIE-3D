@@ -263,7 +263,7 @@ def load_frozen(root):
 
 
 def validate_answer(answer, version=VERSION, evidence=None, profile=None):
-    if version == 'functional-use-v2':
+    if version in ('functional-use-v2', 'functional-use-v3'):
         from serverless.study.structured_rubric import validate_observations
         if not isinstance(answer, dict) or set(answer) != set(SCHEMA['required']) | {'observations'}:
             raise ValueError('Invalid structured response fields')

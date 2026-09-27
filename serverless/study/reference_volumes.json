@@ -1,0 +1,14 @@
+{
+  "version": "catalog-volume-examples-v1",
+  "scope": "Illustrative assembled-product envelope volumes from one retailer, not a representative furniture distribution or acceptable-size limits. Selected by named product/category, not by fitting review outcomes. Source dimensions are inches; volumes use exact 0.0254 m/in conversion.",
+  "products": [
+    {"id":"lack-small","category":"coffee table","dimensionsIn":[35.375,21.625,17.75],"source":"https://www.ikea.com/us/en/p/lack-coffee-table-white-90449905/"},
+    {"id":"lack-large","category":"coffee table","dimensionsIn":[46.5,30.75,17.75],"source":"https://www.ikea.com/us/en/p/lack-coffee-table-white-80449901/"},
+    {"id":"kivik-loveseat","category":"sofa","dimensionsIn":[74.75,37.375,32.625],"source":"https://www.ikea.com/us/en/files/pdf/f1/e0/f1e0d0f8/kivik_april_2022_np.pdf","page":2},
+    {"id":"kivik-three-seat","category":"sofa","dimensionsIn":[89.75,37.375,32.625],"source":"https://www.ikea.com/us/en/files/pdf/f1/e0/f1e0d0f8/kivik_april_2022_np.pdf","page":2},
+    {"id":"poang-armchair","category":"chair","dimensionsIn":[26.75,32.25,39.375],"source":"https://www.ikea.com/us/en/files/pdf/d4/c2/d4c28e41/poang_oct_2023.pdf","page":4},
+    {"id":"poang-rocking-chair","category":"chair","dimensionsIn":[26.75,37,37.375],"source":"https://www.ikea.com/us/en/files/pdf/d4/c2/d4c28e41/poang_oct_2023.pdf","page":4},
+    {"id":"linnmon-adils","category":"table","alsoCategories":["desk"],"dimensionsIn":[39.375,23.625,29.125],"source":"https://www.ikea.com/us/en/p/linnmon-adils-table-white-s29932181/"},
+    {"id":"billy-low","category":"shelf","dimensionsIn":[31.5,11,41.75],"source":"https://www.ikea.com/us/en/p/billy-bookcase-white-90522043/"}
+  ]
+}

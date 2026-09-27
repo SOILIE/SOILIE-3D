@@ -75,7 +75,7 @@ def comparable_inventory(first, second):
     return all(left[name] == right[name] for name in anchors)
 
 
-def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False, numbered=False):
+def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False, numbered=False, clear_fronts=False):
     items = furniture(scene)
     boxes = [(item,Box(item)) for item in items]
     smallest_volume = min(box.volume for _, box in boxes)
@@ -113,6 +113,7 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
     for view, title, origin_y, project in views:
         label_boxes = []
         overlays = []
+        arrows = []
         room3 = [[[x,y,floor] for x,y in region["polygon"]] for region in regions]
         projected = np.asarray([project(p) for ring in room3 for p in ring]
                                + [project(p) for _,box in boxes for p in box.points])
@@ -126,6 +127,26 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
         def polygon(points,fill,opacity=1,stroke="#526679",width=1):
             coords = " ".join(f"{x:.2f},{y:.2f}" for x,y in map(point,points))
             return f'<polygon points="{coords}" fill="{fill}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="{width}"/>'
+        # Reserve every arrow before placing any key. Screen-space lengths are
+        # presentation aids, never changes to geometry or functional headings.
+        if clear_fronts and show_fronts:
+            from shapely.geometry import LineString, box as rectangle
+            for item, bounds in boxes:
+                front = functional_front(scene, item)
+                if front is None:
+                    continue
+                center = bounds.points.mean(axis=0)
+                if view == 'plan':
+                    center[2] = floor
+                end = center.copy()
+                end[:2] += np.asarray(front)
+                start = np.asarray(point(center))
+                direction = np.asarray(point(end)) - start
+                direction /= np.linalg.norm(direction)
+                tip = start + direction * 38
+                # Includes the arrowhead (which extends beyond the SVG line).
+                reserved = LineString([start, tip + direction * 5]).buffer(11)
+                arrows.append((labels[item['id']], start, tip, reserved))
         def label_position(x, y, label):
             """Keep dense labels legible without moving the depicted geometry."""
             width, height = max(24, len(label) * 7), 15
@@ -136,16 +157,25 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
                 width = height = 26
                 candidates = sorted(((dx, dy) for dx in range(-84, 85, 28) for dy in range(-84, 85, 28)),
                                     key=lambda value: (value[0] ** 2 + value[1] ** 2, value))
+                if clear_fronts:
+                    # Exhaust the full panel rather than silently placing a key
+                    # on a heading when furniture is unusually crowded.
+                    candidates += sorted(((px-x, py-y) for px in range(44, 677, 28)
+                                          for py in range(origin_y+40, origin_y+256, 28)),
+                                         key=lambda value: (value[0]**2 + value[1]**2, value))
             y_min, y_max = origin_y + 18, origin_y + 276
             for dx, dy in candidates:
                 px = min(696 - width / 2, max(24 + width / 2, x + dx))
                 py = min(y_max - height / 2, max(y_min + height / 2, y + dy))
                 box = (px - width / 2 - 3, py - height / 2 - 2,
                        px + width / 2 + 3, py + height / 2 + 2)
-                if all(box[2] < old[0] or box[0] > old[2] or box[3] < old[1] or box[1] > old[3]
-                       for old in label_boxes):
+                if (all(box[2] < old[0] or box[0] > old[2] or box[3] < old[1] or box[1] > old[3]
+                        for old in label_boxes)
+                        and (not clear_fronts or all(not rectangle(*box).intersects(a[3]) for a in arrows))):
                     label_boxes.append(box)
                     return px, py
+            if clear_fronts:
+                raise ValueError('Cannot place a number clear of all arrows')
             label_boxes.append((x - width / 2, y - height / 2, x + width / 2, y + height / 2))
             return x, y
         lines.append(f'<text x="24" y="{origin_y}" class="title">{title}</text>')
@@ -181,7 +211,7 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
             if view == "plan":
                 center[2] = floor
             front = functional_front(scene, item) if show_fronts else None
-            if front is not None:
+            if front is not None and not clear_fronts:
                 front = np.asarray(front,dtype=float)
                 length = float(np.linalg.norm(front))
                 if length <= 1e-9:
@@ -211,6 +241,13 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
                 lines.append(f'<line x1="{x:.2f}" y1="{y:.2f}" x2="{label_x:.2f}" y2="{label_y:.2f}" stroke="#6b7d8c" stroke-width=".8"/>')
             lines.append(f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="middle" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-opacity=".9">{escape(label)}</text>')
         lines.extend(overlays)
+        if clear_fronts:
+            lines.append(f'<g data-front-layer="{view}">')
+            for key, start, tip, _ in arrows:
+                coords = f'x1="{start[0]:.2f}" y1="{start[1]:.2f}" x2="{tip[0]:.2f}" y2="{tip[1]:.2f}"'
+                lines.append(f'<line {coords} stroke="white" stroke-width="6"/>')
+                lines.append(f'<line class="front" data-front-object="{key}" {coords}/>')
+            lines.append('</g>')
     lines.extend(['<line x1="24" x2="696" y1="320" y2="320" stroke="#c2cbd3"/>',
                   '<line x1="24" x2="696" y1="640" y2="640" stroke="#c2cbd3"/>'])
     # Instructions belong to the assigned prompt, never inside a shared image.

@@ -31,19 +31,32 @@ def preflight(root):
     index = read(root / 'packets/index.json')
     if set(index) != {row['assignmentId'] for row in protocol['assignments']}:
         raise ValueError('Incomplete or extra reviewer packets')
+    checked_packets = set()
+    assignments = {row['assignmentId']: row for row in protocol['assignments']}
     for row in protocol['assignments']:
         if 'evidence' in row:
             if digest(row['evidence']) != row['evidenceSha256'] or digest(delivery_prompt(protocol, row).encode('utf-8')) != row['deliveryPromptHash']:
                 raise ValueError('Frozen case evidence or prompt changed')
-            if row['repeatOf']:
-                original_row = next(value for value in protocol['assignments'] if value['assignmentId'] == row['repeatOf'])
+            partner = row.get('pairedWith') or row['repeatOf']
+            if partner:
+                original_row = assignments[partner]
+                if row.get('pairedWith') and (original_row.get('pairedWith') != row['assignmentId']
+                    or row['profile'] != original_row['profile'] or row['pairId'] != original_row['pairId']
+                    or row['leftCondition'] != original_row['rightCondition']):
+                    raise ValueError('Counterbalanced assignment mismatch')
                 if any(row['evidence'][side] != original_row['evidence'][other] for side, other in (('left', 'right'), ('right', 'left'))):
                     raise ValueError('Reversed evidence did not swap the same rooms')
         packet = index[row['assignmentId']]
         raw = (root / packet['file']).read_bytes()
         if digest(raw) != packet['imageSha256']:
             raise ValueError('Packet checksum mismatch')
-        with Image.open(root / packet['file']) as image:
+        if packet['file'] in checked_packets:
+            # Same bytes are reused across dimensions, but routing/evidence
+            # still receive the checks above on every assignment.
+            image = None
+        else:
+            image = Image.open(root / packet['file'])
+        if image is not None:
             if image.size != (1480, 1146):
                 raise ValueError('Unexpected packet dimensions')
             for side, x in (('left', 10), ('right', 750)):
@@ -52,15 +65,23 @@ def preflight(root):
                     raise ValueError('Panel checksum mismatch')
                 with Image.open(path) as panel:
                     verify_panel_pixels(image, panel, x)
-        if row['repeatOf']:
-            original = index[row['repeatOf']]
+            image.close()
+            checked_packets.add(packet['file'])
+        partner = row.get('pairedWith') or row['repeatOf']
+        if partner:
+            original = index[partner]
             if packet['leftPanelSha256'] != original['rightPanelSha256'] or packet['rightPanelSha256'] != original['leftPanelSha256']:
                 raise ValueError('Repeat panels did not swap exactly')
     repeat_count = sum(bool(row['repeatOf']) for row in protocol['assignments'])
-    if len(index) != 320 or repeat_count != 64:
+    full = protocol.get('stage') == 'full_counterbalanced'
+    if full and (len(index) != 4800 or repeat_count or sum(bool(r.get('pairedWith')) for r in protocol['assignments']) != 4800):
+        raise ValueError('The full campaign requires 4800 paired judgments')
+    if not full and (len(index) != 320 or repeat_count != 64):
         raise ValueError('The approved pilot requires 320 packets and 64 controls')
     result = {'passed': True, 'protocolSha256': digest(protocol), 'packetIndexSha256': digest(index),
               'packets': len(index), 'pixelIdenticalSwaps': repeat_count}
+    if full:
+        result['pixelIdenticalSwaps'] = len(index)//2
     target = root / 'preflight.json'
     if target.exists():
         if read(target) != result:
