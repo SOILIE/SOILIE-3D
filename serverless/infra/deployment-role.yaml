@@ -83,7 +83,9 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: repo:soilie/SOILIE-3D:ref:refs/heads/main
+                # GitHub's immutable subject binds both the organization and
+                # repository IDs after the ownership transfer. Keep exact case.
+                token.actions.githubusercontent.com:sub: repo:SOILIE@334652626/SOILIE-3D@84844148:ref:refs/heads/main
       Policies:
         - PolicyName: BuildAndDeploySoilieEngine
           PolicyDocument:
