@@ -188,6 +188,22 @@ class StructuredPilotTests(unittest.TestCase):
         self.assertEqual(1, report['agreements'])
         self.assertEqual(1, report['repeatTransitions']['overall']['same_winner'])
 
+    def test_report_preserves_gate_and_zero_decisive_denominator(self):
+        from serverless.cloud_benchmark.pilot_report import markdown
+        protocol = self.frozen()
+        for row in protocol['assignments']:
+            self.save(row)
+        report = {**results(self.root), 'reviewers': protocol['reviewers'],
+                  'protocolSha256': 'fixture-hash', 'retainedRoomFunctionSha256': 'fixture-retained'}
+        text = markdown(report, 'fixture.json')
+        self.assertIn('Accepted for unchanged-protocol reuse', text)
+        self.assertIn('16/16 (100.0%)', text)
+        self.assertIn('Unavailable (0 decisive)', text)
+        self.assertIn('Tie ↔ preference', text)
+        self.assertIn('Original room-function answers', text)
+        with self.assertRaises(ValueError):
+            markdown({**report, 'complete': False}, 'fixture.json')
+
 
 if __name__ == '__main__':
     unittest.main()

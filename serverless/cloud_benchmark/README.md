@@ -33,6 +33,7 @@ website's project-local Playwright installation, and preflight it:
 $pilotRoot = '.codex/benchmark/soilie-platform-grid-final/review-functional-use-pilot-v2'
 python -m serverless.cloud_benchmark.staged_pilot prepare --source .codex/benchmark/soilie-platform-grid-final/review-functional-fronts-v3 --root $pilotRoot --version functional-use-v2 --previous .codex/benchmark/soilie-platform-grid-final/review-functional-use-pilot-v1
 node serverless/cloud_benchmark/render_staged_pilot.mjs $pilotRoot PATH_TO_WEBSITE/.codex/browser
+node serverless/cloud_benchmark/check_numbered_pilot.mjs $pilotRoot PATH_TO_WEBSITE/.codex/browser
 python -m serverless.cloud_benchmark.run_staged_pilot --root $pilotRoot --preflight-only
 ```
 
@@ -45,6 +46,8 @@ Do not alter a frozen prompt or rerun a disagreement.
 After all 320 answers validate, `staged_pilot finalize --root ...` creates the
 local report, and `staged_pilot checkpoint --root ... --output ...` exports all
 answers with exact prompts, schemas, evidence and hashed context identifiers.
+`pilot_report --checkpoint ... --output ...` derives the internal Markdown
+tables directly from that audited export, without another model call.
 If the pilot passes and its protocol remains unchanged, all 256 main judgments
 are reusable. Otherwise all answers remain development evidence. Controls never
 contribute preference votes. Neither outcome authorizes continuation, a version
