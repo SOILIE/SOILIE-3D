@@ -87,12 +87,16 @@ It uses the existing Codex account, with no new API key, model fallback or paid
 endpoint. Resume only missing assignments after inspecting any saved attempts.
 
 Run `scripts/watch-ai-reviews.ps1` from PowerShell to monitor the default campaign.
-It shows one bar for each of the five dimensions, checks each second, estimates
+It renders a colored Unicode terminal dashboard with an overall bar and one
+bar for each of the five dimensions (not host-dependent `Write-Progress`),
+checks each second, estimates
 ETA from this session's observed throughput (excluding preflight and pauses),
 reports stale heartbeats/errors, and exits only when complete or interrupted
 with Ctrl+C. Each dimension has 960 judgments: 480 pairs, each shown twice.
 Early ETAs are provisional; dimensions share the worker pool. Use `-Once` for
-a single diagnostic refresh. The monitor permits atomic file replacement on
+a single diagnostic refresh. It adapts to terminal width, refreshes in place,
+and restores the terminal on exit. `-Color Always` forces ANSI color; `-Color
+Never` keeps monochrome block bars. The monitor permits atomic file replacement on
 Windows; a locked heartbeat cannot stop the collector or discard answers.
 Closing the monitor does not stop the collector. On completion the collector
 writes a validated local `full-results.json`; it never pushes or publishes.

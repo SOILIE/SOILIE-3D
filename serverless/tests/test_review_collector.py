@@ -1,6 +1,7 @@
 """Operational fixtures only: no model calls or research judgments."""
 from copy import deepcopy
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -176,23 +177,47 @@ class CollectorTests(unittest.TestCase):
         self.assertFalse((self.root/'collection.lock').exists())
 
     @unittest.skipUnless(shutil.which('powershell'), 'Windows monitor test')
-    def test_monitor_draws_five_independent_progress_bars(self):
+    def test_monitor_draws_six_real_progress_bars_and_scales_fill(self):
         state = self.exercise_collection()
         state['state'] = 'running'
+        state.update(completed=2400, expected=4800)
+        for group in state['dimensions']:
+            group.update(completed=480, expected=960)
         collector.progress(self.root,state)
         script = Path(__file__).parents[2]/'scripts/watch-ai-reviews.ps1'
-        command = '''
-        function Write-Progress {
-            param($Id,$Activity,$Status,$PercentComplete,$CurrentOperation,[switch]$Completed)
-            if (-not $Completed) { [pscustomobject]@{id=$Id;activity=$Activity;status=$Status;percent=$PercentComplete} | ConvertTo-Json -Compress }
-        }
-        & '%s' -Root '%s' -Once
-        ''' % (script,self.root)
-        output = subprocess.check_output(['powershell','-NoProfile','-Command',command],text=True)
-        bars = [json.loads(line) for line in output.splitlines() if line.startswith('{')]
-        self.assertEqual(list(range(1,6)),[bar['id'] for bar in bars])
-        self.assertEqual(list(collector.DIMENSIONS.values()),[bar['activity'] for bar in bars])
-        self.assertTrue(all('judgments' in bar['status'] for bar in bars))
+        command = ['powershell','-NoProfile','-File',str(script),'-Root',str(self.root),'-Once']
+        for width in (48,80,120):
+            output = subprocess.check_output(command+['-Color','Never','-Width',str(width)],encoding='utf-8')
+            self.assertNotIn('\x1b',output)
+            bars = re.findall(r'\[([\u2588-\u2591]+)\]',output)
+            self.assertEqual(6,len(bars))
+            self.assertEqual(1,len({len(bar) for bar in bars[1:]}))
+            for bar in bars:
+                self.assertEqual(len(bar)//2,bar.count('\u2588'))
+            self.assertEqual(6,output.count('50.0%'))
+            self.assertLessEqual(max(map(len,output.splitlines())),width)
+            if width >= 80:
+                for label in collector.DIMENSIONS.values():
+                    self.assertIn(label,output)
+        colored = subprocess.check_output(command+['-Color','Always'],encoding='utf-8')
+        self.assertIn('\x1b[1;38;5;',colored)
+        self.assertEqual(6,len(re.findall(r'\[([\u2588-\u2591]+)\]', re.sub(r'\x1b\[[0-9;]*m','',colored))))
+        compact_command = ". '%s' -Root '%s' -Once -Color Never > $null; New-ReviewDashboard $state 76 '' 12" % (script,self.root)
+        compact = subprocess.check_output(['powershell','-NoProfile','-Command',compact_command],encoding='utf-8')
+        # Dot-sourcing emits the initial Console frame too; inspect the final 8 lines.
+        compact_lines = compact.splitlines()[-8:]
+        self.assertEqual(6,len(re.findall(r'\[([\u2588-\u2591]+)\]', '\n'.join(compact_lines))))
+        self.assertLessEqual(max(map(len,compact_lines)),76)
+
+    @unittest.skipUnless(shutil.which('powershell'), 'Windows monitor test')
+    def test_monitor_handles_missing_status_and_zero_progress(self):
+        script = Path(__file__).parents[2]/'scripts/watch-ai-reviews.ps1'
+        output = subprocess.check_output(['powershell','-NoProfile','-File',str(script),
+            '-Root',str(self.root),'-Once','-Color','Never'],encoding='utf-8')
+        self.assertIn('WAITING FOR COLLECTOR',output)
+        bars = re.findall(r'\[([\u2588-\u2591]+)\]',output)
+        self.assertEqual(6,len(bars))
+        self.assertTrue(all(set(bar)=={'\u2591'} for bar in bars))
 
 
 if __name__ == '__main__':
