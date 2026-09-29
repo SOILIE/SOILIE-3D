@@ -82,14 +82,27 @@ Validate using `python -m serverless.cloud_benchmark.run_staged_pilot
 --root <root> --preflight-only`.
 
 Collection requires `python -m serverless.cloud_benchmark.run_full_review --root
-<root> --authorize-review --workers 3 --codex <existing-codex-executable>`.
+<root> --authorize-review --workers 5 --codex <existing-codex-executable>`.
 It uses the existing Codex account, with no new API key, model fallback or paid
 endpoint. Resume only missing assignments after inspecting any saved attempts.
 
 Run `scripts/watch-ai-reviews.ps1` from PowerShell to monitor the default campaign.
-It checks each second, estimates ETA from observed throughput, reports stale
-heartbeats/errors, and exits only when complete or interrupted with Ctrl+C.
+It shows one bar for each of the five dimensions, checks each second, estimates
+ETA from this session's observed throughput (excluding preflight and pauses),
+reports stale heartbeats/errors, and exits only when complete or interrupted
+with Ctrl+C. Each dimension has 960 judgments: 480 pairs, each shown twice.
+Early ETAs are provisional; dimensions share the worker pool. Use `-Once` for
+a single diagnostic refresh. The monitor permits atomic file replacement on
+Windows; a locked heartbeat cannot stop the collector or discard answers.
 Closing the monitor does not stop the collector. On completion the collector
 writes a validated local `full-results.json`; it never pushes or publishes.
+
+When an inspected operational repair or Git attribution migration changes the
+collector's provenance, supply `--resume-note "<reason>"` once. The original
+receipt is preserved and a separate immutable upgrade record is written.
+Only orchestration code may differ: protocol, model, effort, judgment delivery,
+validation, and aggregation remain frozen. Each launch records its worker count,
+executable checksum, and starting completion count. This is not permission to
+change prompts or replace any previous answer.
 
 Methodological reference: [OpenAI evaluation guidance](https://developers.openai.com/api/docs/guides/evaluation-best-practices#llm-as-a-judge-and-model-graders).
