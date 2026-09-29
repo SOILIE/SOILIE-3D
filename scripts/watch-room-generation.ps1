@@ -51,7 +51,8 @@ try {
         if (-not $state) { $lines.Add('Waiting for the local relay status...') } else {
             $lines.Add(('OVERALL   {0}/{1}  {2:0.0}%' -f $state.completed, $state.expected, (100*$state.completed/[Math]::Max(1,$state.expected))))
             $lines.Add((Bar $state.completed $state.expected $width 81))
-            $lines.Add(('Overall ETA: {0}' -f (ETA $state.etaSeconds)))
+            $etaLabel = if (Test-Path -LiteralPath (Join-Path $Root 's3/settings.json')) { 'Generation ETA (uploads separate)' } else { 'Overall ETA' }
+            $lines.Add(('{0}: {1}' -f $etaLabel, (ETA $state.etaSeconds)))
             foreach ($group in $state.groups) {
                 $color = if ($group.key -eq 'infinigen') { 221 } else { 141 }
                 $lines.Add('')
@@ -59,6 +60,9 @@ try {
                 $lines.Add((Bar $group.completed $group.expected $width $color))
                 $lines.Add(('Bedrooms {0}/120 | Living rooms {1}/120' -f $group.rooms.bedroom, $group.rooms.living_room))
                 $lines.Add(('{0} active | {1} need attention | {2} new files delivered | {3} retained pairs' -f $group.active, $group.failed, $group.delivered, $group.retained))
+                if (Test-Path -LiteralPath (Join-Path $Root 's3/settings.json')) {
+                    $lines.Add(('{0}/{1} rooms verified on S3' -f $group.archived, $group.expected))
+                }
             }
             $lines.Add(('OpenAI accounted: US${0:0.00} / US${1:0.00} cap' -f $state.apiAccountedUsd, $state.apiCapUsd))
             if ($state.warning) { $lines.Add((Paint $state.warning 209)) }
