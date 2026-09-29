@@ -36,8 +36,10 @@ def snapshot(root,plan,remote_state,warning=None):
     for row in remote_state.get('receipts',[]):
         receipts.setdefault(row['id'],row)
     running=set(remote_state.get('running',[]))
-    for start in (root/'local').glob('*/started.json'):
-        if start.parent.name not in receipts: running.add(start.parent.name)
+    if (root/'local/controller.lock').exists():
+        for start in (root/'local').glob('*/attempt-*/started.json'):
+            identity=start.parent.parent.name
+            if identity not in receipts and not (start.parent/'receipt.json').exists(): running.add(identity)
     ledger_path=root/'layoutgpt/inference-ledger.json'
     ledger=json.loads(ledger_path.read_bytes()) if ledger_path.exists() else {'entries':{}}
     export_path=root/'layoutgpt/export.json'
@@ -53,6 +55,7 @@ def snapshot(root,plan,remote_state,warning=None):
             failed=sum(receipts.get(t['id'],{}).get('status')=='failed' for t in selected)
             active=sum(t['id'] in running for t in selected)
             delivered=sum((root/'cloud'/t['id']/'verified.json').exists() or
+                          (root/'local'/t['id']/'s3-receipt.json').exists() or
                           (root/'local'/t['id']/receipts[t['id']].get('artifactPath','artifacts.tar.gz')).exists()
                           for t in selected if receipts.get(t['id'],{}).get('status')=='complete')
         else:
@@ -75,7 +78,10 @@ def snapshot(root,plan,remote_state,warning=None):
         details={room:sum((not t['needsGeneration']) or (receipts.get(t['id'],{}).get('status')=='complete'
             if baseline=='infinigen' else t['id'] in valid) for t in selected if t['roomType']==room)
             for room in ('bedroom','living_room')}
-        groups.append({'key':baseline,'expected':len(selected),'completed':completed,'retained':retained,
+        archived=sum(any((root/directory/t['id']/'s3-receipt.json').exists() for directory in ('local','cloud'))
+                     if baseline=='infinigen' else (root/'s3/layoutgpt'/t['id']/'receipt.json').exists()
+                     for t in selected)
+        groups.append({'key':baseline,'expected':len(selected),'completed':completed,'retained':retained,'archived':archived,
             'active':active,'failed':failed,'delivered':delivered,'etaSeconds':eta,'rooms':details})
     spent=sum(attempt.get('actualUsd',attempt.get('reservedUsd',0))
               for r in ledger['entries'].values() for attempt in [r,*r.get('previousAttempts',[])])
@@ -87,6 +93,8 @@ def snapshot(root,plan,remote_state,warning=None):
         'apiAccountedUsd':spent,'apiCapUsd':35,'warning':warning,
         'state':'complete' if all(g['completed']==g['expected'] and g['delivered']+g['retained']==g['expected'] for g in groups) else 'running'}
     remaining=[g for g in groups if g['completed']<g['expected']]
+    if (root/'s3/settings.json').exists() and any(g['archived']<g['expected'] for g in groups):
+        state['state']='running'  # Completion includes the requested S3 handoff.
     state['etaSeconds']=max((g['etaSeconds'] for g in remaining),default=0) if all(g['etaSeconds'] is not None for g in remaining) else None
     save(root/'progress.json',state)
     return state

@@ -6,10 +6,11 @@ from pathlib import Path
 import tempfile
 import tarfile
 import unittest
+from unittest.mock import Mock, patch
 
 from serverless.arbutus.cloud import cloud_init
 from serverless.arbutus.inventory_plan import prepare, target_inventory
-from serverless.arbutus.worker import selected, validate_inventory
+from serverless.arbutus.worker import selected, validate_inventory, wait_for_space
 from serverless.arbutus.relay import snapshot, verify_archive
 
 SCRATCH=Path(__file__).resolve().parents[2]/'.codex/test-arbutus'
@@ -36,6 +37,12 @@ def row(name,room,labels):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_low_disk_waits_for_uploader_without_failing_a_generation(self):
+        with patch('serverless.arbutus.worker.shutil.disk_usage',side_effect=[Mock(free=0),Mock(free=20*1024**3)]), \
+             patch('serverless.arbutus.worker.time.sleep') as sleep:
+            wait_for_space(Path('.'),12)
+            sleep.assert_called_once_with(5)
+
     def test_plan_does_not_use_quality_or_input_order(self):
         rows=[row('a','bedroom',['bed','desk','chair']),row('b','living_room',['sofa','chair','coffee table'])]
         a=prepare(rows,per_room=1)

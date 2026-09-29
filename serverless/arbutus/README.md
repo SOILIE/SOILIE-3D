@@ -55,8 +55,30 @@ outputs still follow **Arbutus -> local relay -> local project folder**.
 
 The relay runs up to four downloads concurrently. It verifies both archive and
 scene SHA-256 hashes before writing `verified.json`. It reserves space for all
-in-flight downloads and never deletes remote evidence. Do not remove the VM
-until all successful archives are locally verified and failures are resolved.
+in-flight downloads and never deletes remote evidence. Local generation waits
+at its disk reserve while the S3 uploader frees space, without counting the
+wait as model execution or a failed generation.
+
+The continuous archive worker forwards completed outputs from this local node
+to `soilie3d-data/files/outputs/inventory-<date>-<plan-hash>/`. It uploads and
+verifies each room before deleting its local archive and duplicate native
+scene files. Geometry JSON, checkpoints, recovery receipts, and private logs
+remain local. The public native bundle excludes execution logs and invocation
+metadata; every excluded member is preserved in local `private-evidence/`.
+It checks the full S3 SHA-256 (or downloads and hashes the object), not merely
+an ETag or a user-supplied metadata field. A failed verification deletes nothing.
+The Data-page index is merged conditionally, preserving unrelated entries.
+This research prefix is outside the seven-day `generated/` lifecycle.
+
+```powershell
+python -m serverless.arbutus.archive --root .codex/arbutus-inventory --date 2026-09-29
+```
+
+Do not change the archive date when resuming the same campaign. The monitor
+shows S3-verified room counts and waits for storage delivery as well as
+generation. Native files are restored using the task's `s3-receipt.json` keys
+and checksums. Do not remove the VM until all successful archives are verified
+on S3 and failures are resolved.
 
 ## Monitor and resume (PowerShell, from the backend root)
 
@@ -107,7 +129,7 @@ variable; it is never copied into outputs.
 ## Validation and cleanup
 
 ```powershell
-python -m unittest serverless.tests.test_arbutus_inventory serverless.tests.test_inventory_matching serverless.tests.test_layoutgpt_controlled
+python -m unittest serverless.tests.test_arbutus_inventory serverless.tests.test_arbutus_archive serverless.tests.test_inventory_matching serverless.tests.test_layoutgpt_controlled
 node --test serverless/tests/layoutgpt-budget.test.mjs
 pwsh -NoProfile -File scripts/watch-room-generation.ps1 -Once
 ```

@@ -46,6 +46,16 @@ def selected(task, host):
     return task['baseline']=='infinigen' and task['needsGeneration'] and local==(host=='local')
 
 
+def wait_for_space(output,reserve_gib):
+    """Backpressure while the S3 uploader frees disk, not a failed generation."""
+    announced=False
+    while shutil.disk_usage(output).free < reserve_gib*1024**3:
+        if not announced:
+            print(json.dumps({'status':'waiting_for_disk','reserveGiB':reserve_gib}),flush=True)
+            announced=True
+        time.sleep(5)
+
+
 def validate_inventory(records, task):
     _room,instances=generated_instances(records,task['roomType'])
     counts=Counter()
@@ -90,8 +100,7 @@ def run_attempt(task,args,plan_sha,folder):
         return prior
     if folder.exists(): raise ValueError('Interrupted task needs inspection: '+task['id'])
     # Never let a background process consume the last local disk/RAM margin.
-    if shutil.disk_usage(args.output).free < args.reserve_gib*1024**3:
-        raise RuntimeError('Disk reserve reached; pending tasks remain unstarted')
+    wait_for_space(args.output,args.reserve_gib)
     folder.mkdir()
     record={'id':task['id'],'status':'running','host':args.host,'planSha256':plan_sha,
             'task':task,'startedAt':time.time(),'threads':args.threads,'sourceCommit':PIN,
