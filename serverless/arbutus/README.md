@@ -37,7 +37,7 @@ committed. They live under the project's `.codex/arbutus-inventory/` directory.
 
 The cloud controller is a systemd service independent of SSH connections.
 Local jobs use WSL. Task indices divisible by five belong to the local host;
-the remainder belong to Arbutus. This fixed partition prevents duplicate work.
+the remainder initially belong to Arbutus. This partition prevents duplicate work.
 Each task owns its folder, logs, attempt records, compact scene JSON, and native
 Blender archive. Interrupted attempts fail closed rather than being overwritten.
 
@@ -45,6 +45,25 @@ Current resources: two local workers with two Blender threads each, and 28
 Arbutus workers with one thread each on the requested 32-vCPU flavor. Leave
 memory/CPU headroom for the desktop, SSH, compression, and transfer. Both
 controllers enforce a free-disk reserve before starting another attempt.
+
+When the cloud finishes its initial queue first, `serverless.arbutus.rebalance`
+can hand off untouched local tasks. It briefly freezes only the local Python
+scheduler, verifies every worker slot is occupied, excludes all started or
+completed tasks, and writes explicit `delegated` receipts for the pending ones.
+The in-flight Blender processes keep running. A hash-verified ready marker
+gates the cloud worker's `--assignment` option. Inputs, seeds, completed scenes,
+and the original campaign manifest are unchanged; actual host provenance is
+recorded on each new result. Delegation is never counted as a completed room.
+
+```powershell
+wsl -d Ubuntu -- bash -lc 'cd /mnt/c/Users/mike/Documents/AppDev/SOILIE-3D && python3 -m serverless.arbutus.rebalance --root .codex/arbutus-inventory --output .codex/arbutus-inventory/cloud-tail.json'
+```
+
+Use a new assignment path, only while the local controller is running. Copy the
+assignment and its `.ready.json` sibling to the idle cloud worker, then start
+the existing worker command with `--assignment /mnt/soilie/cloud-tail.json`.
+The campaign output lock prevents two cloud controllers from overlapping.
+Resume that same assignment if interrupted; do not create replacement scenes.
 
 The private VM has no floating IP. Reuse the existing shared security group and
 MMP jump host. Pin its host key from the authenticated OpenStack console, not

@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 
 from serverless.arbutus.cloud import cloud_init
 from serverless.arbutus.inventory_plan import prepare, target_inventory
-from serverless.arbutus.worker import selected, validate_inventory, wait_for_space
+from serverless.arbutus.worker import selected, validate_inventory, wait_for_space, assigned_tasks, sha
+from serverless.arbutus.rebalance import pending_tasks
 from serverless.arbutus.relay import snapshot, verify_archive
 
 SCRATCH=Path(__file__).resolve().parents[2]/'.codex/test-arbutus'
@@ -37,6 +38,55 @@ def row(name,room,labels):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_handoff_excludes_running_finished_and_previously_started_tasks(self):
+        tasks=[{'id':f'infinigen-bedroom-{i:03d}','baseline':'infinigen','needsGeneration':True} for i in (0,5,10,15)]
+        with temporary_directory() as directory:
+            root=Path(directory)
+            for t in tasks: (root/'local'/t['id']).mkdir(parents=True)
+            (root/'local'/tasks[0]['id']/'receipt.json').write_text('{"status":"complete"}')
+            (root/'local'/tasks[1]['id']/'started.json').write_text('{"pid":123}')
+            active,pending=pending_tasks({'tasks':tasks},root,123,1)
+            self.assertEqual([tasks[1]['id']],active)
+            self.assertEqual(tasks[2:],pending)
+            with self.assertRaisesRegex(ValueError,'between tasks'):
+                pending_tasks({'tasks':tasks},root,123,2)
+            (root/'local'/tasks[2]['id']/'attempt-00').mkdir()
+            with self.assertRaisesRegex(ValueError,'Unfinished evidence'):
+                pending_tasks({'tasks':tasks},root,123,1)
+
+    def test_cloud_handoff_requires_ready_hash_and_preserves_canonical_inputs(self):
+        tasks=[{'id':f'infinigen-bedroom-{i:03d}','baseline':'infinigen','needsGeneration':True,'seed':100+i} for i in (0,1,5)]
+        with temporary_directory() as directory:
+            root=Path(directory)
+            plan=root/'campaign-v1.json';plan.write_text(json.dumps({'tasks':tasks}))
+            assignment=root/'tail.json'
+            handoff={'host':'arbutus','originalHost':'local','planSha256':sha(plan),'taskIds':[tasks[2]['id']]}
+            assignment.write_text(json.dumps(handoff))
+            ready=assignment.with_suffix('.ready.json');ready.write_text(json.dumps({'assignmentSha256':sha(assignment)}))
+            self.assertEqual([tasks[2]],assigned_tasks(plan,'arbutus',assignment))
+            with self.assertRaisesRegex(ValueError,'Unverified'):
+                assigned_tasks(plan,'local',assignment)
+            handoff['taskIds']=[tasks[1]['id']];assignment.write_text(json.dumps(handoff))
+            with self.assertRaisesRegex(ValueError,'Unverified'):
+                assigned_tasks(plan,'arbutus',assignment)
+            ready.write_text(json.dumps({'assignmentSha256':sha(assignment)}))
+            with self.assertRaisesRegex(ValueError,'outside'):
+                assigned_tasks(plan,'arbutus',assignment)
+
+    def test_delegated_marker_does_not_hide_a_remote_completion(self):
+        tasks=[{'id':'infinigen-bedroom-000','baseline':'infinigen','needsGeneration':True,'roomType':'bedroom'}]
+        with temporary_directory() as directory:
+            root=Path(directory)
+            plan={'tasks':tasks};plan_path=root/'campaign-v1.json';plan_path.write_text(json.dumps(plan))
+            task=root/'local'/tasks[0]['id'];task.mkdir(parents=True)
+            marker={'id':tasks[0]['id'],'status':'delegated','planSha256':sha(plan_path)}
+            (task/'receipt.json').write_text(json.dumps(marker))
+            remote={'receipts':[{**marker,'status':'complete','host':'arbutus','startedAt':1}]}
+            state=snapshot(root,plan,remote)
+            self.assertEqual(1,state['groups'][0]['completed'])
+            self.assertEqual(0,state['groups'][0]['active'])
+            self.assertEqual(0,state['groups'][0]['delivered'])
+
     def test_low_disk_waits_for_uploader_without_failing_a_generation(self):
         with patch('serverless.arbutus.worker.shutil.disk_usage',side_effect=[Mock(free=0),Mock(free=20*1024**3)]), \
              patch('serverless.arbutus.worker.time.sleep') as sleep:

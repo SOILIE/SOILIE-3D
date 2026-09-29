@@ -32,6 +32,7 @@ def snapshot(root,plan,remote_state,warning=None):
             row=json.loads(path.read_bytes())
             if row['planSha256']!=sha(root/'campaign-v1.json'):
                 raise ValueError('Receipt from another campaign')
+            if row['status']=='delegated': continue
             receipts[row['id']]=row
     for row in remote_state.get('receipts',[]):
         receipts.setdefault(row['id'],row)

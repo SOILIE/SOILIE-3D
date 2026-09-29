@@ -46,6 +46,22 @@ def selected(task, host):
     return task['baseline']=='infinigen' and task['needsGeneration'] and local==(host=='local')
 
 
+def assigned_tasks(plan_path,host,assignment=None):
+    plan=json.loads(plan_path.read_bytes())
+    if assignment is None: return [t for t in plan['tasks'] if selected(t,host)]
+    handoff=json.loads(assignment.read_bytes())
+    ready=json.loads(assignment.with_suffix('.ready.json').read_bytes())
+    if (handoff.get('planSha256')!=sha(plan_path) or handoff.get('host')!=host
+            or host!='arbutus' or handoff.get('originalHost')!='local'
+            or ready.get('assignmentSha256')!=sha(assignment)):
+        raise ValueError('Unverified assignment handoff')
+    ids=handoff['taskIds']
+    if not ids or len(ids)!=len(set(ids)): raise ValueError('Empty or duplicate assignment')
+    eligible={t['id']:t for t in plan['tasks'] if selected(t,'local')}
+    if set(ids)-eligible.keys(): raise ValueError('Assignment outside the original local queue')
+    return [t for t in plan['tasks'] if t['id'] in set(ids)]
+
+
 def wait_for_space(output,reserve_gib):
     """Backpressure while the S3 uploader frees disk, not a failed generation."""
     announced=False
@@ -188,6 +204,7 @@ def main():
     p.add_argument('--workers',type=int,default=2)
     p.add_argument('--threads',type=int,default=2)
     p.add_argument('--limit',type=int)
+    p.add_argument('--assignment',type=Path,help='Verified handoff of unstarted local tasks')
     p.add_argument('--timeout',type=int,default=3600)
     p.add_argument('--attempts-per-task',type=int,choices=range(1,11),default=5)
     p.add_argument('--reserve-gib',type=float,default=12)
@@ -203,7 +220,7 @@ def main():
     lock=args.output/'controller.lock'
     with lock.open('x') as f: json.dump({'pid':os.getpid()},f)
     try:
-        tasks=[t for t in json.loads(args.plan.read_bytes())['tasks'] if selected(t,args.host)]
+        tasks=assigned_tasks(args.plan,args.host,args.assignment)
         if args.limit: tasks=tasks[:args.limit]
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures=[pool.submit(one,task,args,sha(args.plan)) for task in tasks]
