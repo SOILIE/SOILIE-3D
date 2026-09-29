@@ -10,8 +10,14 @@ export const RATE = { input: 30 / 1e6, output: 60 / 1e6 };
 // maximum 1,024 output tokens at output rates. This intentionally double-
 // counts reserved output context and covers tokenizer-estimate differences.
 export const RESERVATION_USD = 8192 * RATE.input + 1024 * RATE.output;
+const charge = row => row.actualUsd ?? row.reservedUsd;
 export function accounted(ledger) {
-  return Object.values(ledger.entries).reduce((sum, row) => sum + (row.actualUsd ?? row.reservedUsd), ledger.previousBatchUsd || 0);
+  return Object.values(ledger.entries).reduce((sum, row) => sum + charge(row) +
+    (row.previousAttempts || []).reduce((total, attempt) => total + charge(attempt), 0), ledger.previousBatchUsd || 0);
+}
+export function canRetryCreditError(entry, authorized) {
+  return Boolean(authorized && entry?.status === 'error' && entry.httpStatus === 429 &&
+    entry.errorCode === 'credit_balance_exhausted');
 }
 export function canReserve(ledger) { return accounted(ledger) + RESERVATION_USD <= ledger.budgetUsd; }
 export function usageCost(usage) {
@@ -28,12 +34,24 @@ const save = (path, value) => {
 
 export function validatePlan(plan, limit) {
   const bedroom = plan.variant === 'bedroom-original-prompt-timing';
+  const inventory = plan.variant === 'shared-inventory-gpt4-v1';
   const budget = bedroom ? 6.15 : 35;
-  const count = bedroom ? 20 : plan.previousBatch ? 1 : 120;
+  const count = inventory ? plan.requests.length : bedroom ? 20 : plan.previousBatch ? 1 : 120;
+  if (inventory && (count < 1 || count > 240 || plan.previousBatch ||
+      !/^[a-f0-9]{64}$/.test(plan.campaignSha256) || new Set(plan.requests.map(r => r.id)).size !== count)) {
+    throw new Error('Invalid inventory campaign');
+  }
   if (plan.budgetUsd !== budget || plan.requests.length !== count || (bedroom && plan.previousBatch) ||
       !Number.isInteger(limit) || limit < 1 || limit > count) throw new Error('Unexpected approved plan or spending cap');
   if (bedroom && plan.roomType !== 'bedroom') throw new Error('Bedroom pilot room type changed');
   for (const row of plan.requests) {
+    if (inventory && (!['bedroom','living_room'].includes(row.roomType) ||
+        !/^layoutgpt-(bedroom|living_room)-\d{3}$/.test(row.id) ||
+        !Number.isInteger(row.requestedObjects) || row.requestedObjects < 3 || row.requestedObjects > 6 ||
+        !row.requestedInventory || Object.values(row.requestedInventory).some(n => !Number.isInteger(n) || n < 1) ||
+        Object.values(row.requestedInventory).reduce((a,b) => a+b,0) !== row.requestedObjects)) {
+      throw new Error('Invalid requested inventory');
+    }
     const request = row.request;
     if (request.model !== 'gpt-4' || request.max_tokens !== (bedroom ? 512 : 1024) || request.n !== 1 ||
         !Array.isArray(request.messages) || !Number.isSafeInteger(row.estimatedInputTokens) ||
@@ -41,7 +59,7 @@ export function validatePlan(plan, limit) {
   }
 }
 
-export async function run(folder, credentialFile, limit = null) {
+export async function run(folder, credentialFile, limit = null, retryCreditError = false) {
   folder = resolve(folder);
   const raw = readFileSync(join(folder, 'requests.json'));
   const plan = JSON.parse(raw);
@@ -80,9 +98,17 @@ export async function run(folder, credentialFile, limit = null) {
     async function worker() {
       while (cursor < jobs.length && !stopped) {
         const row = jobs[cursor++];
-        if (ledger.entries[row.id]) continue; // Completed AND uncertain requests never duplicate.
+        const previous = ledger.entries[row.id];
+        if (previous && !canRetryCreditError(previous, retryCreditError)) continue;
+        // Only an explicit operator flag can retry a known billing rejection.
+        // Its receipt and conservative spending reservation remain in history;
+        // completed or ambiguous requests are NEVER automatically repeated.
         if (!canReserve(ledger)) { stopped = true; break; }
         const entry = { status: 'reserved', reservedUsd: RESERVATION_USD, requestSha256: row.requestSha256 };
+        if (previous) {
+          const { previousAttempts = [], ...attempt } = previous;
+          entry.previousAttempts = [...previousAttempts, attempt];
+        }
         ledger.entries[row.id] = entry;
         save(ledgerPath, ledger); // Synchronous reservation before any network side effect.
         const started = performance.now();
@@ -123,6 +149,8 @@ export async function run(folder, credentialFile, limit = null) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const [folder, credentialFile, limit] = process.argv.slice(2);
-  await run(folder, credentialFile, limit === undefined ? null : Number(limit));
+  const args = process.argv.slice(2);
+  const retryCreditError = args.includes('--retry-credit-exhausted');
+  const [folder, credentialFile, limit] = args.filter(arg => arg !== '--retry-credit-exhausted');
+  await run(folder, credentialFile, limit === undefined ? null : Number(limit), retryCreditError);
 }

@@ -56,7 +56,7 @@ def compile_responses(folder, parser_path):
                        finishReason=response['choices'][0]['finish_reason'])
         try:
             scene = normalize({'prompt': request['request']['messages'][-1]['content'], 'object_list': objects},
-                              plan.get('roomType', 'living_room'), index, checksum)
+                              request.get('roomType', plan.get('roomType', 'living_room')), index, checksum)
             scene['id'] = 'layoutgpt-' + request['id']
             scene['stage'] = 'api-final-layout'
             scene['benchmarkVariant'] = plan['variant']
@@ -65,6 +65,10 @@ def compile_responses(folder, parser_path):
                 'sourceRoomId': request['sourceRoomId'], 'model': response['model'],
                 'requestedObjects': request['requestedObjects']}
             metric = measure(scene)
+            if 'requestedInventory' in request:
+                from serverless.benchmark.inventory_matching import signature
+                attempt['inventorySatisfied'] = dict(signature(scene)) == request['requestedInventory']
+                scene['provenance']['inventoryTask'] = request['task']
         except (ValueError, KeyError, TypeError):
             attempt['geometryStatus'] = 'invalid'
             continue
