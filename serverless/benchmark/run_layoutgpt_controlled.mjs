@@ -59,7 +59,13 @@ export function validatePlan(plan, limit) {
   }
 }
 
-export async function run(folder, credentialFile, limit = null, retryCreditError = false) {
+export function workerCount(value = 3) {
+  if (!Number.isInteger(value) || value < 1 || value > 3) throw new Error('Expected 1-3 API workers');
+  return value;
+}
+
+export async function run(folder, credentialFile, limit = null, retryCreditError = false, workers = 3) {
+  workerCount(workers);
   folder = resolve(folder);
   const raw = readFileSync(join(folder, 'requests.json'));
   const plan = JSON.parse(raw);
@@ -120,10 +126,14 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
           const payload = await response.json();
           entry.wallSeconds = (performance.now() - started) / 1000;
           entry.httpStatus = response.status;
+          entry.providerRequestId = response.headers.get('x-request-id');
           if (!response.ok) {
             // Keep a conservative reservation on every error; do not assume
             // a malformed/missing receipt proves zero billing.
             entry.status = 'error'; entry.errorCode = payload.error?.code || 'API_ERROR';
+            entry.errorType = payload.error?.type || null;
+            // Keep support diagnostics privately, never whole bodies or keys.
+            entry.errorMessage = String(payload.error?.message || '').replaceAll(secret, '[redacted]').slice(0, 700);
             if ([401, 403, 429].includes(response.status)) stopped = true;
           } else {
             save(join(responses, row.id + '.json'), payload);
@@ -141,7 +151,7 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
                                     accountedUsd: accounted(ledger), budgetUsd: ledger.budgetUsd }));
       }
     }
-    await Promise.all(Array.from({ length: 3 }, worker));
+    await Promise.all(Array.from({ length: workers }, worker));
     console.log(JSON.stringify({ attempted: Object.keys(ledger.entries).length,
       complete: Object.values(ledger.entries).filter(row => row.status === 'complete').length,
       accountedUsd: accounted(ledger), budgetUsd: ledger.budgetUsd }));
@@ -151,6 +161,8 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const args = process.argv.slice(2);
   const retryCreditError = args.includes('--retry-credit-exhausted');
-  const [folder, credentialFile, limit] = args.filter(arg => arg !== '--retry-credit-exhausted');
-  await run(folder, credentialFile, limit === undefined ? null : Number(limit), retryCreditError);
+  const concurrency = args.find(arg => arg.startsWith('--workers='));
+  const workers = workerCount(concurrency ? Number(concurrency.slice('--workers='.length)) : 3);
+  const [folder, credentialFile, limit] = args.filter(arg => arg !== '--retry-credit-exhausted' && arg !== concurrency);
+  await run(folder, credentialFile, limit === undefined ? null : Number(limit), retryCreditError, workers);
 }

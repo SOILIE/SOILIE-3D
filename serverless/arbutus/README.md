@@ -95,7 +95,8 @@ node serverless/benchmark/run_layoutgpt_controlled.mjs .codex/arbutus-inventory/
 ```
 
 The single US$35 ledger covers both room types and conservatively reserves
-unsettled charges. Three API requests can run concurrently. Completed or
+unsettled charges. Three API requests can run concurrently; `--workers=1`
+reduces concurrency when diagnosing intermittent provider errors. Completed or
 uncertain requests never repeat. After replenishing credit, the explicit
 `--retry-credit-exhausted` flag permits retrying a known HTTP 429 billing
 rejection, retaining its receipt and reservation. Do not automatically retry
