@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { accounted, canReserve, canRetryCreditError, usageCost, RESERVATION_USD, validatePlan } from '../benchmark/run_layoutgpt_controlled.mjs';
+import { accounted, canReserve, canRetryCreditError, workerCount, usageCost, RESERVATION_USD, validatePlan } from '../benchmark/run_layoutgpt_controlled.mjs';
+
+test('API concurrency can decrease but cannot exceed its fixed maximum', () => {
+  assert.equal(workerCount(),3);
+  assert.equal(workerCount(1),1);
+  for (const value of [0,4,1.5,NaN]) assert.throws(()=>workerCount(value));
+});
 
 test('only explicitly authorized credit rejections retry, with previous spending retained', () => {
   const rejected={status:'error',httpStatus:429,errorCode:'credit_balance_exhausted',reservedUsd:RESERVATION_USD};
