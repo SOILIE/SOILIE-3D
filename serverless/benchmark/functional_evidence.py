@@ -26,15 +26,19 @@ def reference_catalog():
     return json.loads((Path(__file__).parents[1] / 'study/reference_volumes.json').read_bytes())
 
 
-def volume_examples(objects):
-    catalog = reference_catalog()
+def volume_examples(objects, catalog=None):
+    catalog = reference_catalog() if catalog is None else catalog
     def examples(category):
         return [p for p in catalog['products'] if category in [p['category'], *p.get('alsoCategories', [])]]
     pairs = []
     for a, b in combinations(objects, 2):
         first, second = examples(a['category']), examples(b['category'])
+        def volume(product):
+            # A new protocol may explicitly supply the compiled SI catalog.
+            # The historical default and all frozen v3 answers stay unchanged.
+            return product['envelopeM3'] if 'envelopeM3' in product else math.prod(product['dimensionsIn'])
         ratios = [{'first': x['id'], 'second': y['id'],
-                   'ratio': compact(math.prod(x['dimensionsIn']) / math.prod(y['dimensionsIn']))}
+                   'ratio': compact(volume(x) / volume(y))}
                   for x in first for y in second]
         pairs.append({'objects': [a['id'], b['id']], 'catalogRatios': ratios,
                       'coverage': 'illustrative_only' if ratios else 'no_catalog_reference'})
@@ -107,10 +111,10 @@ def spatial_facts(scene):
     return {'version': VERSION, 'pairs': pairs, 'fronts': fronts, 'chairCandidates': chairs}
 
 
-def task_evidence(scene, profile, facts=None):
+def task_evidence(scene, profile, facts=None, catalog=None):
     evidence = inventory(scene)
     if profile == 'proportions':
-        evidence['catalogPairExamples'] = volume_examples(evidence['objects'])
+        evidence['catalogPairExamples'] = volume_examples(evidence['objects'], catalog)
     else:
         evidence = {'objects': evidence['objects'], 'spatialFacts': facts or spatial_facts(scene)}
     return evidence

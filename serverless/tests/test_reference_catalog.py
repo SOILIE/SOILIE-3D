@@ -14,7 +14,7 @@ class ReferenceCatalogTests(unittest.TestCase):
         self.assertEqual('draft-not-used-in-collection', catalog['status'])
         self.assertEqual('catalog-volume-examples-v1', frozen_catalog()['version'])
         self.assertEqual(8, len(frozen_catalog()['products']))
-        self.assertEqual(43, len(catalog['products']))
+        self.assertEqual(46, len(catalog['products']))
         path = Path(__file__).parents[1] / 'study/reference_volumes.json'
         self.assertEqual(catalog['baseSha256'], hashlib.sha256(path.read_bytes()).hexdigest())
 
@@ -40,12 +40,12 @@ class ReferenceCatalogTests(unittest.TestCase):
 
     def test_missing_coverage_is_not_imputed(self):
         scene = {'model':'fixture', 'roomType':'bedroom', 'objects':[
-            {'id':'1','label':'double_bed'}, {'id':'2','label':'nightstand'}, {'id':'3','label':'book'}]}
+            {'id':'1','label':'double_bed'}, {'id':'2','label':'nightstand'}, {'id':'3','label':'cap'}]}
         result = coverage([scene], candidate())['fixture:bedroom']
         self.assertEqual(3, result['objectPairs'])
         self.assertEqual(1, result['coveredObjectPairs'])
-        self.assertEqual({'book':1}, result['missingCategories'])
-        with self.assertRaisesRegex(ValueError, 'book'):
+        self.assertEqual({'cap':1}, result['missingCategories'])
+        with self.assertRaisesRegex(ValueError, 'cap'):
             require_coverage([scene], candidate())
         scene['objects'].pop()
         require_coverage([scene], candidate())

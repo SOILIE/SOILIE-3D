@@ -1,5 +1,5 @@
 param(
-    [string]$Root = (Join-Path $PSScriptRoot '../.codex/benchmark/soilie-platform-grid-final/review-functional-use-v3-full'),
+    [string]$Root = (Join-Path $PSScriptRoot '../.codex/arbutus-inventory/review-functional-use-v4-audited'),
     [switch]$Once,
     [ValidateSet('Auto', 'Always', 'Never')][string]$Color = 'Auto',
     [ValidateRange(0, 240)][int]$Width = 0

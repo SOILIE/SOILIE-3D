@@ -145,6 +145,67 @@ authorization, rate-limit, or ambiguous transport errors. A credential JSON
 path may be supplied as the optional second argument instead of an environment
 variable; it is never copied into outputs.
 
+## Inventory-matched AI review
+
+Generation completion is not pair eligibility. `review_cohort` verifies source
+checksums, normalized category counts (duplicates included), room type, bed/sofa
+anchors, functional fronts, and the recorded density limits before freezing a
+pair list. One substitution means replacing at most one object category, with
+equal total counts. Matching uses no quality scores or reviewer preferences.
+The LayoutGPT and Infinigen density limits remain 0.25 and 1.0 respectively;
+density is summed furniture-box footprint area divided by room area.
+
+The current selection contains 120 pairs in each baseline-by-room-type group.
+Extra LayoutGPT proposals share the original US$35 cap through immutable parent
+ledger hashes; the cap is not reset per supplementary batch. All proposals,
+including unmatched ones, remain auditable.
+
+Prepare a new directory, never overwrite a frozen protocol:
+
+```powershell
+python -m serverless.arbutus.review_cohort --root .codex/arbutus-inventory --prepare-source .codex/arbutus-inventory/review-audit-final.json --output .codex/arbutus-inventory/review-source-v4-audited
+python -m serverless.cloud_benchmark.full_review --prepare --source .codex/arbutus-inventory/review-source-v4-audited --root .codex/arbutus-inventory/review-functional-use-v4-audited --catalog .codex/arbutus-inventory/review-source-v4-audited/catalog.json
+node serverless/cloud_benchmark/render_staged_pilot.mjs .codex/arbutus-inventory/review-functional-use-v4-audited <repository-with-playwright>
+python -m serverless.cloud_benchmark.audit_full_diagrams --root .codex/arbutus-inventory/review-functional-use-v4-audited
+```
+
+All 240 native Infinigen floors are re-read with
+`serverless/benchmark/reextract_infinigen_floor.py` in Blender. The footprint
+projects every tagged visible floor triangle, including sloped faces and
+thresholds; it does not discard faces that miss an exact horizontal tolerance.
+Furniture transforms, floor elevation datum and generation timings are unchanged.
+The checked native blend/state hashes live in `floor-corrections/`. The pairing
+audit is refreshed against those footprints before freezing the source set.
+
+The collector additionally checks every packet and pixel-identical reversal.
+`retain_identical_reviews` can copy an earlier response only when its model,
+effort, full prompt, system instructions, schema, evidence and image are identical.
+Its receipt identifies the original response; changed prompts or pairings need
+new judgments. Reference examples cover all displayed categories but are not
+population norms. Frozen v4 instructions allow a sofa to face a TV stand without
+inventing an unseen TV. Historical prompts and responses are never rewritten.
+
+Two opposite-side judgments per pair in five dimensions yield 4,800 assignments.
+Use five isolated workers with the existing Codex login, not an API key:
+
+```powershell
+python -m serverless.cloud_benchmark.run_full_review --root .codex/arbutus-inventory/review-functional-use-v4-audited --workers 5 --codex <codex-executable> --authorize-review
+pwsh -NoProfile -File scripts/watch-ai-reviews.ps1
+```
+
+The six progress bars include overall progress and each dimension. The monitor
+does not control the workers. Completed answers are not retried; interrupted
+attempts stop collection for inspection. No agreement or preference target
+determines retention. Independent judgments of the same pair are not independent
+room samples, and AI preferences do not establish human validity.
+
+`comparison_archive` consolidates verified rooms under
+`s3://soilie3d-data/files/outputs/website-comparisons/`, keeping existing URLs.
+Use its `--attach-only --review <review-root>` option after all audits to attach
+prompts, matching, sources and packets without copying rooms again. The manifest
+separates published quantitative rooms from inventory-conditioned review inputs.
+Private execution files and unfinished preference results are never published.
+
 ## Validation and cleanup
 
 ```powershell

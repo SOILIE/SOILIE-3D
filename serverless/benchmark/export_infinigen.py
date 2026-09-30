@@ -16,12 +16,10 @@ import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 import numpy as np
-from shapely.geometry import Polygon
-from shapely.ops import unary_union
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from serverless.benchmark.infinigen_metadata import (asset_label, generated_instances,
-                                                     largest_coplanar_surface, polygon_components,
+                                                     floor_surface_projection,
                                                      vertically_supported)
 from serverless.benchmark.mesh_support import sample_support
 from serverless.benchmark.solid_overlap import measure as measure_solid_overlap
@@ -99,40 +97,13 @@ def floor_boundary(room):
     # n-gons. Projecting an n-gon's raw vertex loop can be self-overlapping even
     # when Blender has a valid tessellation for the rendered floor.
     room.data.calc_loop_triangles()
-    horizontal = []
+    triangles = []
     for triangle in room.data.loop_triangles:
         if not mask[triangle.polygon_index]:
             continue
         world = [room.matrix_world @ room.data.vertices[index].co for index in triangle.vertices]
-        elevations = [v.z for v in world]
-        if max(elevations)-min(elevations) > 1e-5:
-            continue # The named floor mesh also contains its thin vertical edge faces.
-        polygon = Polygon([(v.x,v.y) for v in world])
-        if not polygon.is_valid or polygon.area <= 1e-12:
-            raise ValueError("Tagged floor contains invalid or vertical geometry")
-        horizontal.append((sum(elevations)/len(elevations), polygon))
-    if not horizontal:
-        raise ValueError("Expected a nonempty planar original floor")
-    # The emitted floor may include small raised doorway thresholds alongside
-    # the main walkable surface. Group coplanar faces and select the elevation
-    # layer with the greatest tagged area; choosing the highest layer would
-    # mistake those thresholds for the room boundary.
-    layer = largest_coplanar_surface(horizontal)
-    floor_z = layer["elevation"]
-    pieces = layer["polygons"]
-    boundaries = polygon_components(unary_union(pieces))
-    if any(not boundary.is_valid for boundary in boundaries):
-        raise ValueError("Tagged floor component is invalid; do not replace it with a fitted boundary")
-    regions = [{"polygon":list(boundary.exterior.coords)[:-1],
-                "holes":[list(ring.coords)[:-1] for ring in boundary.interiors]}
-               for boundary in boundaries]
-    result = {"floorZ":floor_z,
-              "boundarySource":"All components of the dominant coplanar tagged visible surface, using Blender's emitted floor triangulation"}
-    if len(regions) == 1:
-        result.update(regions[0])
-    else:
-        result["regions"] = regions
-    return result
+        triangles.append([tuple(v) for v in world])
+    return floor_surface_projection(triangles)
 
 
 def room_floor_object(room_id):

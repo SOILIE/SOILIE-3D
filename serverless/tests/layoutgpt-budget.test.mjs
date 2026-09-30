@@ -26,6 +26,11 @@ test('inventory requests share one fixed cap and require valid unique tasks', ()
   for (const override of [{budgetUsd:36},{requests:[plan.requests[0],plan.requests[0]]},{previousBatch:{}}])
     assert.throws(()=>validatePlan({...plan,...override},1));
   assert.throws(()=>validatePlan({...plan,requests:[{...plan.requests[0],requestedObjects:4}]},1));
+  const parent={expectedRequests:10,ledgerSha256:'b'.repeat(64),planSha256:'c'.repeat(64),accountedUsd:19.65};
+  assert.doesNotThrow(()=>validatePlan({...plan,previousBatch:parent},1));
+  for (const change of [{expectedRequests:0},{expectedRequests:241},{ledgerSha256:'wrong'},
+                        {planSha256:'wrong'},{accountedUsd:-1},{accountedUsd:NaN}])
+    assert.throws(()=>validatePlan({...plan,previousBatch:{...parent,...change}},1));
 });
 
 test('twenty-bedroom pilot has a separate strict cap and original output limit', () => {

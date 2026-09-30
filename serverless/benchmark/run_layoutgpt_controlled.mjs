@@ -37,7 +37,14 @@ export function validatePlan(plan, limit) {
   const inventory = plan.variant === 'shared-inventory-gpt4-v1';
   const budget = bedroom ? 6.15 : 35;
   const count = inventory ? plan.requests.length : bedroom ? 20 : plan.previousBatch ? 1 : 120;
-  if (inventory && (count < 1 || count > 240 || plan.previousBatch ||
+  if (inventory && plan.previousBatch && (!Number.isSafeInteger(plan.previousBatch.expectedRequests) ||
+      plan.previousBatch.expectedRequests < 1 || plan.previousBatch.expectedRequests > 240 ||
+      !/^[a-f0-9]{64}$/.test(plan.previousBatch.ledgerSha256 || '') ||
+      !/^[a-f0-9]{64}$/.test(plan.previousBatch.planSha256 || '') ||
+      !Number.isFinite(plan.previousBatch.accountedUsd) || plan.previousBatch.accountedUsd < 0)) {
+    throw new Error('Invalid shared-budget parent receipt');
+  }
+  if (inventory && (count < 1 || count > 240 ||
       !/^[a-f0-9]{64}$/.test(plan.campaignSha256) || new Set(plan.requests.map(r => r.id)).size !== count)) {
     throw new Error('Invalid inventory campaign');
   }
@@ -78,7 +85,9 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
     const previousRaw = readFileSync(join(previousFolder, 'inference-ledger.json'));
     const previous = JSON.parse(previousRaw);
     if (sha(previousRaw) !== plan.previousBatch.ledgerSha256 || previous.planSha256 !== plan.previousBatch.planSha256 ||
-        Object.keys(previous.entries).length !== 120 || Object.values(previous.entries).some(row => row.status !== 'complete')) {
+        Object.keys(previous.entries).length !== (plan.previousBatch.expectedRequests ?? 120) ||
+        previous.budgetUsd !== plan.budgetUsd || existsSync(join(previousFolder, 'inference.lock')) ||
+        Object.values(previous.entries).some(row => row.status !== 'complete')) {
       throw new Error('Previous batch changed or contains unsettled spending');
     }
     previousBatchUsd = accounted(previous);
