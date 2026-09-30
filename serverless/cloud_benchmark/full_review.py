@@ -1,8 +1,9 @@
 """Frozen, counterbalanced full rerun and descriptive four-bucket reporting.
 
 Two independent judgments per pair/dimension see opposite sides. These are
-paired measurements, not 4,800 independent room samples. No previous answers
-are reused, no disagreement is discarded, and no acceptance target is imposed.
+paired measurements, not 4,800 independent room samples. Earlier answers may
+be retained only after an exact delivered-input audit. No disagreement is
+discarded, and no acceptance target is imposed.
 """
 import argparse
 from collections import Counter, defaultdict
@@ -16,6 +17,7 @@ from serverless.cloud_benchmark.staged_pilot import (MODEL, EFFORT, SCHEMA, STRA
     read, write_new, digest, load_frozen, delivery_prompt, validate_answer, validate_receipt)
 from serverless.study import structured_rubric as v2
 from serverless.study import functional_rubric_v3 as rubric
+from serverless.study import functional_rubric_v4 as inventory_rubric
 
 SEED = 'functional-use-v3-full-counterbalanced'
 
@@ -46,7 +48,7 @@ def make_assignments(cases):
     return sorted(rows, key=lambda r: digest([SEED, 'delivery-order', r['assignmentId']]))
 
 
-def prepare(source, output):
+def prepare(source, output, catalog=None, expected_counts=None):
     source, output = Path(source).resolve(), Path(output).resolve()
     if output.exists():
         raise ValueError('A full campaign must use a new immutable directory')
@@ -64,8 +66,11 @@ def prepare(source, output):
             case.pop('profileImages', None)
             cases.append(case)
             provenance[case['pairId']] = evidence[case['id']]
-    if Counter((c['baseline'], c['roomType']) for c in cases) != Counter({s: 120 for s in STRATA}):
-        raise ValueError('Expected the unchanged 480-pair sample, 120 in every stratum')
+    expected_counts = {s:120 for s in STRATA} if expected_counts is None else expected_counts
+    if set(expected_counts) != set(STRATA) or any(n <= 0 for n in expected_counts.values()):
+        raise ValueError('Positive predetermined counts required in all four strata')
+    if Counter((c['baseline'], c['roomType']) for c in cases) != Counter(expected_counts):
+        raise ValueError('Pair counts differ from the audited cohort')
     scene_file = source / 'source-scenes.json'
     scenes = {s['id']: s for s in read(scene_file)['scenes']}
     source_hashes['source-scenes.json'] = digest(scene_file.read_bytes())
@@ -86,7 +91,7 @@ def prepare(source, output):
                     stream.write(raw)
                 images[url] = {'file': file, 'sha256': digest(raw)}
                 facts = spatial_facts(scene)
-                evidence_cache[url] = {p: task_evidence(scene, p, facts) for p in rubric.PROFILES}
+                evidence_cache[url] = {p: task_evidence(scene, p, facts, catalog) for p in rubric.PROFILES}
             case[field] = url
             scene_provenance[case['pairId'] + ':' + role] = {
                 'sceneId': scene['id'], 'sceneSha256': digest(scene), 'image': url}
@@ -94,30 +99,34 @@ def prepare(source, output):
     system = SYSTEM.replace('attached image only', 'attached image and supplied neutral case evidence only')
     for index, profile in enumerate(p for p in rubric.PROFILES for _ in range(2)):
         exact = rubric.prompt(profile)
+        dimension_version = rubric.VERSION
+        if catalog is not None:
+            exact = inventory_rubric.prompt(profile)
+            dimension_version = inventory_rubric.version(profile)
         reviewers.append({'reviewerId': f'reviewer-{index+1:02}', 'profile': profile,
-            'rubricVersion': rubric.VERSION, 'reviewPrompt': exact, 'promptHash': digest(exact.encode()),
+            'rubricVersion': dimension_version, 'reviewPrompt': exact, 'promptHash': digest(exact.encode()),
             'systemPrompt': system, 'systemPromptHash': digest(system.encode()), 'model': MODEL, 'reasoningEffort': EFFORT,
             'reportedModel': 'GPT-5.6 Sol', 'reportedReasoningEffort': 'Extra High',
-            'collectionStatus': 'new_full_rerun', 'checklistInstructions': rubric.CHECKLIST,
+            'collectionStatus': 'collect_missing_with_exact_input_retention', 'checklistInstructions': rubric.CHECKLIST,
             'responseSchema': v2.schema(SCHEMA), 'stimulusVersion': rubric.STIMULUS_VERSION,
             'evidenceInstruction': rubric.EVIDENCE_INSTRUCTION})
     # Historical calibration exposure is recorded, never secretly removed from
     # the fixed sample or passed off as a fresh held-out test.
-    development = set()
+    development = set(read(source / 'preflight.json').get('developmentPairIds', []))
     for directory in source.parent.glob('review-functional-use-pilot-v*'):
         if (directory / 'protocol.json').exists():
             prior = load_frozen(directory)
             development.update(prior['selectedPairs'])
             development.update(prior['excludedCalibrationPairs'])
-    manifest = {'schemaVersion': 3, 'stage': 'full_counterbalanced', 'rubricVersion': rubric.VERSION,
+    manifest = {'schemaVersion': 3, 'stage': 'full_counterbalanced', 'rubricVersion': 'functional-use-v4' if catalog is not None else rubric.VERSION,
         'stimulusVersion': rubric.STIMULUS_VERSION, 'seed': SEED, 'sourceRoot': str(source),
         'sourceProtocolHashes': source_hashes, 'sceneProvenance': scene_provenance,
         'fullPairIds': sorted(c['pairId'] for c in cases), 'fullPairSetSha256': digest(sorted(c['pairId'] for c in cases)),
         'developmentPairIds': sorted(development), 'reviewers': reviewers, 'assignments': rows,
         'sourceImages': images, 'model': MODEL, 'reasoningEffort': EFFORT, 'outputSchema': v2.schema(SCHEMA),
-        'evidenceInstruction': rubric.EVIDENCE_INSTRUCTION, 'referenceCatalog': reference_catalog(),
-        'referenceCatalogSha256': digest(reference_catalog()), 'expectedMainJudgements': 4800, 'expectedControls': 0,
-        'expectedPairedComparisons': 2400, 'fullCampaignAuthorized': True, 'releaseEligible': False,
+        'evidenceInstruction': rubric.EVIDENCE_INSTRUCTION, 'referenceCatalog': reference_catalog() if catalog is None else catalog,
+        'referenceCatalogSha256': digest(reference_catalog() if catalog is None else catalog), 'expectedMainJudgements': len(rows), 'expectedControls': 0,
+        'expectedPairedComparisons': len(rows)//2, 'fullCampaignAuthorized': True, 'releaseEligible': False,
         'retainedRoomFunctionSha256': digest([]),
         'aggregation': {'unit': 'room pair within dimension', 'buckets': ['model_a','model_b','tie','disagreement'],
             'model_a': 'soilie', 'model_b': 'the named baseline',
@@ -158,7 +167,7 @@ def results(root):
         key = row['assignmentId']
         if key not in assignments or key in answers or any(row.get(k) != v for k,v in assignments[key].items()):
             raise ValueError('Unknown or altered response assignment')
-        validate_answer({k: row[k] for k in protocol['outputSchema']['required']}, rubric.VERSION, row['evidence'], row['profile'])
+        validate_answer({k: row[k] for k in protocol['outputSchema']['required']}, protocol['rubricVersion'], row['evidence'], row['profile'])
         validate_receipt(row['receipt'], protocol, reviewers[row['reviewerId']], packets[key], row)
         thread = row['receipt']['threadId']
         if thread in threads:
@@ -187,7 +196,7 @@ def results(root):
     for row in paired:
         key = ':'.join(row[k] for k in ('profile','baseline','roomType'))
         grouped.setdefault(key, []).append(row)
-    return {'rubricVersion': rubric.VERSION, 'protocolSha256': digest(protocol), 'responses': len(answers),
+    return {'rubricVersion': protocol['rubricVersion'], 'protocolSha256': digest(protocol), 'responses': len(answers),
         'expected': len(assignments), 'complete': len(answers)==len(assignments), 'releaseEligible': False,
         'remainingAssignmentIds': [k for k in assignments if k not in answers], 'overall': counts(paired),
         'byDimensionBaselineRoom': {k:counts(v) for k,v in grouped.items()},
@@ -200,5 +209,7 @@ if __name__ == '__main__':
     parser.add_argument('--source', type=Path)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--prepare', action='store_true')
+    parser.add_argument('--catalog', type=Path, help='Explicit audited expanded catalog for a new inventory review')
     args = parser.parse_args()
-    print(json.dumps(prepare(args.source, args.root) if args.prepare else results(args.root)))
+    print(json.dumps(prepare(args.source, args.root, catalog=read(args.catalog) if args.catalog else None)
+                     if args.prepare else results(args.root)))

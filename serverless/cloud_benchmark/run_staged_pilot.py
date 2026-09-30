@@ -74,8 +74,10 @@ def preflight(root):
                 raise ValueError('Repeat panels did not swap exactly')
     repeat_count = sum(bool(row['repeatOf']) for row in protocol['assignments'])
     full = protocol.get('stage') == 'full_counterbalanced'
-    if full and (len(index) != 4800 or repeat_count or sum(bool(r.get('pairedWith')) for r in protocol['assignments']) != 4800):
-        raise ValueError('The full campaign requires 4800 paired judgments')
+    expected = len(protocol.get('fullPairIds', [])) * 10
+    if full and (len(index) != expected or expected != protocol['expectedMainJudgements']
+                 or repeat_count or sum(bool(r.get('pairedWith')) for r in protocol['assignments']) != expected):
+        raise ValueError('The full campaign requires two judgments in each of five dimensions per frozen pair')
     if not full and (len(index) != 320 or repeat_count != 64):
         raise ValueError('The approved pilot requires 320 packets and 64 controls')
     result = {'passed': True, 'protocolSha256': digest(protocol), 'packetIndexSha256': digest(index),

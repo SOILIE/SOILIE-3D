@@ -6,6 +6,7 @@ from shapely.geometry import GeometryCollection, MultiPolygon, Point, Polygon
 
 from serverless.benchmark.infinigen_metadata import (ancestor_rooms, asset_label, generated_instances,
                                                      largest_coplanar_surface, polygon_components,
+                                                     floor_surface_projection,
                                                      vertically_supported)
 
 
@@ -20,6 +21,20 @@ def records():
 
 
 class InfinigenMetadataTests(unittest.TestCase):
+    def test_sloped_floor_is_not_cropped_to_one_horizontal_triangle(self):
+        result=floor_surface_projection([[(0,0,0),(2,0,0),(2,2,0)],
+                                         [(0,0,0),(2,2,0),(0,2,.016)],
+                                         [(0,0,0),(0,0,1),(0,2,0)]])
+        self.assertAlmostEqual(4,Polygon(result['polygon']).area)
+        self.assertEqual(0,result['floorZ'])
+        self.assertEqual(2,result['boundaryExtractionVersion'])
+
+    def test_real_threshold_preserved_without_changing_floor_datum(self):
+        result=floor_surface_projection([[(0,0,0),(4,0,0),(0,4,0)],
+                                         [(4,0,.01),(4,1,.01),(4.2,0,.01)]])
+        self.assertEqual(0,result['floorZ'])
+        self.assertAlmostEqual(8.1,sum(Polygon(r['polygon']).area for r in result['regions']))
+
     def test_largest_coplanar_floor_ignores_smaller_raised_thresholds(self):
         main = SimpleNamespace(area=24.0)
         threshold_a = SimpleNamespace(area=.12)

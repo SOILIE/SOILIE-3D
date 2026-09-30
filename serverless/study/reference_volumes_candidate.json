@@ -6,12 +6,14 @@
   "scope": "Named product examples, not a representative size distribution or acceptable-size limits. Product choices were made to cover category gaps, not to fit review preferences. Values describe assembled external envelopes, excluding loose cables. Dimensions use source units; diameter is repeated for two horizontal axes only for rotationally symmetric envelopes. Missing or ambiguous dimensions are not imputed.",
   "selectionPolicy": "Expand categories present in frozen source scenes using manufacturer product measurements. Include ordinary size/configuration variation where sourced. Product selection is not random and furniture examples remain predominantly IKEA. Category and pair coverage do not establish representativeness. No mean, quantile, or min/max of these products is a normality threshold.",
   "unresolvedCategories": {
-    "book": "A complete closed-book envelope, including thickness, is not yet verified from a publisher.",
     "cap": "Head circumference and brim length alone do not specify the worn or resting envelope.",
     "cereal box": "A single retail box must be distinguished from a shipping case.",
     "coffee mug": "Handle-inclusive width, body depth and height must all be verified. Capacity is not envelope volume."
   },
   "products": [
+    {"id":"penguin-little-prince-9780241508664","category":"book","dimensions":[205,18,135],"unit":"mm","source":"https://www.penguin.co.uk/books/57300/the-little-prince-by-saint-exupery-antoine-de/9780241508664","basis":"Publisher's closed hardback dimensions for this ISBN, including thickness; not a shipping box or open spread."},
+    {"id":"penguin-sapiens-9780099590088","category":"book","dimensions":[198,40,129],"unit":"mm","source":"https://www.penguin.co.uk/books/419795/sapiens-by-harari-yuval-noah/9780099590088","basis":"Publisher's closed paperback dimensions for this ISBN, including thickness; directly fetched product details, not the differing search snippet."},
+    {"id":"penguin-sapiens-graphic-9781787332812","category":"book","dimensions":[285,30,214],"unit":"mm","source":"https://www.penguin.co.uk/books/442024/sapiens-a-graphic-history-volume-1-by-vandermeulen-yuval-noah-harari-with-david/9781787332812","basis":"Publisher's closed hardback graphic-book dimensions for this ISBN, including thickness."},
     {"id":"tarva-twin","category":"bed","dimensions":[78.375,41.375,36.25],"unit":"in","source":"https://www.ikea.com/us/en/p/tarva-bed-frame-white-stained-30586212/","basis":"Bed-frame length, width and headboard height; includes empty space below and above mattress."},
     {"id":"malm-queen","category":"bed","dimensions":[83.125,66.125,39.375],"unit":"in","source":"https://www.ikea.com/us/en/p/malm-bed-frame-white-90249483/","basis":"Bed-frame length, width and headboard height, not mattress volume."},
     {"id":"micke-compact","category":"desk","dimensions":[41.375,19.625,29.5],"unit":"in","source":"https://www.ikea.com/us/en/p/micke-desk-white-80213074/","basis":"Assembled width, depth, height."},

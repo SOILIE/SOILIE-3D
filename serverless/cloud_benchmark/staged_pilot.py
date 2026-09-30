@@ -263,7 +263,7 @@ def load_frozen(root):
 
 
 def validate_answer(answer, version=VERSION, evidence=None, profile=None):
-    if version in ('functional-use-v2', 'functional-use-v3'):
+    if version in ('functional-use-v2', 'functional-use-v3', 'functional-use-v4'):
         from serverless.study.structured_rubric import validate_observations
         if not isinstance(answer, dict) or set(answer) != set(SCHEMA['required']) | {'observations'}:
             raise ValueError('Invalid structured response fields')
@@ -295,7 +295,7 @@ def record(root, assignment_id, answer, receipt):
     protocol = load_frozen(root)
     assignment = next(row for row in protocol["assignments"] if row["assignmentId"] == assignment_id)
     reviewer = next(row for row in protocol["reviewers"] if row["reviewerId"] == assignment["reviewerId"])
-    version = protocol.get('rubricVersion', VERSION)
+    version = reviewer.get('rubricVersion', protocol.get('rubricVersion', VERSION))
     validate_answer(answer, version, assignment.get('evidence'), assignment['profile'])
     packet = read(Path(root) / "packets/index.json")[assignment_id]
     validate_receipt(receipt, protocol, reviewer, packet, assignment)

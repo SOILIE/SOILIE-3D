@@ -98,3 +98,41 @@ def polygon_components(geometry):
     if not polygons:
         raise ValueError(f"Tagged floor union has no polygonal component: {geometry.geom_type}")
     return sorted(polygons, key=lambda polygon: (-polygon.area, polygon.bounds))
+
+
+def floor_surface_projection(triangles):
+    """Project every tagged native floor face, including gently sloped faces.
+
+    A visible support tag identifies the floor; exact horizontality does not.
+    Door thresholds and slightly warped n-gons are still real floor surfaces.
+    Keep the dominant planar elevation as the existing scalar floor datum, but
+    never use that datum to discard part of the room's footprint. No hull,
+    furniture-based envelope, hole filling or vertex movement is permitted.
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    projected, horizontal = [], []
+    for triangle in triangles:
+        if len(triangle) != 3 or not all(len(p) == 3 and all(math.isfinite(v) for v in p) for p in triangle):
+            raise ValueError('Three finite XYZ vertices required per floor triangle')
+        polygon = Polygon([(p[0],p[1]) for p in triangle])
+        if polygon.area <= 1e-12:
+            continue  # A vertical edge face has no floor footprint.
+        if not polygon.is_valid:
+            raise ValueError('Invalid tagged floor triangle')
+        projected.append(polygon)
+        heights = [p[2] for p in triangle]
+        if max(heights)-min(heights) <= 1e-5:
+            horizontal.append((sum(heights)/3,polygon))
+    layer=largest_coplanar_surface(horizontal)
+    boundaries=polygon_components(unary_union(projected))
+    if any(not p.is_valid for p in boundaries):
+        raise ValueError('Invalid projected native floor')
+    regions=[{'polygon':list(p.exterior.coords)[:-1],
+              'holes':[list(r.coords)[:-1] for r in p.interiors]} for p in boundaries]
+    result={'floorZ':layer['elevation'],
+            'boundarySource':'XY projection of every tagged visible support triangle of the native floor, including sloped faces and thresholds',
+            'boundaryExtractionVersion':2}
+    if len(regions)==1: result.update(regions[0])
+    else: result['regions']=regions
+    return result
