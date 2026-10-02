@@ -184,3 +184,24 @@ quantitative measurement pass.
 python -m serverless.cloud_benchmark.complete_coverage --backend . --website <website-root> --contacts .codex/contact-audit --output .codex/publication-coverage
 python -m serverless.cloud_benchmark.publish_counterbalanced --directory .codex/publication-coverage --version 0.2.2 --corrected .codex/contact-audit/corrected-rows.json
 ```
+
+### Common enclosing-box support diagnostic
+
+`compile_box_support` downloads the exact quantitative cohort from the public
+archive, verifies every source hash, and computes vertical box separation on
+local CPUs. LayoutGPT uses the already verified source-room metre scale.
+No meshes, layouts or AI judgments are regenerated. Boxes with tilted faces
+use convex-face constraints, not world-axis-aligned height approximations.
+Ceiling/wall-mounted categories are excluded by one shared category policy.
+The floor is a reference plane: floor holes and furniture's empty internal
+spaces are outside this diagnostic. Touching or crossing boxes have zero
+separation, which is not evidence of real mesh contact or stable support.
+
+```powershell
+python -m serverless.cloud_benchmark.compile_box_support --publication .codex/publication-coverage --output .codex/publication-box --cache .codex/box-support/inputs
+python -m serverless.cloud_benchmark.publish_counterbalanced --directory .codex/publication-box --version 0.2.2
+```
+
+The box export retains per-object distances, source geometry hashes, exclusions,
+and floor versus other-box candidates. Once the verified export is archived,
+the downloaded geometry cache can be removed; it is reproducible from S3.
