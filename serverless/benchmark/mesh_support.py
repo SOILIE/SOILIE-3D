@@ -53,3 +53,19 @@ legacy evidence without identities cannot be retrospectively classified.
             raise ValueError('Invalid supporting surface identity')
         result.update(supportKind=identity['kind'], supportId=identity['id'])
     return result
+
+
+def verify_floor_contact(sample, own, floor, floor_id):
+    """A crossing mesh has no positive separation from the floor.
+
+    Downward rays from a penetrating foot miss the upper floor surface. Test
+    actual triangle crossings before interpreting their next hit as a gap.
+    Penetration remains a separate measurement, never a successful-support flag.
+    This is observation only: no transforms, geometry or model behavior change.
+    """
+    result = dict(sample, source='mesh-ray-floor-contact', samplingVersion=3)
+    crossings = len(own.overlap(floor))
+    result['floorSurfaceCrossings'] = crossings
+    if crossings:
+        result.update(gapM=0.0, supportKind='floor', supportId=floor_id)
+    return result

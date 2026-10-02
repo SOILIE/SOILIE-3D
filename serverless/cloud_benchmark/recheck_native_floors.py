@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import urllib.request
+import tarfile
 
 def read(path):
     return json.loads(Path(path).read_bytes())
@@ -57,7 +58,7 @@ def prepare(backend, output):
     return {'jobs':len(jobs)}
 
 
-def run(root, runtime, backend, workers):
+def run(root, runtime, backend, workers, reader='reextract_infinigen_floor.py', contacts_only=False):
     root,runtime,backend=map(lambda p:Path(p).resolve(),(root,runtime,backend))
     if not root.is_relative_to(backend/'.codex'):
         raise ValueError('Scratch must be inside this backend .codex')
@@ -72,12 +73,25 @@ def run(root, runtime, backend, workers):
         urllib.request.urlretrieve(job['url'],archive)
         with archive.open('rb') as stream:
             if hashlib.file_digest(stream,'sha256').hexdigest()!=job['archiveSha256']: raise ValueError('Archive changed')
-        with gzip.open(archive,'rb') as src,(scratch/'scene.blend').open('wb') as dst:
-            shutil.copyfileobj(src,dst)
-        for name,key in [('solve_state.json','state'),('MaskTag.json','tags')]:
-            (scratch/name).write_text(job[key],encoding='utf-8')
+        if 'members' in job:
+            # Extract just the three allowlisted files to explicit destinations;
+            # never trust archive paths or extract the full tar tree.
+            with tarfile.open(archive,'r:gz') as bundle:
+                for name in ('scene.blend','solve_state.json','MaskTag.json'):
+                    member='scene/'+name
+                    with bundle.extractfile(member) as src,(scratch/name).open('wb') as dst:
+                        shutil.copyfileobj(src,dst)
+                    with (scratch/name).open('rb') as stream:
+                        if hashlib.file_digest(stream,'sha256').hexdigest()!=job['members'][member]:
+                            raise ValueError('Native member changed')
+        else:
+            with gzip.open(archive,'rb') as src,(scratch/'scene.blend').open('wb') as dst:
+                shutil.copyfileobj(src,dst)
+            for name,key in [('solve_state.json','state'),('MaskTag.json','tags')]:
+                (scratch/name).write_text(job[key],encoding='utf-8')
         env=dict(os.environ,PYTHONPATH=f'{backend}:{runtime}/infinigen-env/lib/python3.10/site-packages:{runtime}/infinigen',OMP_NUM_THREADS='1',OPENBLAS_NUM_THREADS='1')
-        cmd=[str(runtime/'tools/blender-3.6.0-linux-x64/blender'),'-b',str(scratch/'scene.blend'),'--threads','1','--python-use-system-env','--python-exit-code','2','--python',str(backend/'serverless/benchmark/reextract_infinigen_floor.py'),'--','--state',str(scratch/'solve_state.json'),'--room-type',job['roomType'],'--output',str(target)]
+        cmd=[str(runtime/'tools/blender-3.6.0-linux-x64/blender'),'-b',str(scratch/'scene.blend'),'--threads','1','--python-use-system-env','--python-exit-code','2','--python',str(backend/'serverless/benchmark'/reader),'--','--state',str(scratch/'solve_state.json'),'--room-type',job['roomType'],'--output',str(target)]
+        if contacts_only: cmd.append('--contacts-only')
         with (scratch/'read.log').open('w') as log:
             subprocess.run(cmd,env=env,cwd=runtime/'infinigen',stdout=log,stderr=log,timeout=240,check=True)
         result=read(target)
@@ -97,6 +111,8 @@ if __name__=='__main__':
     parser.add_argument('--backend',type=Path,required=True)
     parser.add_argument('--runtime',type=Path)
     parser.add_argument('--workers',type=int,default=8)
+    parser.add_argument('--reader',choices=['reextract_infinigen_floor.py','inspect_infinigen_support.py'],default='reextract_infinigen_floor.py')
+    parser.add_argument('--contacts-only',action='store_true')
     args=parser.parse_args()
     if args.runtime: run(**vars(args))
     else: print(prepare(args.backend,args.root))
