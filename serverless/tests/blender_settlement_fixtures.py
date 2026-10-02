@@ -131,6 +131,27 @@ class SettlementFixtures(unittest.TestCase):
         self.assertEqual(2, mounted.location.z)
         self.assertAlmostEqual(2.2, book.location.z, delta=CONTACT_TOLERANCE_M)
 
+    def test_window_assemblies_do_not_suspend_furniture(self):
+        for label in ('window', 'opaque_window', 'blinds', 'curtain', 'curtain.1'):
+            with self.subTest(label=label):
+                self.setUp()
+                mounted = cube(label, (0,0,1), (.3,1,.1))
+                bag = cube('computer_bag', (0,0,1.3), (.2,.2,.3))
+                self.settle(**{label:mounted, 'computer_bag':bag})
+                self.assertEqual(1, mounted.location.z)
+                self.assertAlmostEqual(.15, bag.location.z, delta=CONTACT_TOLERANCE_M)
+                self.assertEqual([], self.settle(**{label:mounted, 'computer_bag':bag}))
+
+    def test_excluding_window_dressings_preserves_table_support_and_stacks(self):
+        mounted = cube('curtain', (0,0,1.4), (.3,1,.1))
+        table = cube('table', (0,0,.5), (1,1,1))
+        book = cube('book', (0,0,1.6), (.2,.2,.2))
+        phone = cube('phone', (0,0,2), (.1,.1,.1))
+        self.settle(curtain=mounted, table=table, book=book, telephone=phone)
+        self.assertEqual(1.4, round(mounted.location.z, 6))
+        self.assertAlmostEqual(1.1, book.location.z, delta=CONTACT_TOLERANCE_M)
+        self.assertAlmostEqual(1.25, phone.location.z, delta=CONTACT_TOLERANCE_M*2)
+
     def test_duplicate_ground_object_is_not_stacked(self):
         from modules import render
         from unittest.mock import patch

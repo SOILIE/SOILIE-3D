@@ -84,11 +84,24 @@ class BoxSupportTests(unittest.TestCase):
         self.assertEqual('floor',measure_box_support(source)['objects'][1]['supportKind'])
 
     def test_ceiling_lights_are_not_misclassified_as_floating_furniture(self):
-        for label in ('ceiling lamp','pendant_lamp','ceiling_light','wall lamp'):
+        for label in ('ceiling lamp','pendant_lamp','ceiling_light','wall lamp','wall_art','wall art'):
             source=scene(item('light',[0,0,2],[.2,.2,.2])); source['objects'][0]['label']=label
             result=measure_box_support(source)
             self.assertEqual(['light'],result['excludedObjects'])
             self.assertIsNone(result['gapCm'])
+
+    def test_reclassification_preserves_distances_and_matches_fresh_measurement(self):
+        from serverless.benchmark.box_support import reclassify_measurement
+        source = scene(item('art',[0,0,2],[1,1,1]), item('chair',[3,0,1],[1,1,1]))
+        old = measure_box_support(source)
+        old['objects'][0]['label'] = 'wall_art'
+        source['objects'][0]['label'] = 'wall_art'
+        previous = deepcopy(old)
+        corrected = reclassify_measurement(old)
+        self.assertEqual(measure_box_support(source), corrected)
+        self.assertEqual(corrected, reclassify_measurement(corrected))
+        self.assertEqual(previous, old)
+        self.assertEqual(previous['objects'][1], corrected['objects'][0])
 
     def test_archive_and_scale_checksums_and_centimetres(self):
         root=Path(__file__).resolve().parents[2]/'.codex/tests';root.mkdir(parents=True,exist_ok=True)

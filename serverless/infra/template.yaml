@@ -11,7 +11,7 @@ Parameters:
     NoEcho: true
   ModelVersion:
     Type: String
-    Default: 4.0.2
+    Default: 4.0.3
   SourceCommit:
     Type: String
     Default: local
