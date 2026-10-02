@@ -159,8 +159,8 @@ service used by the API. It never synthesizes judgements. Use the existing
 contexts finish. Publication must also pass the website evidence/browser checks.
 # Complete comparison coverage
 
-`complete_coverage.py` combines the retained 10,000 SOILIE rooms, 423 released
-LayoutGPT bedrooms, all 366 recorded LayoutGPT API proposals, and 569 completed
+`complete_coverage.py` combines the retained 10,000 SOILIE rooms, all 476 released
+LayoutGPT layouts, all 366 recorded LayoutGPT API proposals, and 569 completed
 Infinigen CPU outputs. Unmatched proposals stay in geometry distributions.
 The 71 completed Infinigen Lambda calls contribute timing and usage records;
 their saved artifacts lack the surface-tag dictionary needed by the pinned
