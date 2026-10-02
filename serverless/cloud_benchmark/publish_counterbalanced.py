@@ -59,6 +59,11 @@ def validate(directory):
     if Counter(r['roomType'] for r in records['rows'] if r['model']=='soilie')!={'bedroom':5000,'living_room':5000}:
         raise ValueError('SOILIE corpus is incomplete')
     names=FILES+(AUDIT_FILES if 'coverage' in document else ())
+    if 'boxSupport' in document:
+        name='box-support-measurements.json'
+        if digest((directory/name).read_bytes())!=document['boxSupport']['sha256']:
+            raise ValueError('Box support measurements changed')
+        names+=(name,)
     files={name:('application/json',(directory/name).read_bytes()) for name in names}
     for mime,raw in files.values():
         import json
