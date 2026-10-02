@@ -60,12 +60,12 @@ jobs:
       - name: Container-smoke all selectable V4 assets
         run: >-
           docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
-          --background --python /var/task/serverless/renderer/asset_smoke.py -- /var/task/v4
+          --background --python-exit-code 2 --python /var/task/serverless/renderer/asset_smoke.py -- /var/task/v4
 
       - name: Verify window assemblies cut one wall opening
         run: >-
           docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
-          --background --python /var/task/serverless/tests/blender_window_chisel_fixtures.py
+          --background --python-exit-code 2 --python /var/task/serverless/tests/blender_window_chisel_fixtures.py
 
       - name: Verify furniture support and window-assembly exclusions
         run: >-
