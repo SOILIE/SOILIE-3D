@@ -13,10 +13,29 @@ from scipy.optimize import linprog
 
 from serverless.benchmark.geometry import Box, WALL_MOUNTED, canonical_label, furniture
 
-METHOD = 'vertical-enclosing-box-separation-v1'
+METHOD = 'vertical-enclosing-box-separation-v2'
 EPSILON_M = 1e-7
 MOUNTED = WALL_MOUNTED | {'ceiling_lamp', 'pendant_lamp', 'ceiling_light',
-                          'wall_lamp', 'wall_light', 'wall_shelf'}
+                          'wall_lamp', 'wall_light', 'wall_shelf', 'wall_art'}
+
+
+def reclassify_measurement(record):
+    """Reapply target eligibility without recomputing unchanged geometry.
+
+    A target's eligibility does not change its availability as a candidate
+    support for another object. Existing per-object distances remain valid.
+    """
+    from copy import deepcopy
+    result = deepcopy(record)
+    removed = [o for o in result['objects'] if canonical_label(o['label']) in MOUNTED]
+    result['objects'] = [o for o in result['objects'] if canonical_label(o['label']) not in MOUNTED]
+    result['excludedObjects'] = sorted(set(result['excludedObjects']) | {o['id'] for o in removed})
+    result['method'] = METHOD
+    for target, source, kind in [('gapCm','gapCm',None), ('floorGapCm','gapCm','floor'),
+                                  ('objectGapCm','gapCm','object'), ('belowFloorCm','belowFloorCm',None)]:
+        values = [o[source] for o in result['objects'] if kind is None or o['supportKind'] == kind]
+        result[target] = statistics.fmean(values) if values else None
+    return result
 
 
 def vertical_gap(upper, lower):

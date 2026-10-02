@@ -65,9 +65,33 @@ def validate(directory):
             raise ValueError('Box support measurements changed')
         names+=(name,)
     files={name:('application/json',(directory/name).read_bytes()) for name in names}
+    # Companion explanations and tabular exports share the exact measurement
+    # hashes. Keep them in the same discoverable analysis archive as the data.
+    notes_path=directory/'support-explanations.json'
+    if notes_path.exists():
+        notes=read(notes_path)
+        if notes['evidenceDigest']!=expected or any(
+                name not in names or digest((directory/name).read_bytes())!=checksum
+                for name,checksum in notes['inputs'].items()):
+            raise ValueError('Support explanations use stale evidence')
+        files['support-explanations.json']=('application/json',notes_path.read_bytes())
     for mime,raw in files.values():
         import json
         packed(json.loads(raw))
+    download_path=directory/'downloads/manifest.json'
+    if download_path.exists():
+        downloads=read(download_path)
+        if any(name not in names or digest((directory/name).read_bytes())!=checksum
+               for name,checksum in downloads['inputs'].items()):
+            raise ValueError('Downloads use stale measurements')
+        allowed={'room-results.csv':'text/csv; charset=utf-8',
+                 'room-results.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+        if set(downloads['files'])!=set(allowed): raise ValueError('Unexpected download filenames')
+        for name,mime in allowed.items():
+            raw=(directory/'downloads'/name).read_bytes()
+            if digest(raw)!=downloads['files'][name]: raise ValueError('Download checksum differs')
+            files['downloads/'+name]=(mime,raw)
+        files['downloads/manifest.json']=('application/json',download_path.read_bytes())
     for example in document.get('illustrations',[]):
         name=example['image'].removeprefix('benchmarks/')
         if not re.fullmatch(r'illustrations/[a-f0-9]{24}\.svg',name): raise ValueError('Unsafe figure path')

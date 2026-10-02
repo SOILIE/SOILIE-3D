@@ -17,6 +17,11 @@ FIXED_CLASSES = frozenset({
     'door', 'floor', 'ceiling', 'switch', 'power_outlet', 'clock', 'picture',
     'painting', 'mirror',
 })
+# Window assemblies are mounted decoration/openings, not furniture platforms.
+# Their thin frames/folds can intercept a vertical contact query and otherwise
+# suspend a bag beside the wall. Keep the assembly fixed, but settle furniture
+# against the floor or eligible furniture below it instead.
+NON_SUPPORT_CLASSES = frozenset({'window', 'opaque_window', 'blinds', 'curtain'})
 
 
 def _cross(a, b):
@@ -180,10 +185,10 @@ Only Z translation changes; ordering and ties use stable instance IDs.
     def bottom(entry):
         return min((entry[1].matrix_world @ vertex.co).z for vertex in entry[1].data.vertices)
     entries.sort(key=lambda entry: (bottom(entry), entry[0]))
-    # Mounted objects must not move, but their real surfaces can still support
-    # another item. Eligibility for movement is not eligibility as a support.
+    # Eligibility for movement is distinct from eligibility as a support.
+    # In particular, a fixed window or covering must not suspend furniture.
     settled = [(name, value['blender_obj']) for name, value in inputs.items()
-               if name.split('.')[0].lower() in FIXED_CLASSES]
+               if name.split('.')[0].lower() in FIXED_CLASSES - NON_SUPPORT_CLASSES]
     moves = []
     surfaces = {}
     for name, obj in entries:
