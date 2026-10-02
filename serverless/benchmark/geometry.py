@@ -185,7 +185,7 @@ def measure(scene):
         # Version 1 used only nine XY rays, which can miss narrow feet and
         # incorrectly report a grounded table as floating. Never publish those
         # superseded gap observations as physical-support evidence.
-        methods = {('mesh-ray-samples', 2), ('mesh-vertical-contact', 3),
+        methods = {('mesh-ray-samples', 2), ('mesh-ray-floor-contact', 3), ('mesh-vertical-contact', 3),
                    ('mesh-extremum-floor-contact', 3)}
         samples = [item['support'] for item in items if (
             item.get('support', {}).get('source'), item.get('support', {}).get('samplingVersion')) in methods]

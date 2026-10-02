@@ -16,6 +16,7 @@ FILES=('comparison.json','status.json','room-measurements.json','support-measure
        'cost-measurements.json','layoutgpt-scale.json','publication-inputs.json','native-floor-measurements.json',
        'review-manifest.json','review-examples.json','ai-pilot-summary.json','ai-pilot-responses.json',
        'ai-pilot-infinigen-summary.json','ai-pilot-infinigen-responses.json')
+AUDIT_FILES=('timing-measurements.json','coverage-audit.json','native-contact-measurements.json')
 
 
 def validate(directory):
@@ -57,7 +58,8 @@ def validate(directory):
         raise ValueError('Geometry counts differ')
     if Counter(r['roomType'] for r in records['rows'] if r['model']=='soilie')!={'bedroom':5000,'living_room':5000}:
         raise ValueError('SOILIE corpus is incomplete')
-    files={name:('application/json',(directory/name).read_bytes()) for name in FILES}
+    names=FILES+(AUDIT_FILES if 'coverage' in document else ())
+    files={name:('application/json',(directory/name).read_bytes()) for name in names}
     for mime,raw in files.values():
         import json
         packed(json.loads(raw))
@@ -88,7 +90,14 @@ def publish(directory, version, corrected=None):
         from serverless.benchmark.stimuli import diagram
         index={r['id']:r for r in manifest['quantitativeRooms']}
         for row in read(corrected)['rows']:
-            scene=row['scene']; entry=index[scene['id']]
+            scene=row['scene']
+            if scene['id'] not in index:
+                entry={'id':scene['id'],'model':scene['model'],'roomType':scene['roomType'],
+                    'objects':[obj['label'] for obj in scene['objects']],
+                    'artifacts':{},'uses':['published-quantitative-cohort']}
+                index[scene['id']]=entry
+                manifest['quantitativeRooms'].append(entry)
+            entry=index[scene['id']]
             for label,raw,ext,mime in [('geometry',packed(row),'json','application/json'),('diagram',diagram(scene).encode(),'svg','image/svg+xml')]:
                 key=PREFIX+'rooms/'+scene['model']+'/'+scene['roomType']+'/'+scene['id']+'/'+digest(raw)[:24]+'.'+ext
                 receipt=upload(client,bucket_name,key,raw,mime,digest(raw),len(raw))

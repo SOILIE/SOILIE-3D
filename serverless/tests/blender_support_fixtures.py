@@ -11,7 +11,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from serverless.benchmark.mesh_support import sample_support
+from serverless.benchmark.mesh_support import sample_support, verify_floor_contact
 
 
 def box(center, size):
@@ -85,6 +85,21 @@ class MeshSupportFixtures(unittest.TestCase):
     def test_below_floor_uses_actual_mesh_vertices(self):
         vertices, tree = mesh(box((0,0,0), (.2,.2,.2)))
         self.assertAlmostEqual(.1, sample_support(vertices, tree, [self.floor], 0)['belowFloorM'], places=5)
+
+    def test_penetrating_foot_is_not_reported_as_floating(self):
+        shifted = [([(x,y,z-.02) for x,y,z in points], faces) for points,faces in self.parts]
+        vertices, tree = mesh(*shifted)
+        sparse = sample_support(vertices, tree, [self.floor], 0)
+        checked = verify_floor_contact(sparse, tree, self.floor, 'Floor')
+        self.assertEqual(0, checked['gapM'])
+        self.assertGreater(checked['floorSurfaceCrossings'], 0)
+        self.assertAlmostEqual(.02, checked['belowFloorM'], places=5)
+
+    def test_floor_check_preserves_real_floating_gap(self):
+        vertices, tree = mesh(box((0,0,.3), (.2,.2,.2)))
+        checked = verify_floor_contact(sample_support(vertices, tree, [self.floor], 0), tree, self.floor, 'Floor')
+        self.assertAlmostEqual(.2, checked['gapM'], places=5)
+        self.assertEqual(0, checked['floorSurfaceCrossings'])
 
 
 if __name__ == '__main__':

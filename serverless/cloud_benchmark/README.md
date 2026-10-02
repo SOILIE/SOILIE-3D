@@ -157,3 +157,30 @@ unique coverage and persists those answers through the same immutable study
 service used by the API. It never synthesizes judgements. Use the existing
 `study.export_pilot --require-complete` for each baseline only after all ten
 contexts finish. Publication must also pass the website evidence/browser checks.
+# Complete comparison coverage
+
+`complete_coverage.py` combines the retained 10,000 SOILIE rooms, 423 released
+LayoutGPT bedrooms, all 366 recorded LayoutGPT API proposals, and 569 completed
+Infinigen CPU outputs. Unmatched proposals stay in geometry distributions.
+The 71 completed Infinigen Lambda calls contribute timing and usage records;
+their saved artifacts lack the surface-tag dictionary needed by the pinned
+native floor exporter, so no geometry/contact scores are imputed to them.
+
+CPU timing distributions retain hardware, thread allocation and workload.
+Concurrent latency is not isolated latency or aggregate batch throughput.
+Unused requests in deliberately stopped API plans are not attempted calls:
+every actual ledger entry must have a matching, verified completed response.
+Uncertain charges or missing actual calls block publication.
+
+Read saved Infinigen scenes with `inspect_infinigen_support.py --contacts-only`
+through `recheck_native_floors.py`. Every native object keeps its transforms.
+Triangle crossings with the floor have zero positive separation, while
+below-floor depth remains separate. The dense diagnostic mode checks outliers
+without replacing other measurements. Never describe zero separation as proof
+of stable support. Frozen AI packets and responses are not modified by this
+quantitative measurement pass.
+
+```powershell
+python -m serverless.cloud_benchmark.complete_coverage --backend . --website <website-root> --contacts .codex/contact-audit --output .codex/publication-coverage
+python -m serverless.cloud_benchmark.publish_counterbalanced --directory .codex/publication-coverage --version 0.2.2 --corrected .codex/contact-audit/corrected-rows.json
+```
