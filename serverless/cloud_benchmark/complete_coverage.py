@@ -15,6 +15,7 @@ import numpy as np
 
 from serverless.benchmark.geometry import measure, summarize
 from serverless.benchmark.layoutgpt_scale import physical_scene
+from serverless.benchmark.import_layoutgpt import verify_source
 from serverless.benchmark.cost import token_charge
 from serverless.benchmark.archive import packed
 from serverless.benchmark.publish_comparison import LABELS, compare
@@ -142,8 +143,8 @@ def compile_all(backend, website, contacts, output):
     # Metadata comes from the authors, keyed by room ID and verified against the
     # download manifests. It supplies physical scale, NOT furniture meshes.
     npz={}
-    for directory in (scratch/'layoutgpt-scale-cache',scratch/'benchmark/layoutgpt-bedroom-timing-20/data',scratch/'benchmark/layoutgpt-controlled/data'):
-        for path in directory.rglob('boxes.npz'): npz.setdefault(path.parent.name,path)
+    for path in scratch.rglob('boxes.npz'):
+        npz.setdefault(path.parent.name,path)
     scale=read(source/'layoutgpt-scale.json'); scale_ids={r['sceneId'] for r in scale['rooms']}
     calls=[]; input_hashes=[]
     for folder in EXPORTS:
@@ -169,6 +170,25 @@ def compile_all(backend, website, contacts, output):
                     'roomAreaM2':physical_metrics['roomArea'],'connectedClearancePct':physical_metrics['connectedClearancePct']})
                 scale_ids.add(identity)
     if len(calls)!=366 or len({r['id'] for r in calls})!=366: raise ValueError('API coverage mismatch')
+    released_path=scratch/'benchmark/layoutgpt/gpt4.livingroom.k-similar.k_4.px_regular.json'
+    verify_source(released_path.read_bytes(),'living_room')
+    released=read(released_path)
+    original_rows=read(scratch/'benchmark/soilie-platform-grid-final/evidence/measured-scenes.json')['rows']
+    for row in original_rows:
+        scene=row['scene']; identity=scene['id']
+        if scene['model']!='layoutgpt' or scene['roomType']!='living_room' or identity in by_id: continue
+        source_id=released[scene['provenance']['row']]['query_id']
+        metadata=npz[source_id]
+        with np.load(metadata,allow_pickle=False) as data:
+            physical,mpp=physical_scene(scene,data['floor_plan_vertices'],require_prompt_match=False)
+        metrics=deepcopy(row['metrics']); physical_metrics=measure(physical)
+        metrics['connectedClearancePct']=physical_metrics['connectedClearancePct']
+        metrics['unavailable'].pop('clearance',None)
+        by_id[identity]={'sceneId':identity,'model':'layoutgpt','roomType':'living_room','metrics':metrics}
+        changed.append({'scene':scene,'metrics':metrics})
+        scale['rooms'].append({'sceneId':identity,'roomType':'living_room','sourceRoomId':source_id,
+            'sceneSha256':digest(scene),'metadataSha256':digest(metadata.read_bytes()),'metresPerPixel':mpp,
+            'roomAreaM2':physical_metrics['roomArea'],'connectedClearancePct':physical_metrics['connectedClearancePct']})
     # Rebuild timing from receipts, not from whichever scenes happened to match
     # an AI pair. Never pool different CPUs into one latency distribution.
     timed=old_infinigen_timing(scratch,original)
@@ -229,7 +249,7 @@ def compile_all(backend, website, contacts, output):
         'apiCalls':dict(Counter(r['roomType'] for r in calls)),
         'cpuInfinigen':dict(Counter(r['roomType'] for r in timed)),
         'cloudInfinigen':{'bedroom':34,'living_room':37},
-        'scope':'All 10,000 retained SOILIE rooms; 423 released LayoutGPT bedrooms and all 366 completed API proposals; 40 room-scale and 529 controlled Infinigen rooms. No quality or matching exclusions from these geometry distributions.',
+        'scope':'All 10,000 retained SOILIE rooms; all 476 released LayoutGPT layouts and all 366 completed API proposals; 40 room-scale and 529 controlled Infinigen rooms. No quality or matching exclusions from these geometry distributions.',
         'cloudGeometry':'The 71 Lambda timing outputs lack the saved surface-tag dictionary required by the pinned native floor exporter. Their construction times and charges are included; they are not assigned geometry/contact scores.',
         'meshAvailability':'LayoutGPT returns category, position, dimensions and angle. No vertices, faces or mesh asset IDs are returned. Its separate ATISS stage retrieves 3D-FUTURE meshes; running the API ourselves does not create these assets.',
         'inputExportSha256':input_hashes}
@@ -247,7 +267,7 @@ def compile_all(backend, website, contacts, output):
     document.pop('evidenceDigest',None); document['evidenceDigest']=digest(document)
     packed(document); write_json(output/'comparison.json',document)
     write_json(contacts/'corrected-rows.json',{'rows':changed})
-    status=read(source/'status.json'); status['analysis']['summary']='10,000 SOILIE, 789 LayoutGPT, 40 room-scale and 529 controlled-inventory Infinigen rooms; 480 AI-reviewed pairs.'
+    status=read(source/'status.json'); status['analysis']['summary']='10,000 SOILIE, 842 LayoutGPT, 40 room-scale and 529 controlled-inventory Infinigen rooms; 480 AI-reviewed pairs.'
     write_json(output/'status.json',status)
     inputs=read(source/'publication-inputs.json')
     inputs.update(completeApiExportSha256=input_hashes,roomMeasurementsSha256=digest((output/'room-measurements.json').read_bytes()),
