@@ -1,5 +1,6 @@
 """Blender fixtures for final contact, including non-vertex edge crossings."""
 from pathlib import Path
+import os
 import sys
 import unittest
 from unittest.mock import patch
@@ -7,7 +8,10 @@ from unittest.mock import patch
 import bpy
 from mathutils import Vector
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+ROOT = Path(__file__).resolve().parents[2]
+# Container source lives in v4/ while test/evaluation tools stay in serverless/.
+RUNTIME = Path(os.environ.get('V4_RUNTIME_DIR', ROOT))
+sys.path[:0] = [str(ROOT), str(RUNTIME), str(RUNTIME / 'modules')]
 from modules.support_settlement import CONTACT_TOLERANCE_M, evaluated_surface, settle_objects, surface_drop
 from serverless.benchmark.capture_v4 import support_samples
 from serverless.benchmark.mesh_contact import measure_contacts, rectangular_plane
