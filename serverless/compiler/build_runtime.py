@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
+from modules.triplet_schema import validate_triplet_columns
 from serverless.common.engine import ARCHITECTURE, ROOM_TYPES, normalize_label, public_catalog_document
 
 
@@ -137,6 +138,15 @@ def load_exact_asset_classes(asset_root: Path) -> set[str]:
     }
 
 
+def iter_canonical_triplet_rows(path: Path):
+    """Yield relation rows only after validating the complete canonical header."""
+
+    with path.open(newline="", encoding="utf-8-sig") as source:
+        reader = csv.DictReader(source)
+        validate_triplet_columns(reader.fieldnames or (), source=str(path))
+        yield from reader
+
+
 def _usable_row(row: dict[str, str], allowed: set[str]) -> list[str]:
     values = [value.strip() for value in row.values() if value and value.strip()]
     # The model performs case-sensitive dictionary and asset matching. Do not quietly
@@ -196,15 +206,14 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
     )
 
     triplet_count = 0
-    with (data_root / "triplets.csv").open(newline="", encoding="utf-8-sig") as source:
-        for row in csv.DictReader(source):
-            raw = [row[key].strip() for key in ("objectA", "objectB", "objectC")]
-            normalized = [normalize_label(value) for value in raw]
-            if raw != normalized or any(value not in allowed for value in normalized):
-                continue
-            before = connection.total_changes
-            connection.execute("INSERT OR IGNORE INTO triplets VALUES (?, ?, ?)", normalized)
-            triplet_count += connection.total_changes - before
+    for row in iter_canonical_triplet_rows(data_root / "triplets.csv"):
+        raw = [row[key].strip() for key in ("objectA", "objectB", "objectC")]
+        normalized = [normalize_label(value) for value in raw]
+        if raw != normalized or any(value not in allowed for value in normalized):
+            continue
+        before = connection.total_changes
+        connection.execute("INSERT OR IGNORE INTO triplets VALUES (?, ?, ?)", normalized)
+        triplet_count += connection.total_changes - before
 
     combination_count = 0
     preset_members = {room: set() for room in ROOM_TYPES}

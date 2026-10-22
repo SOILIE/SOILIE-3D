@@ -28,6 +28,10 @@ The repository CSV files remain authoritative for object selection and coordinat
 generation. Native missing-triplet and render failures are reported; they are
 never recovered through another model. The source bathroom combination file
 contains no usable rows, so the bathroom preset is intentionally unavailable.
+The established `generate_model_inputs` adapter remains coordinate-only;
+`generate_model_inputs_with_diagnostics` runs the identical seeded generation
+path and additionally returns the rigid-alignment residuals from its accepted
+coordinate pass.
 
 ## Service flow
 

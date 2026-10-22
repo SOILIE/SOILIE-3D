@@ -21,8 +21,8 @@ BASELINE = {
 # original-file parity check whenever a regression repair touches model code.
 REVIEWED_MAINTENANCE = {
     "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
-    "modules/working_combos.py": "b68ed20b4bd33ba1631100abfb630aab4014bbc6379a3c883f441d141a2cd4cc",
-    "modules/prepare_data.py": "90e8f8561188df46531e9ad2f05c5c0f111cbb6d4d498630c53d5789fdcd34c0",
+    "modules/working_combos.py": "082171caa1161fa6538ad8c4e41f94a5d25a32a2516eb91dba7c5912fb0febbf",
+    "modules/prepare_data.py": "d7d24ec2f5b16b9536fea264c9a2bc5c5ec7e24086b5c79943008590804fb0be",
     "modules/render.py": "6df6f9480b57a1bee14346734b7aa7e120afb5c85d2c942b7758071da1c65399",
     # Mounted window assemblies remain fixed, but cannot support furniture.
     "modules/support_settlement.py": "cd14f0573c0dd41592757c8375b16cb21b4e7c074b9e4cfd8d3d22160ad5e65b",

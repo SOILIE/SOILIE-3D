@@ -135,9 +135,22 @@ When the optional scene-level centroid block is enabled, it also writes:
 
 **Outputs**
 
-* `data/triplets.csv` contains angles and distances between permutations of **3 objects + camera**, aggregated from all frames in all scenes.
+* `data/triplets.csv` contains angles and distances between permutations of **3 objects + camera**, aggregated from all frames in all scenes. Its canonical columns end in `angleBAC, angleOAB, angleOAC`: BAC is the angle between B-A and C-A, OAB is between O-A and B-A, and OAC is between O-A and C-A.
 * `data/object_sizes.csv` contains the object-size estimates produced by the approximation step.
-* The `coords` value passed to `modules/render.py`, containing world-coordinate locations for a novel 3D scene.
+* The `coords` value passed to `modules/render.py`, containing world-coordinate locations for a novel 3D scene. Incoming triplets are joined by a rigid rotation about their shared A-B axis; this keeps A and B fixed and preserves triplet distances instead of fitting an affine transform.
+* Optional JSON-safe alignment diagnostics containing the residual camera mismatch that an A-B-axis rotation cannot remove.
+
+The reviewed historical table used the same physical value order but had the
+three angle labels cycled. Readers reject that legacy header rather than guess.
+Create a separately verified canonical candidate with:
+
+```powershell
+New-Item -ItemType Directory -Force .codex/triplet-angle-fix | Out-Null
+python scripts/migrate_triplet_angles.py data/triplets.csv .codex/triplet-angle-fix/triplets.csv --receipt .codex/triplet-angle-fix/receipt.json
+```
+
+The migration changes only the header and will not replace either its input or
+an existing output.
 
 </details>
 

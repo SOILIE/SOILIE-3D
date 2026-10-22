@@ -26,19 +26,214 @@ from math import sqrt
 import numpy as np
 import pandas as pd
 from collections import Counter
-from collections.abc import Sequence
 from itertools import permutations
 
 from modules.timer import *
 from modules import progress_bar
+from modules.triplet_schema import (
+    TRIPLET_COLUMNS,
+    validate_triplet_columns as _validate_triplet_columns,
+)
 
 
-def transformed_appended_coordinate(rows: Sequence[Sequence[float]]) -> list[float]:
-    '''Return the transformed point appended after the four affine anchors.'''
+ALIGNMENT_EPSILON = 1e-12
 
-    if len(rows) == 0:
-        raise ValueError('The affine transform returned no coordinate rows')
-    return [float(component) for component in rows[-1]]
+
+class TripletGeometryError(ValueError):
+    '''Stored relationship geometry cannot produce a valid rigid scene.'''
+
+
+def require_canonical_triplet_columns(columns, *, source):
+    '''Expose schema failures through the model's geometry error boundary.'''
+
+    try:
+        _validate_triplet_columns(columns, source=source)
+    except ValueError as error:
+        raise TripletGeometryError(str(error)) from error
+
+
+def _coordinate3(name, value):
+    '''Return a finite float64 xyz coordinate or reject the malformed input.'''
+
+    coordinate = np.asarray(value, dtype=np.float64)
+    if coordinate.shape != (3,) or not np.all(np.isfinite(coordinate)):
+        raise TripletGeometryError(f'{name} must contain exactly three finite coordinates')
+    return coordinate
+
+
+def _vector_angle_degrees(first, second, tolerance):
+    '''Return the unsigned angle between vectors, or None for a zero vector.'''
+
+    first_norm = float(np.linalg.norm(first))
+    second_norm = float(np.linalg.norm(second))
+    if first_norm <= tolerance or second_norm <= tolerance:
+        return None
+    cosine = float(np.dot(first, second) / (first_norm * second_norm))
+    return float(math.degrees(math.acos(float(np.clip(cosine, -1.0, 1.0)))))
+
+
+def _rotate_about_axis(point, origin, axis, angle):
+    '''Rotate a point around an origin/axis using Rodrigues' rigid formula.'''
+
+    relative = point - origin
+    axial = float(np.dot(relative, axis))
+    perpendicular = relative - axial * axis
+    cosine = math.cos(angle)
+    sine = math.sin(angle)
+    return origin + (
+        axial * axis
+        + perpendicular * cosine
+        + np.cross(axis, perpendicular) * sine
+    )
+
+
+def align_triplet_about_axis(
+        base_a, base_b, base_camera,
+        source_a, source_b, source_camera, source_c,
+        *, object_name, base_object_name, anchor_names):
+    '''Rigidly align a triplet's camera roll while keeping shared A/B fixed.
+
+    A rotation around A--B is the only rigid transform that can preserve the
+    shared anchors exactly. It can align the cameras' radial directions but
+    cannot change their axial offsets or ranges; those residuals are returned
+    explicitly for downstream scientific review.
+    '''
+
+    base_a = _coordinate3('base_a', base_a)
+    base_b = _coordinate3('base_b', base_b)
+    base_camera = _coordinate3('base_camera', base_camera)
+    source_a = _coordinate3('source_a', source_a)
+    source_b = _coordinate3('source_b', source_b)
+    source_camera = _coordinate3('source_camera', source_camera)
+    source_c = _coordinate3('source_c', source_c)
+
+    if not np.array_equal(source_a, base_a) or not np.array_equal(source_b, base_b):
+        raise TripletGeometryError('Triplet A/B anchors must exactly match the base anchors')
+
+    axis_vector = base_b - base_a
+    axis_length = float(np.linalg.norm(axis_vector))
+    if axis_length <= ALIGNMENT_EPSILON:
+        raise TripletGeometryError('The shared A/B alignment axis must have non-zero length')
+    axis = axis_vector / axis_length
+
+    base_vector = base_camera - base_a
+    source_vector = source_camera - source_a
+    base_axial = float(np.dot(base_vector, axis))
+    source_axial = float(np.dot(source_vector, axis))
+    base_perpendicular = base_vector - base_axial * axis
+    source_perpendicular = source_vector - source_axial * axis
+    base_radial = float(np.linalg.norm(base_perpendicular))
+    source_radial = float(np.linalg.norm(source_perpendicular))
+    base_range = float(np.linalg.norm(base_vector))
+    source_range = float(np.linalg.norm(source_vector))
+    if not all(math.isfinite(value) for value in (
+            axis_length, base_axial, source_axial, base_radial,
+            source_radial, base_range, source_range)):
+        raise TripletGeometryError('Triplet geometry exceeds the finite numeric range')
+    tolerance = ALIGNMENT_EPSILON * max(
+        1.0, axis_length, base_range, source_range,
+    )
+
+    status = 'aligned'
+    if base_radial <= tolerance or source_radial <= tolerance:
+        # Camera roll is not observable when either camera lies on the axis.
+        rotation = 0.0
+        status = 'underdetermined_camera_axis'
+    else:
+        source_direction = source_perpendicular / source_radial
+        base_direction = base_perpendicular / base_radial
+        sine_term = float(np.dot(axis, np.cross(source_direction, base_direction)))
+        cosine_term = float(np.dot(source_direction, base_direction))
+        if abs(sine_term) <= ALIGNMENT_EPSILON and cosine_term < 0.0:
+            # atan2 can return either signed pi for a signed zero. Pin this
+            # physically identical case so diagnostics are reproducible.
+            rotation = math.pi
+        else:
+            rotation = math.atan2(sine_term, cosine_term)
+
+    aligned_c = _rotate_about_axis(source_c, source_a, axis, rotation)
+    rotated_source_camera = _rotate_about_axis(
+        source_camera, source_a, axis, rotation,
+    )
+    if not np.all(np.isfinite(aligned_c)) or not np.all(np.isfinite(rotated_source_camera)):
+        raise TripletGeometryError('Rigid alignment produced non-finite coordinates')
+    source_object_camera_distance = float(np.linalg.norm(source_c - source_camera))
+    rotated_object_camera_distance = float(np.linalg.norm(aligned_c - rotated_source_camera))
+    retained_base_camera_distance = float(np.linalg.norm(aligned_c - base_camera))
+    if not all(math.isfinite(value) for value in (
+            source_object_camera_distance, rotated_object_camera_distance,
+            retained_base_camera_distance, rotation)):
+        raise TripletGeometryError('Alignment diagnostics exceed the finite numeric range')
+
+    diagnostic = {
+        'objectName': str(object_name),
+        'baseObjectName': str(base_object_name),
+        'anchorNames': [str(name) for name in anchor_names],
+        'status': status,
+        'rotationDegrees': float(math.degrees(rotation)),
+        'sourceCameraRange': source_range,
+        'baseCameraRange': base_range,
+        'cameraRangeDelta': source_range - base_range,
+        'sourceCameraAxialOffset': source_axial,
+        'baseCameraAxialOffset': base_axial,
+        'cameraAxialDelta': source_axial - base_axial,
+        'sourceCameraRadialDistance': source_radial,
+        'baseCameraRadialDistance': base_radial,
+        'cameraRadialDelta': source_radial - base_radial,
+        'postRotationCameraPositionResidual': float(
+            np.linalg.norm(rotated_source_camera - base_camera)
+        ),
+        'postRotationCameraDirectionResidualDegrees': _vector_angle_degrees(
+            rotated_source_camera - base_a, base_vector, tolerance,
+        ),
+        'sourceObjectCameraDistance': source_object_camera_distance,
+        'rotatedSourceObjectCameraDistance': rotated_object_camera_distance,
+        'retainedBaseCameraObjectDistance': retained_base_camera_distance,
+        'objectCameraDistanceDelta': (
+            retained_base_camera_distance - source_object_camera_distance
+        ),
+    }
+    return (
+        [float(component) for component in aligned_c],
+        [float(component) for component in rotated_source_camera],
+        diagnostic,
+    )
+
+
+def reconstruct_triplet_coordinates(
+        distance_ab, distance_ac, distance_ao,
+        angle_bac, angle_oab, angle_oac):
+    '''Reconstruct canonical A/B/C/camera coordinates from one named row.'''
+
+    values = np.asarray([
+        distance_ab, distance_ac, distance_ao,
+        angle_bac, angle_oab, angle_oac,
+    ], dtype=np.float64)
+    if not np.all(np.isfinite(values)):
+        raise TripletGeometryError('Triplet geometry must contain only finite values')
+
+    d_ab, d_ac, d_ao, a_bac, a_oab, a_oac = [float(value) for value in values]
+    if d_ab <= 0.0 or d_ac <= 0.0 or d_ao <= 0.0:
+        raise TripletGeometryError('Triplet distances must be greater than zero')
+    a_bac, a_oab, a_oac = map(math.radians, (a_bac, a_oab, a_oac))
+
+    c_x = d_ac * math.cos(a_bac)
+    c_y = d_ac * math.sin(a_bac)
+    if abs(c_y) <= ALIGNMENT_EPSILON:
+        raise TripletGeometryError('angleBAC must place object C away from the A/B axis')
+    camera_x = d_ao * math.cos(a_oab)
+    camera_y = (d_ac * d_ao * math.cos(a_oac) - c_x * camera_x) / c_y
+    camera_z_squared = d_ao ** 2 - camera_x ** 2 - camera_y ** 2
+    tolerance = ALIGNMENT_EPSILON * max(1.0, d_ao ** 2)
+    if camera_z_squared < -tolerance:
+        raise TripletGeometryError('Triplet angles and distances cannot form real coordinates')
+    camera_z = math.sqrt(max(0.0, camera_z_squared))
+    return (
+        [0.0, 0.0, 0.0],
+        [d_ab, 0.0, 0.0],
+        [c_x, c_y, 0.0],
+        [camera_x, camera_y, camera_z],
+    )
 
 
 def gatherTriplets():
@@ -59,13 +254,15 @@ def gatherTriplets():
     for i, filename in enumerate(files):
         print(filename)
         df = pd.read_csv(filename)
+        require_canonical_triplet_columns(df.columns, source=filename)
         df['objectA'] = df['objectA'].apply(lambda x: x.rsplit('_',1)[0])
         df['objectB'] = df['objectB'].apply(lambda x: x.rsplit('_',1)[0])
         df['objectC'] = df['objectC'].apply(lambda x: x.rsplit('_',1)[0])
         master_df = pd.concat([master_df,df])
         progress_bar.update(i+1,len(files),suffix=filename+'                       ')
 
-    master_df.sort_values(by=list(master_df.columns)).to_csv('./data/triplets.csv', index=False)
+    master_df = master_df.loc[:, list(TRIPLET_COLUMNS)]
+    master_df.sort_values(by=list(TRIPLET_COLUMNS)).to_csv('./data/triplets.csv', index=False)
     sys.stdout.write("Done! (%s)\n"%str(endTimerPretty(timer))); sys.stdout.flush()
 
 
@@ -85,10 +282,7 @@ def averageTriplets():
         if 'data/object_' in filename or 'data/triplets' in filename or filename=='data/working-combos.csv' or 'centroids.csv' in filename:
             continue # skip these because they are the output of the current script
         df_trip = pd.read_csv(filename)
-
-        # Column name cleanup - not necessary if original CSV files were saved using pandas
-        df_trip.columns = [c.strip() for c in df_trip.columns] # remove extra spaces around names
-        df_trip.to_csv(filename,index=False)
+        require_canonical_triplet_columns(df_trip.columns, source=filename)
 
         for i, row in df_trip.iterrows():
             objA = row['objectA'].rsplit('_',1)[0]
@@ -98,9 +292,9 @@ def averageTriplets():
             distAB = float(row['distanceAB'])
             distAC = float(row['distanceAC'])
             distAO = float(row['distanceAO'])
-            angBAC = float(row['angleOAB'])
-            angOAB = float(row['angleOAC'])
-            angOAC = float(row['angleBAC'])
+            angBAC = float(row['angleBAC'])
+            angOAB = float(row['angleOAB'])
+            angOAC = float(row['angleOAC'])
             if triplet not in averages:
                 averages[triplet] = [[distAB],[distAC],[distAO],[angBAC],[angOAB],[angOAC],1]
                 continue
@@ -313,7 +507,10 @@ def retrieve_realistic_object_color(df_obj_cols,obj_name):
     return color
 
 
-def calculateCoords(objects,method='sampling',working_combos_precalculated=True,print_debug=False,progbar_prefix='',prev_text_len=0):
+def calculateCoords(
+        objects, method='sampling', working_combos_precalculated=True,
+        print_debug=False, progbar_prefix='', prev_text_len=0,
+        return_alignment_diagnostics=False):
     '''Calculate the coordinates of a list of objects
     based on angles and distances between triplets
     objects: a list of the object names
@@ -339,6 +536,7 @@ def calculateCoords(objects,method='sampling',working_combos_precalculated=True,
     elif method == 'sampling':
 
         df = pd.read_csv('./data/triplets.csv')
+        require_canonical_triplet_columns(df.columns, source='./data/triplets.csv')
 
         df = df.sample(frac=1).reset_index(drop=True)
         df = df.drop_duplicates(subset=['objectA','objectB','objectC'],keep='first')
@@ -411,76 +609,37 @@ def calculateCoords(objects,method='sampling',working_combos_precalculated=True,
         #d_ab = float(data[0])   # distance between objA and objB
         d_ac = float(data[1])   # distance between objA and objC
         d_ao = float(data[2])   # distance between objA and camera
-        aBAC = math.radians(float(data[3])) # angle BAC
-        aOAB = math.radians(float(data[4])) # angle OAB
-        aOAC = math.radians(float(data[5])) # angle OAC
+        aBAC = float(data[3]) # angle BAC
+        aOAB = float(data[4]) # angle OAB
+        aOAC = float(data[5]) # angle OAC
 
-        # find necessary values using trig
-        a = d_ac*math.cos(aBAC)
-        b = d_ac*math.sin(aBAC)
-        x = d_ao*math.cos(aOAB)
-        y = (d_ac*d_ao*math.cos(aOAC) - a*x) / b
-        z = math.sqrt(d_ao**2 - x**2 - y**2)
-
-        # establish centroid locations for A, B, C, and camera
-        A = [0,0,0]
-        B = [d_ab,0,0]
-        C = [a,b,0]
-        O = [x,y,z]
-        # establish scale of objects so they are proportional to camera's
-        # range of sight
-        d_bc = math.sqrt(sum((B-C)**2 for B,C in zip(B,C)))
-        d_bo = math.sqrt(sum((B-O)**2 for B,O in zip(B,O)))
-        d_co = math.sqrt(sum((C-O)**2 for C,O in zip(C,O)))
+        # Establish canonical centroid locations for A, B, C, and camera.
+        A, B, C, O = reconstruct_triplet_coordinates(
+            d_ab, d_ac, d_ao, aBAC, aOAB, aOAC,
+        )
         triplets.append([objA,objB,objC,A,B,C,O]) # objA,objB,objC,camera
 
-    # The following process answers the question:
-    # Where would objC2 be located if it were in the coordinate space of objC1, given
-    # objA and objB remain in place and camera2 translates to the location of camera1?
-    #
-    # We will use objA, objB, and camera coordinates to trivially generate a 4th point
-    # (midpoint of these 3 points) that will almost certainly be on a different plane
-    # than the other 3 points. We use these points to find an affine transform between
-    # baseCoords and every other triplet. objA and objB should be virtually identical
-    # in every triplet. But camera and 4th point will differ which should be enough
-    # to solve for a transformation matrix that can be used to determine where objCX ends
-    # up in the base coordinate space.
-    pts = [triplets[0][3],triplets[0][4],triplets[0][6]]
-    z = list(zip(pts[0],pts[1],pts[2])) # [[x0,x1,x2],[y0,y1,y2],[z0,z1,z2]]
-    d = [sum(z[0])/3,sum(z[1])/3,sum(z[2])/3] # trivially generated 4th point
-    pts.append(d)
-    baseCoords = np.array(pts,np.float32)   # use first triplet as base
+    # Use the first triplet as the common frame. Every later triplet already
+    # shares A and B, so a rotation around A--B is the only rigid alignment
+    # that can improve camera agreement without moving either anchor.
+    base_triplet = triplets[0]
     finalCoords = {} # initialize {obj: (x,y,z)} structure
-    finalCoords[triplets[0][0]] = triplets[0][3] # add objA coords
-    finalCoords[triplets[0][1]] = triplets[0][4] # add objB coords
-    finalCoords[triplets[0][2]] = triplets[0][5] # add base objC coords
-    finalCoords['CAMERA'] = triplets[0][6] # add camera coords
+    finalCoords[base_triplet[0]] = base_triplet[3] # add objA coords
+    finalCoords[base_triplet[1]] = base_triplet[4] # add objB coords
+    finalCoords[base_triplet[2]] = base_triplet[5] # add base objC coords
+    finalCoords['CAMERA'] = base_triplet[6] # add camera coords
+    alignment_diagnostics = []
 
     for triplet in triplets[1:]:
-        pts = [triplet[3],triplet[4],triplet[6]]
-        z = list(zip(pts[0],pts[1],pts[2]))
-        d = [sum(z[0])/3,sum(z[1])/3,sum(z[2])/3]
-        pts.append(d)
-        coords = np.array(pts,np.float32)
-
-        # pad with ones to make translations possible
-        pad = lambda x: np.hstack([x, np.ones((x.shape[0], 1))])
-        unpad = lambda x: x[:,:-1]
-        base = pad(baseCoords)
-        curr = pad(coords)
-        # solve the least squares problem X * A = Y
-        # to find the transformation matrix A
-        A, res, rank, s = np.linalg.lstsq(curr, base,rcond=-1)
-        transform = lambda x: unpad(np.dot(pad(x), A))
-
-        pts.append(triplet[5])            # now add objC back to the set of points
-        coords = np.array(pts,np.float32) # and re-apply the transformation so the
-        coordsNew = transform(coords)     # current triplet lines up with the base triplet
-
-        # objC was appended after the four transform anchors, so its transformed
-        # coordinate is always the final row. The old approximate outlier search
-        # could classify every row as an anchor and then index an empty list.
-        finalCoords[triplet[2]] = transformed_appended_coordinate(coordsNew)
+        aligned_c, _rotated_camera, diagnostic = align_triplet_about_axis(
+            base_triplet[3], base_triplet[4], base_triplet[6],
+            triplet[3], triplet[4], triplet[6], triplet[5],
+            object_name=triplet[2],
+            base_object_name=base_triplet[2],
+            anchor_names=(base_triplet[0], base_triplet[1]),
+        )
+        finalCoords[triplet[2]] = aligned_c
+        alignment_diagnostics.append(diagnostic)
 
     # Add these to pass color to blender - locations will be determined in blender
     finalCoords['WALL'] = tuple()
@@ -532,4 +691,6 @@ def calculateCoords(objects,method='sampling',working_combos_precalculated=True,
     else:
         text_len = prev_text_len
 
+    if return_alignment_diagnostics:
+        return finalCoords, text_len, alignment_diagnostics
     return finalCoords, text_len

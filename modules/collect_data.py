@@ -33,6 +33,32 @@ from modules import menu
 from modules import import_tools as imp
 from modules.timer import *
 from modules import progress_bar
+from modules.triplet_schema import TRIPLET_COLUMNS
+
+
+def _angle_degrees(first, second, *, angle_name):
+    '''Return a stable angle for two finite, non-zero 3D vectors.'''
+
+    first = np.asarray(first, dtype=np.float64)
+    second = np.asarray(second, dtype=np.float64)
+    if first.shape != (3,) or second.shape != (3,):
+        raise ValueError(f'{angle_name} requires two three-dimensional vectors')
+    if not np.all(np.isfinite(first)) or not np.all(np.isfinite(second)):
+        raise ValueError(f'{angle_name} requires finite vectors')
+
+    first_norm = float(np.linalg.norm(first))
+    second_norm = float(np.linalg.norm(second))
+    if not np.isfinite(first_norm) or not np.isfinite(second_norm):
+        raise ValueError(f'{angle_name} vector magnitude must be finite')
+    if first_norm == 0.0 or second_norm == 0.0:
+        raise ValueError(f'{angle_name} is undefined for a zero-length vector')
+
+    cosine = float(np.dot(first, second) / (first_norm * second_norm))
+    if not np.isfinite(cosine):
+        raise ValueError(f'{angle_name} cosine must be finite')
+    # Roundoff can put a mathematically valid cosine just outside the arccos
+    # domain (for example, 1.0000000000000002 for near-parallel vectors).
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
 
 
 ## declare objects ---------------------------------------------- ##
@@ -53,7 +79,7 @@ class Frame:
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
         self.centroids = {}    # {objectName : (x,y,z) centroids in meters} (3D)
         self.objects3d = {}    # {objectName : [(x,y,z)...(x,y,z)] } all 3d points
-        self.combos = []       # list of [labelA,labelB,labelC,angZAB,angZAC,angBAC,distAB]
+        self.combos = []       # canonical named triplet relationship rows
         self.intrinsics = []   # camera intrinsics
         self.extrinsics = []   # camera extrinsics
         self.image = None      # image to export
@@ -305,14 +331,11 @@ class Frame:
             distAC = np.linalg.norm(A-C)
             distAO = np.linalg.norm(A-O)
             # angle BAC
-            cosBAC   = np.dot(BA, CA) / (np.linalg.norm(BA) * np.linalg.norm(CA))
-            angleBAC = np.degrees(np.arccos(cosBAC))
+            angleBAC = _angle_degrees(BA, CA, angle_name='angleBAC')
             # angle OAB
-            cosOAB   = np.dot(OA, BA) / (np.linalg.norm(OA) * np.linalg.norm(BA))
-            angleOAB = np.degrees(np.arccos(cosOAB))
+            angleOAB = _angle_degrees(OA, BA, angle_name='angleOAB')
             # angle OAC
-            cosOAC   = np.dot(OA, CA) / (np.linalg.norm(OA) * np.linalg.norm(CA))
-            angleOAC = np.degrees(np.arccos(cosOAC))
+            angleOAC = _angle_degrees(OA, CA, angle_name='angleOAC')
             # add to self.combos and format label names
             nameA = combo[0].lstrip("[").rstrip("]").replace("'","").split(",")
             nameA = "_".join([nameA[0].replace(" ","_"),nameA[1].replace(" ","")])
@@ -320,8 +343,17 @@ class Frame:
             nameB = "_".join([nameB[0].replace(" ","_"),nameB[1].replace(" ","")])
             nameC = combo[2].lstrip("[").rstrip("]").replace("'","").split(",")
             nameC = "_".join([nameC[0].replace(" ","_"),nameC[1].replace(" ","")])
-            self.combos.append([nameA,nameB,nameC,str(distAB),str(distAC),str(distAO),\
-                                str(angleBAC),str(angleOAB),str(angleOAC)])
+            self.combos.append({
+                'objectA': nameA,
+                'objectB': nameB,
+                'objectC': nameC,
+                'distanceAB': str(distAB),
+                'distanceAC': str(distAC),
+                'distanceAO': str(distAO),
+                'angleBAC': str(angleBAC),
+                'angleOAB': str(angleOAB),
+                'angleOAC': str(angleOAC),
+            })
         #sys.stdout.write("\t\t%s\n"%str(endTimerPretty(t5))); sys.stdout.flush()
         return self
 
@@ -338,20 +370,11 @@ class Frame:
         #                 ','+str(coords[2])+']\n'
         #     centroidFile.write(item)
         # centroidFile.close()
-	    #export csv file
-        comboDict = {'objectA':[],'objectB':[],'objectC':[],'distanceAB':[],'distanceAC':[],
-                     'distanceAO':[],'angleOAB':[],'angleOAC':[],'angleBAC':[]}
-        for combo in self.combos:
-            comboDict['objectA'].append(combo[0])
-            comboDict['objectB'].append(combo[1])
-            comboDict['objectC'].append(combo[2])
-            comboDict['distanceAB'].append(combo[3])
-            comboDict['distanceAC'].append(combo[4])
-            comboDict['distanceAO'].append(combo[5])
-            comboDict['angleOAB'].append(combo[6])
-            comboDict['angleOAC'].append(combo[7])
-            comboDict['angleBAC'].append(combo[8])
-        df = pd.DataFrame.from_dict(comboDict)
+	    #export csv file using the canonical relationship contract
+        df = pd.DataFrame.from_records(
+            self.combos,
+            columns=TRIPLET_COLUMNS,
+        )
         df.to_csv(join(filePath,str(self.ID)+'.csv'), index=False)
 
         # export image file

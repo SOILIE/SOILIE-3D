@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "migration": "triplet-angle-header-canonicalization",
+  "source": {
+    "file": "triplets.csv",
+    "bytes": 80377244,
+    "sha256": "8174680031fa71a2fddfb5a2162e9298cee574a159179777e26756dce3b0b7d1",
+    "header": [
+      "objectA",
+      "objectB",
+      "objectC",
+      "distanceAB",
+      "distanceAC",
+      "distanceAO",
+      "angleOAB",
+      "angleOAC",
+      "angleBAC"
+    ]
+  },
+  "output": {
+    "file": "triplets.csv",
+    "bytes": 80377244,
+    "sha256": "bed96f00a47d3cd78550c786f0291709ed93e26a151c791116d8f501af74403d",
+    "header": [
+      "objectA",
+      "objectB",
+      "objectC",
+      "distanceAB",
+      "distanceAC",
+      "distanceAO",
+      "angleBAC",
+      "angleOAB",
+      "angleOAC"
+    ]
+  },
+  "dataRows": 608676,
+  "transformation": "replace-header-only; preserve every subsequent byte"
+}

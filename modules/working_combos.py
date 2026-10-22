@@ -17,6 +17,7 @@ from itertools import combinations, permutations
 from pathlib import Path
 from modules import progress_bar
 from modules.timer import *
+from modules.triplet_schema import validate_triplet_csv_header
 
 def determine():
     '''determine all combinations of objects that can
@@ -27,7 +28,9 @@ def determine():
     print ("Determining working combos...")
     #pickleData = pickle.load(open("data/triplets.pickle",'rb'))
 
-    df = pd.read_csv('./data/triplets.csv')
+    triplet_path = './data/triplets.csv'
+    validate_triplet_csv_header(triplet_path)
+    df = pd.read_csv(triplet_path)
     df = df.drop_duplicates(subset=['objectA','objectB','objectC'],keep='first')
     dictionary = {}
     for i, row in df.iterrows():
@@ -177,6 +180,7 @@ def load(n,filepath="./data/working-combos-refined.csv",sampling_method='weighte
 
 @lru_cache(maxsize=None)
 def _coordinate_triplets(filepath):
+    validate_triplet_csv_header(filepath)
     df = pd.read_csv(filepath, usecols=['objectA','objectB','objectC'])
     return frozenset(map(tuple, df.drop_duplicates().itertuples(index=False, name=None)))
 

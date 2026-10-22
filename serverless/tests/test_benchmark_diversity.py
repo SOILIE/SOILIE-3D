@@ -16,7 +16,9 @@ class DiversityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=base) as folder:
             triplets = Path(folder)/'triplets.csv'
             triplets.write_text(
-                'objectA,objectB,objectC\nchair,table,lamp\nchair,table,plant\n',
+                'objectA,objectB,objectC,distanceAB,distanceAC,distanceAO,angleBAC,angleOAB,angleOAC\n'
+                'chair,table,lamp,1,2,3,10,20,30\n'
+                'chair,table,plant,1,2,3,10,20,30\n',
                 encoding='utf-8',
             )
             self.assertTrue(supports_coordinate_construction(
@@ -44,7 +46,11 @@ class DiversityTests(unittest.TestCase):
             for label in ('sink','toilet','towel'):
                 (root/f'assets/{label}_0001.obj').touch()
             (root/'data/object_sizes_manual.csv').write_text('object,diameter,count,sizecat\nsink,1,1,large\ntoilet,1,1,large\ntowel,1,1,small\n')
-            (root/'data/triplets.csv').write_text('objectA,objectB,objectC\nsink,toilet,towel\nsink,toilet,unavailable_asset\n')
+            (root/'data/triplets.csv').write_text(
+                'objectA,objectB,objectC,distanceAB,distanceAC,distanceAO,angleBAC,angleOAB,angleOAC\n'
+                'sink,toilet,towel,1,2,3,10,20,30\n'
+                'sink,toilet,unavailable_asset,1,2,3,10,20,30\n'
+            )
             for filename in [*ROOM_COMBINATION_FILES.values(),'working-combos-refined.csv']:
                 content = 'obj0,obj1,obj2,obj3,obj4,obj5\n'
                 if 'bathroom' not in filename:

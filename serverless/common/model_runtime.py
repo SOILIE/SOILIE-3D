@@ -97,12 +97,14 @@ def select_model_objects(runtime_root: Path, request: dict[str, Any], scene_inde
                 return objects
 
 
-def generate_model_inputs(
+def _generate_model_inputs(
     runtime_root: Path,
     objects: list[str],
     seed: int,
-) -> dict[str, dict[str, Any]]:
-    """Run the model's triplet sampler and coordinate construction exactly."""
+    *,
+    return_alignment_diagnostics: bool,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Run coordinate construction and retain diagnostics for the accepted try."""
 
     prepare_data, _working_combos, _png2gif = _load_original_modules(runtime_root)
     seed_model(seed)
@@ -110,21 +112,63 @@ def generate_model_inputs(
     with _model_working_directory(runtime_root):
         while True:
             try:
-                coordinates, _progress = prepare_data.calculateCoords(
-                    objects,
-                    prev_text_len=0,
-                    progbar_prefix=f"SOILIE-3D coordinate pass {attempt}",
-                )
+                arguments = {
+                    "prev_text_len": 0,
+                    "progbar_prefix": f"SOILIE-3D coordinate pass {attempt}",
+                }
+                if return_alignment_diagnostics:
+                    arguments["return_alignment_diagnostics"] = True
+                    coordinates, _progress, diagnostics = prepare_data.calculateCoords(
+                        objects, **arguments,
+                    )
+                else:
+                    coordinates, _progress = prepare_data.calculateCoords(objects, **arguments)
+                    diagnostics = []
             except SystemExit as error:
                 raise ModelGenerationError(
                     "SOILIE-3D could not find the ordered triplets required for this scene."
+                ) from error
+            except prepare_data.TripletGeometryError as error:
+                raise ModelGenerationError(
+                    f"SOILIE-3D rejected invalid triplet geometry: {error}"
                 ) from error
             if coordinates is not None and all(
                 all(abs(component) < 5 for component in value["coords"])
                 for value in coordinates.values()
             ):
-                return coordinates
+                return coordinates, diagnostics
             attempt += 1
+
+
+def generate_model_inputs(
+    runtime_root: Path,
+    objects: list[str],
+    seed: int,
+) -> dict[str, dict[str, Any]]:
+    """Run the model's triplet sampler with its established coordinate-only API."""
+
+    coordinates, _diagnostics = _generate_model_inputs(
+        runtime_root,
+        objects,
+        seed,
+        return_alignment_diagnostics=False,
+    )
+    return coordinates
+
+
+def generate_model_inputs_with_diagnostics(
+    runtime_root: Path,
+    objects: list[str],
+    seed: int,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Return model inputs plus rigid-alignment residuals for scientific audit."""
+
+    return _generate_model_inputs(
+        runtime_root,
+        objects,
+        seed,
+        return_alignment_diagnostics=True,
+    )
 
 
 def animate_model_output(runtime_root: Path, filename: str, output_path: Path) -> Path:
