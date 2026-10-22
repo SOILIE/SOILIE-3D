@@ -18,19 +18,19 @@ BASELINE = {
 
 # These files intentionally differ from publication-2025. Pinning their patched
 # bytes keeps the reviewed maintenance surface explicit instead of weakening the
-# original-file parity check whenever a regression repair touches V4 code.
+# original-file parity check whenever a regression repair touches model code.
 REVIEWED_MAINTENANCE = {
     "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
-    "modules/working_combos.py": "8dff9d87bd9c26334c48afe07510fa9325692b82cc9602d734b0bdbd4e61b956",
-    "modules/prepare_data.py": "98c4fa9509ced827b97173710d7a27d4bfb28956832649d42dcaf495de57c517",
-    "modules/render.py": "721e0e219d09b7fbd6fb8a23b5a4f2967d4ceeacdcfd8ef8ed46d6b4a3133c21",
+    "modules/working_combos.py": "b68ed20b4bd33ba1631100abfb630aab4014bbc6379a3c883f441d141a2cd4cc",
+    "modules/prepare_data.py": "90e8f8561188df46531e9ad2f05c5c0f111cbb6d4d498630c53d5789fdcd34c0",
+    "modules/render.py": "6df6f9480b57a1bee14346734b7aa7e120afb5c85d2c942b7758071da1c65399",
     # Mounted window assemblies remain fixed, but cannot support furniture.
     "modules/support_settlement.py": "cd14f0573c0dd41592757c8375b16cb21b4e7c074b9e4cfd8d3d22160ad5e65b",
 }
 
 
-class V4ParityTests(unittest.TestCase):
-    def test_unchanged_v4_files_match_publication_branch_bytes(self):
+class ModelParityTests(unittest.TestCase):
+    def test_unchanged_model_files_match_publication_branch_bytes(self):
         observed = {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
             for name in BASELINE
@@ -45,9 +45,9 @@ class V4ParityTests(unittest.TestCase):
         self.assertEqual(REVIEWED_MAINTENANCE, observed)
 
     def test_runtime_records_the_exact_repository_source(self):
-        provenance_path = ROOT / ".codex" / "runtime" / "v4-provenance.json"
+        provenance_path = ROOT / ".codex" / "runtime" / "model-provenance.json"
         if not provenance_path.exists():
-            self.skipTest("Compile the V4 runtime metadata before checking provenance.")
+            self.skipTest("Compile the SOILIE-3D runtime metadata before checking provenance.")
         provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
         current_render = hashlib.sha256((ROOT / "modules/render.py").read_bytes()).hexdigest()
         self.assertEqual(current_render, provenance["files"]["modules/render.py"]["sha256"])

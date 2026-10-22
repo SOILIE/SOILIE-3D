@@ -1,30 +1,30 @@
-# SOILIE-3D V4 serverless research demonstrator
+# SOILIE-3D serverless research demonstrator
 
-This subsystem exposes the repository's original SOILIE-3D V4 implementation
+This subsystem exposes the repository's SOILIE-3D implementation
 through an asynchronous web API. It does not contain a substitute layout
 solver, simplified recency model, reduced asset catalog, or fallback renderer.
 
 ## Exact execution boundary
 
-CI hydrates the 191 OBJ assets and required V4 data files into their canonical
+CI hydrates the 191 OBJ assets and required model data files into their canonical
 repository paths, then verifies every byte against `runtime-assets.json`.
 `compiler/build_runtime.py` produces only the indexed catalog and provenance in
 `.codex/runtime`; it never copies or rewrites model source. The renderer image
 copies `modules/`, data, meshes, and Blender setup directly from the checked-out
 `main` commit.
 
-The optional `modules/room_fit.py` extension measures the completed scene and
+The optional `renderer/room_fit.py` extension measures the completed scene and
 redraws only the floor and four walls. It never moves, rotates, rescales,
-replaces, or retries an interior object. The original V4 camera,
+replaces, or retries an interior object. The model's camera,
 `change_imagination_focus` recency sequence, and `png2gif` animation builder
 remain authoritative.
 
-The tracked V4 cleanup now removes scene objects before orphaned datablocks. It
+The tracked renderer cleanup removes scene objects before orphaned datablocks. It
 therefore supports repeated generations in one Blender process without changing
 placement, camera, render, data, or artifacts.
 
 The SQLite runtime index is limited to API catalog and pre-queue validation.
-Original V4 CSV files remain authoritative for object selection and coordinate
+The repository CSV files remain authoritative for object selection and coordinate
 generation. Native missing-triplet and render failures are reported; they are
 never recovered through another model. The source bathroom combination file
 contains no usable rows, so the bathroom preset is intentionally unavailable.
@@ -33,14 +33,15 @@ contains no usable rows, so the bathroom preset is intentionally unavailable.
 
 1. API Gateway validates a request, enforces anonymous quotas, and queues one
    SQS message per scene.
-2. The renderer maps the request to V4's terminal choices, invokes the original
+2. The renderer maps the request to the model's terminal choices, invokes the
    coordinate and Blender code, and calls the original GIF builder.
-3. Results include both original V4 stills, its formation GIF, a resized WebP
+3. Results include both model stills, its formation GIF, a resized WebP
    copy of that same animation, placement CSV, request JSON, and a provenance
    manifest under `s3://soilie3d-data/generated/`.
 4. Scenes remain temporary for seven days by default, can be discarded, or can
-   be copied into the public gallery. Only manifests marked as original V4 are
-   eligible for publication; retired approximate gallery records are hidden.
+   be copied into the public gallery. Only manifests marked as the original
+   SOILIE-3D implementation are eligible for publication; retired approximate
+   gallery records are hidden.
 
 Publishing uses an optional display name and removal password. Only a salted
 PBKDF2-SHA256 verifier is stored in a separate encrypted, public-access-blocked
@@ -75,7 +76,8 @@ their obsolete preliminary scores.
 The renderer targets standard Lambda only while the uncompressed image stays
 below 9.5 GiB and representative six-object scenes remain below the 12-minute
 p95 gate. If either gate fails, move the same immutable image and message
-contract to scale-to-zero AWS Batch on Fargate; do not weaken or replace V4.
+contract to scale-to-zero AWS Batch on Fargate; do not weaken or replace the
+model.
 
 Refresh the deliberate public Data Archive index without enabling anonymous S3
 listing:

@@ -9,11 +9,11 @@ import bpy
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[2]
-# Container source lives in v4/ while test/evaluation tools stay in serverless/.
-RUNTIME = Path(os.environ.get('V4_RUNTIME_DIR', ROOT))
+# Container source lives in soilie-runtime/ while test/evaluation tools stay in serverless/.
+RUNTIME = Path(os.environ.get('SOILIE_RUNTIME_DIR', ROOT))
 sys.path[:0] = [str(ROOT), str(RUNTIME), str(RUNTIME / 'modules')]
 from modules.support_settlement import CONTACT_TOLERANCE_M, evaluated_surface, settle_objects, surface_drop
-from serverless.benchmark.capture_v4 import support_samples
+from serverless.benchmark.capture_model import support_samples
 from serverless.benchmark.mesh_contact import measure_contacts, rectangular_plane
 
 

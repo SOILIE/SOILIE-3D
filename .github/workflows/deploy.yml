@@ -40,7 +40,7 @@ jobs:
           role-session-name: soilie3d-${{ github.run_id }}
           allowed-account-ids: "204357388741"
 
-      - name: Hydrate immutable V4 runtime data
+      - name: Hydrate immutable SOILIE-3D runtime data
         run: bash serverless/scripts/hydrate-runtime.sh
 
       - name: Install version tooling
@@ -57,10 +57,16 @@ jobs:
       - name: Build renderer for Blender asset smoke test
         run: docker build --platform linux/amd64 --provenance=false -f serverless/renderer/Dockerfile -t soilie3d-renderer-smoke .
 
-      - name: Container-smoke all selectable V4 assets
+      - name: Container-smoke all selectable SOILIE-3D assets
         run: >-
           docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
-          --background --python-exit-code 2 --python /var/task/serverless/renderer/asset_smoke.py -- /var/task/v4
+          --background --python-exit-code 2 --python /var/task/serverless/renderer/asset_smoke.py -- /var/task/soilie-runtime
+
+      - name: Verify collision recovery through the renderer module
+        run: >-
+          docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
+          --background --factory-startup --python-exit-code 2
+          --python /var/task/serverless/tests/blender_collision_fixtures.py
 
       - name: Verify window assemblies cut one wall opening
         run: >-

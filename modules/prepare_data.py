@@ -26,11 +26,19 @@ from math import sqrt
 import numpy as np
 import pandas as pd
 from collections import Counter
+from collections.abc import Sequence
 from itertools import permutations
 
 from modules.timer import *
 from modules import progress_bar
-from modules.coordinate_transform import transformed_appended_coordinate
+
+
+def transformed_appended_coordinate(rows: Sequence[Sequence[float]]) -> list[float]:
+    '''Return the transformed point appended after the four affine anchors.'''
+
+    if len(rows) == 0:
+        raise ValueError('The affine transform returned no coordinate rows')
+    return [float(component) for component in rows[-1]]
 
 
 def gatherTriplets():

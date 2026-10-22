@@ -36,11 +36,11 @@ class EngineBoundaryTests(unittest.TestCase):
         payload.update(overrides)
         return validate_request(self.db, payload)
 
-    def test_catalog_identifies_original_v4(self):
+    def test_catalog_identifies_original_model(self):
         document = public_catalog_document(self.db)
         self.assertEqual(
             {
-                "name": "SOILIE-3D V4", "version": MODEL_VERSION, "implementation": "original",
+                "name": "SOILIE-3D", "version": MODEL_VERSION, "implementation": "original",
                 "sourceCommit": "local", "assetManifestSha256": "local", "channel": "publication-2026",
             },
             document["model"],
@@ -63,7 +63,7 @@ class EngineBoundaryTests(unittest.TestCase):
             "SELECT object_a, object_b, object_c FROM triplets WHERE object_a = object_b LIMIT 1"
         ).fetchone()
         if row is None:
-            self.skipTest("The current V4 triplet data has no repeated-label triplet.")
+            self.skipTest("The current model triplet data has no repeated-label triplet.")
         request = self.request(mode="objects", objects=list(row))
         self.assertEqual(list(row), request["objects"])
 

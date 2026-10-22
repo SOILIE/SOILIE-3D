@@ -226,7 +226,7 @@ Resources:
           JOB_TABLE: !Ref JobTable
           OUTPUT_BUCKET: soilie3d-data
           OUTPUT_BASE_URL: https://soilie3d.com/data
-          V4_RUNTIME_DIR: /var/task/v4
+          SOILIE_RUNTIME_DIR: /var/task/soilie-runtime
           BLENDER_PATH: /opt/blender/blender
           SOILIE_MODEL_VERSION: !Ref ModelVersion
           SOILIE_SOURCE_COMMIT: !Ref SourceCommit

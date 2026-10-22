@@ -2,7 +2,9 @@ param(
     [string]$Profile = 'darkest',
     [string]$Region = 'ca-central-1',
     [string]$Stack = 'soilie3d-benchmark-temporary',
-    [string]$BaseDigest = 'sha256:c4782694ebeb5ff2f65f418ab2a4c82184b5f70ba9f8dda121181cbc44758b2a',
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('@sha256:[0-9a-f]{64}$')]
+    [string]$BaseImage,
     [int]$MemoryMB = 4096,
     [int]$Concurrency = 4
 )
@@ -21,7 +23,7 @@ $context = Join-Path $repo '.codex/cloud-benchmark-build'
 New-Item -ItemType Directory -Force -Path $context | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'modules'),(Join-Path $repo 'serverless') -Destination $context -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repo 'package.json') -Destination $context
-Copy-Item -LiteralPath (Join-Path $repo '.codex/runtime/v4-provenance.json') -Destination (Join-Path $context 'provenance.json')
+Copy-Item -LiteralPath (Join-Path $repo '.codex/runtime/model-provenance.json') -Destination (Join-Path $context 'provenance.json')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Dockerfile') -Destination $context
 $linuxContext = (wsl -- wslpath -u $context.Replace('\','/')).Trim()
 $tag = 'pilot-' + (Get-Date -Format 'yyyyMMddHHmmss')
@@ -29,7 +31,7 @@ $image = "$registry/${repository}:$tag"
 aws ecr get-login-password --profile $Profile --region $Region | wsl -- docker login --username AWS --password-stdin $registry | Out-Null
 if ($LASTEXITCODE) { throw 'ECR authentication failed' }
 try {
-    wsl -- docker build --platform linux/amd64 --provenance=false --build-arg "BASE_IMAGE=$registry/soilie3d-renderer@$BaseDigest" -t $image $linuxContext
+    wsl -- docker build --platform linux/amd64 --provenance=false --build-arg "BASE_IMAGE=$BaseImage" -t $image $linuxContext
     if ($LASTEXITCODE) { throw 'Benchmark image build failed' }
     wsl -- docker push $image
     if ($LASTEXITCODE) { throw 'Benchmark image push failed' }

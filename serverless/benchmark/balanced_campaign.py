@@ -1,6 +1,6 @@
 """Freeze 5,000 existing bedrooms and run independent living-room shards.
 
-Only orchestration lives here: every generation calls the tracked V4 pipeline.
+Only orchestration lives here: every generation calls the tracked SOILIE-3D pipeline.
 Evidence is checkpointed, source bedrooms are never overwritten, and parallel
 durations are not substituted for the earlier serial bedroom timing sample.
 """

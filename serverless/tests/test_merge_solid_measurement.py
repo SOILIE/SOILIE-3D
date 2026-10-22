@@ -23,7 +23,7 @@ class MergeSolidMeasurementTests(unittest.TestCase):
         self.replay = deepcopy(self.campaign)
         for stage in self.replay["stages"].values():
             stage["objects"][0]["frontDirection"] = [1, 0]
-            stage["objects"][0]["frontConvention"] = "V4 asset-corrected local +X"
+            stage["objects"][0]["frontConvention"] = "SOILIE-3D asset-corrected local +X"
         self.replay["stages"]["final"]["solidMeshOverlap"] = {
             "method": "evaluated-mesh-intersection-v2",
             "complete": True,

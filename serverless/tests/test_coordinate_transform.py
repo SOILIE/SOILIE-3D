@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from modules.coordinate_transform import transformed_appended_coordinate
+from modules.prepare_data import transformed_appended_coordinate
 
 
 class CoordinateTransformTests(unittest.TestCase):

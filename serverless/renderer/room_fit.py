@@ -1,6 +1,6 @@
-"""Optional final room-boundary fitting for serverless SOILIE-3D V4.
+"""Optional final room-boundary fitting for the serverless SOILIE-3D renderer.
 
-This module is intentionally downstream of every original V4 placement step.
+This module is intentionally downstream of every model placement step.
 It never moves, rotates, rescales, replaces, or retries an interior object. It
 only measures the completed arrangement and redraws the floor and four walls.
 """
@@ -53,7 +53,7 @@ def fit_axis(object_min, object_max, requested_size=None, anchor="center"):
 
 
 def plan_room_fit(bounds, room_request, anchors=("center", "center")):
-    """Calculate final boundaries from completed V4 mesh bounds."""
+    """Calculate final boundaries from completed model mesh bounds."""
 
     min_x, max_x, min_y, max_y, _min_z, max_z = bounds
     custom = room_request.get("mode") == "custom"
@@ -96,7 +96,7 @@ def plan_room_fit(bounds, room_request, anchors=("center", "center")):
         "sizing": "adjusted_to_fit" if adjusted_axes else ("exact" if custom else "auto"),
         "adjustedAxes": adjusted_axes,
         "placementPolicy": {
-            "stage": "post_v4_room_boundary_only",
+            "stage": "post_model_room_boundary_only",
             "xAnchor": anchors[0],
             "yAnchor": anchors[1],
             "interiorPlacementChanged": False,
@@ -127,7 +127,7 @@ def _completed_scene_bounds(objects):
 
 
 def _infer_axis_anchor(objects, floor_bounds, axis):
-    """Keep V4's large wall-oriented objects near their nearest old wall."""
+    """Keep large wall-oriented objects near their nearest old wall."""
 
     low_index, high_index = (0, 1) if axis == "x" else (2, 3)
     blockers = [
@@ -183,7 +183,7 @@ def _apply_boundaries(plan, floor, walls):
 
 
 def apply_serverless_room_fit():
-    """Apply the optional room wrapper after the original V4 pipeline finishes."""
+    """Apply the optional room wrapper after the model pipeline finishes."""
 
     encoded = os.environ.get("SOILIE_ROOM_REQUEST")
     if not encoded:
@@ -213,8 +213,8 @@ def apply_serverless_room_fit():
             "code": "ROOM_SIZE_ADJUSTED",
             "message": (
                 f"The requested room was too small along the {axes}. "
-                "The room boundary was expanded just enough to contain the completed SOILIE V4 arrangement; "
-                "V4's object placements were not changed."
+                "The room boundary was expanded just enough to contain the completed SOILIE-3D arrangement; "
+                "the model's object placements were not changed."
             ),
         }
     return plan

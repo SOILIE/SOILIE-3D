@@ -20,7 +20,7 @@ class ParityTests(unittest.TestCase):
         original, replay = self.row(), self.row()
         replay["stages"]["final"]["objects"][0].update({
             "frontDirection": [1, 0],
-            "frontConvention": "V4 asset-corrected local +X",
+            "frontConvention": "SOILIE-3D asset-corrected local +X",
         })
         self.assertTrue(compare(original, replay)["exactPlacementEquality"])
 

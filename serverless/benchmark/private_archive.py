@@ -16,12 +16,39 @@ import tarfile
 import boto3
 from botocore.exceptions import ClientError
 
-from serverless.remote.archive import HashReader
-from serverless.remote.worker import save, sha
 from serverless.benchmark.stream_archive import verify_remote
 
 ROOT = Path(__file__).resolve().parents[2]
 SENSITIVE = re.compile(r'(^|[._-])(secrets?|credentials?|passwords?|tokens?|auth)([._-]|$)', re.I)
+
+
+class HashReader:
+    """Read a stream while accumulating its SHA-256 digest."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.digest = hashlib.sha256()
+
+    def read(self, size=-1):
+        body = self.stream.read(size)
+        self.digest.update(body)
+        return body
+
+
+def sha(path):
+    """Return the SHA-256 digest of a file without loading it into memory."""
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for part in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(part)
+    return digest.hexdigest()
+
+
+def save(path, data):
+    """Atomically replace a JSON receipt after writing it completely."""
+    temporary = path.with_suffix(path.suffix + '.new')
+    temporary.write_text(json.dumps(data, indent=2) + '\n')
+    temporary.replace(path)
 
 
 def contained(path, scratch):

@@ -26,7 +26,7 @@ IMPLEMENTATION_CHANNEL = os.environ.get("SOILIE_IMPLEMENTATION_CHANNEL", "public
 
 def model_document() -> dict[str, str]:
     return {
-        "name": "SOILIE-3D V4",
+        "name": "SOILIE-3D",
         "version": MODEL_VERSION,
         "implementation": "original",
         "sourceCommit": SOURCE_COMMIT,

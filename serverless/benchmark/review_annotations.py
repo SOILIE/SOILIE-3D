@@ -80,7 +80,7 @@ def functional_front(scene, item):
         return [-y, x]
     if convention == LAYOUTGPT_FRONT and scene['model'] == 'layoutgpt':
         return [x, y]
-    if convention == 'V4 asset-corrected local +X' and scene['model'] == 'soilie':
+    if convention == 'SOILIE-3D asset-corrected local +X' and scene['model'] == 'soilie':
         return [x, y]
     if convention == 'Infinigen canonical Subpart.Front local +X axis' and scene['model'] in ('infinigen', 'infinigen_controlled'):
         return [x, y]

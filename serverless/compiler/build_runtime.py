@@ -1,8 +1,8 @@
-"""Record the checked-out V4 runtime and compile an API-only index.
+"""Record the checked-out SOILIE-3D runtime and compile an API-only index.
 
 The SQLite file is used for catalog and pre-queue validation only. It is never
 used to select, place, or render a scene. The renderer image receives the real
-V4 data, every eligible OBJ, the original modules, and suggested_setup.blend.
+model data, every eligible OBJ, the original modules, and suggested_setup.blend.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from serverless.common.engine import ARCHITECTURE, ROOM_TYPES, normalize_label, 
 
 
 ASSET_PATTERN = re.compile(r"_\d{4}(?:_\d+)?$")
-V4_DATA_FILES = (
+MODEL_DATA_FILES = (
     "object_colors.csv",
     "object_sizes_manual.csv",
     "triplets.csv",
@@ -70,13 +70,13 @@ def model_version(repository: Path) -> str:
     return version
 
 
-def record_v4_provenance(repository: Path, output: Path) -> dict:
+def record_model_provenance(repository: Path, output: Path) -> dict:
     """Checksum the source used directly by local runs and container builds."""
 
     version = model_version(repository)
     provenance = {
         "schemaVersion": 2,
-        "model": "SOILIE-3D V4",
+        "model": "SOILIE-3D",
         "version": version,
         "legacySourceVersion": "24.07.05",
         "baselineCommit": _source_commit(repository),
@@ -85,25 +85,25 @@ def record_v4_provenance(repository: Path, output: Path) -> dict:
             capture_output=True, text=True, check=True,
         ).stdout.strip() or "detached",
         "execution": "repository modules.prepare_data + repository modules.render",
-        "extensionBoundary": "optional room fitting runs after V4 placement and window adjustment",
+        "extensionBoundary": "optional room fitting runs after model placement and window adjustment",
         "files": {},
     }
 
     sources = [repository / "suggested_setup.blend", repository / "assets" / "asset_rotations.csv"]
     sources.extend(repository / "assets" / path.name for path in sorted((repository / "assets").glob("*.obj")))
-    sources.extend(repository / "data" / name for name in V4_DATA_FILES)
+    sources.extend(repository / "data" / name for name in MODEL_DATA_FILES)
     sources.extend(sorted((repository / "modules").glob("*.py")))
 
     for source in sources:
         if not source.exists():
-            raise RuntimeError(f"Required V4 runtime file is missing: {source}")
+            raise RuntimeError(f"Required SOILIE-3D runtime file is missing: {source}")
         relative = source.relative_to(repository)
         provenance["files"][relative.as_posix()] = {
             "bytes": source.stat().st_size,
             "sha256": sha256(source),
         }
     provenance["extensions"] = {
-        "modules/room_fit.py": sha256(repository / "modules" / "room_fit.py"),
+        "serverless/renderer/room_fit.py": sha256(repository / "serverless" / "renderer" / "room_fit.py"),
         "renderHook": "after adjust_windows_to_walls and before add_light_to_lamps_and_windows",
         "optionalRoomFitChangesInteriorPlacement": False,
         "collisionRecoveryChangesOnlyRepeatedStates": True,
@@ -113,7 +113,7 @@ def record_v4_provenance(repository: Path, output: Path) -> dict:
     }
     provenance["assetCount"] = len(list((repository / "assets").glob("*.obj")))
     provenance["totalBytes"] = sum(entry["bytes"] for entry in provenance["files"].values())
-    (output / "v4-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    (output / "model-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
     return provenance
 
 
@@ -139,7 +139,7 @@ def load_exact_asset_classes(asset_root: Path) -> set[str]:
 
 def _usable_row(row: dict[str, str], allowed: set[str]) -> list[str]:
     values = [value.strip() for value in row.values() if value and value.strip()]
-    # V4 performs case-sensitive dictionary and asset matching. Do not quietly
+    # The model performs case-sensitive dictionary and asset matching. Do not quietly
     # rewrite rows such as the legacy uppercase TV entries.
     if any(value != normalize_label(value) or value not in allowed for value in values):
         return []
@@ -237,18 +237,19 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
 
 def build(repository: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    legacy_runtime = output / "v4"
-    if legacy_runtime.exists():
+    copied_runtime = output / "soilie-runtime"
+    if copied_runtime.exists():
         raise RuntimeError(
-            f"Legacy copied model source exists at {legacy_runtime}. Remove that generated "
+            f"Copied model source exists at {copied_runtime}. Remove that generated "
             "directory and pass the checked-out repository itself to --runtime."
         )
-    provenance = record_v4_provenance(repository, output)
+    provenance = record_model_provenance(repository, output)
     counts = compile_api_index(repository, output)
     checksums = {
         "schemaVersion": 2,
-        "model": f"SOILIE-3D V4 {model_version(repository)}",
-        "v4Provenance": sha256(output / "v4-provenance.json"),
+        "model": "SOILIE-3D",
+        "modelVersion": model_version(repository),
+        "modelProvenance": sha256(output / "model-provenance.json"),
         "apiIndex": sha256(output / "relations.sqlite3"),
         **counts,
         "assets": provenance["assetCount"],

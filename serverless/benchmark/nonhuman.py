@@ -129,7 +129,7 @@ def relation_drift(attempt):
 
 
 def overlap_resolution(attempts, stage_metrics=None):
-    """Summarize how often V4's own separation stage removes envelope overlap.
+    """Summarize how often the model's separation stage removes envelope overlap.
 
     This is deliberately paired with the relation-drift report: eliminating an
     intersection is useful only when readers can also see how far the proposed
@@ -166,7 +166,7 @@ def overlap_resolution(attempts, stage_metrics=None):
         ),
         "interpretation": (
             "Among completed scenes whose relational proposal contained intersecting oriented furniture "
-            "envelopes, this reports how often the ordinary V4 separation stage removed every envelope "
+            "envelopes, this reports how often the ordinary SOILIE-3D separation stage removed every envelope "
             "intersection. Read it with relation-preservation distances; envelope clearance alone does not "
             "establish semantic plausibility or exact pre-correction mesh collision."
         ),
@@ -190,10 +190,10 @@ def _conditional_occurrence(rows):
 
 
 def cooccurrence_fidelity(attempts, source_combinations):
-    """Compare generated selections with V4's bedroom combination catalog.
+    """Compare generated selections with the SOILIE-3D bedroom combination catalog.
 
     The controlled campaign requests 3, 4, 5 and 6 objects in rotation. Every
-    source row has six labels, so V4's published weighting expression assigns
+    source row has six labels, so the published weighting expression assigns
     every row the same weight; a request takes the corresponding row prefix.
     We compare each requested count separately and give those four strata equal
     weight. This is a sampler-fidelity check, not an independent quality score.

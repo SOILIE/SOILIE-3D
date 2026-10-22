@@ -1,8 +1,8 @@
-"""Public request and catalog boundary for the exact SOILIE-3D V4 runtime.
+"""Public request and catalog boundary for the exact SOILIE-3D runtime.
 
 This module intentionally does not generate or adjust layouts. Scene selection,
 triplet sampling, coordinate construction, Blender placement, and depiction are
-owned by the original V4 modules staged in the renderer image. Keeping API
+owned by the model modules staged in the renderer image. Keeping API
 validation here lets unsupported work fail before it reaches the render queue
 without introducing a second scene model.
 """
@@ -44,7 +44,7 @@ class RequestError(ValueError):
 
 
 def normalize_label(value: str) -> str:
-    """Normalize browser spelling without changing V4 object taxonomy."""
+    """Normalize browser spelling without changing the model object taxonomy."""
 
     return "_".join(str(value).strip().lower().replace("-", " ").split())
 
@@ -83,7 +83,7 @@ def _triplet_keys(connection: sqlite3.Connection) -> set[tuple[str, str, str]]:
 
 
 def is_supported_combination(connection: sqlite3.Connection, objects: Iterable[str]) -> bool:
-    """Mirror V4 calculateCoords' exact ordered-triplet feasibility test."""
+    """Mirror calculateCoords' exact ordered-triplet feasibility test."""
 
     names = list(objects)
     if len(names) < 3:
@@ -101,7 +101,7 @@ def is_supported_combination(connection: sqlite3.Connection, objects: Iterable[s
 
 
 def compatible_suggestions(connection: sqlite3.Connection, objects: list[str], limit: int = 3) -> list[list[str]]:
-    """Return real rows from V4's precomputed working-combination files."""
+    """Return real rows from the model's precomputed working-combination files."""
 
     requested = set(objects)
     candidates: list[tuple[int, tuple[str, ...]]] = []
@@ -179,13 +179,13 @@ def validate_request(connection: sqlite3.Connection, payload: Any) -> dict[str, 
         if unknown:
             raise RequestError(
                 "UNKNOWN_OBJECT",
-                "One or more object labels are not available in SOILIE V4.",
+                "One or more object labels are not available in SOILIE-3D.",
                 {"objects": unknown},
             )
         if not is_supported_combination(connection, objects):
             raise RequestError(
                 "UNSUPPORTED_OBJECT_COMBINATION",
-                "SOILIE V4 does not contain the ordered triplets required to construct that object set.",
+                "SOILIE-3D does not contain the ordered triplets required to construct that object set.",
                 {"suggestions": compatible_suggestions(connection, objects)},
             )
         normalized["objects"] = objects
@@ -205,7 +205,7 @@ def validate_request(connection: sqlite3.Connection, payload: Any) -> dict[str, 
             if not available:
                 raise RequestError(
                     "UNSUPPORTED_ROOM_PRESET",
-                    f"The original V4 {room_type.replace('_', ' ')} working-combination file contains no usable rows.",
+                    f"The SOILIE-3D {room_type.replace('_', ' ')} working-combination file contains no usable rows.",
                 )
             normalized["roomType"] = room_type
 

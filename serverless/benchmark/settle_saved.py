@@ -1,4 +1,4 @@
-"""Reapply final support placement to saved scenes, without resampling V4.
+"""Reapply final support placement to saved scenes, without resampling the model.
 
 Run in Blender. Source attempts stay immutable. Every derived record binds its
 source checksum and the correction source; correction time is kept separate
@@ -45,7 +45,7 @@ def clear_scene():
 def restore_object(row, rotations, *, last_imported=False):
     """Recover the corrected asset-local geometry, then its recorded transform.
 
-V4 bakes asset-front rotations and some scales into vertices. Stored bounds in
+SOILIE-3D bakes asset-front rotations and some scales into vertices. Stored bounds in
 local coordinates recover that baked uniform scale. Nonuniform scale or wrong
 asset orientation fails the parity check rather than approximating the mesh.
 """
@@ -63,7 +63,7 @@ asset orientation fails the parity check rather than approximating the mesh.
     imported_max_dimension = max(obj.dimensions)
     obj.scale *= 1/imported_max_dimension
     if last_imported:
-        # V4's normalization operator acts on the last selected import, baking
+        # The model's normalization operator acts on the last selected import, baking
         # its import-axis rotation before the asset-front Euler correction.
         # Adding those Euler angles directly is NOT the same operation. Cubic
         # bounds can hide the resulting wrong-facing mesh, so retain the order.
@@ -80,7 +80,7 @@ asset orientation fails the parity check rather than approximating the mesh.
         obj.rotation_euler[axis] += math.radians(angle)
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
     # Normalization is already present in the saved world transform unless
-    # V4 baked it into the last import's vertices above.
+    # The model baked it into the last import's vertices above.
     obj.scale = (1, 1, 1)
     bpy.context.view_layer.update()
     target_matrix = Matrix(row['transform'])
@@ -100,7 +100,7 @@ asset orientation fails the parity check rather than approximating the mesh.
     # mesh's known baked scale; do not perturb flat feet to fit noisy corners.
     # A thin axis magnifies inverse-matrix roundoff: averaging its recovered
     # scale with the long axes perturbed a saved window by 14 micrometres.
-    # V4 has only these two baked scales. Test them in WORLD space directly,
+    # The model has only these two baked scales. Test them in WORLD space directly,
     # against the same strict bound tolerance, before using recovered bounds.
     source_corners = [Vector(point) for point in obj.bound_box]
     saved_corners = [Vector(point) for point in row['corners']]
@@ -159,7 +159,7 @@ def correction(attempt, rotations, audit_original=False, observe_only=False):
                    for index, row in enumerate(final['objects'])}
         bpy.context.view_layer.update()
         if audit_original or observe_only:
-            from serverless.benchmark.capture_v4 import support_samples
+            from serverless.benchmark.capture_model import support_samples
             all_objects = list(objects.values())+[floor]
             for row in movable:
                 if audit_original and row.get('support'):
@@ -251,7 +251,7 @@ def main():
     implementation = {'settlementSha256': checksum(ROOT/'modules/support_settlement.py'),
                       'replaySha256': checksum(Path(__file__)),
                       'samplerSha256': checksum(Path(__file__).with_name('mesh_support.py')),
-                      'observerSha256': checksum(Path(__file__).with_name('capture_v4.py')),
+                      'observerSha256': checksum(Path(__file__).with_name('capture_model.py')),
                       'contactObserverSha256': checksum(Path(__file__).with_name('mesh_contact.py')),
                       'solidOverlapSha256': checksum(Path(__file__).with_name('solid_overlap.py')),
                       'assetManifestSha256': checksum(manifest_path),

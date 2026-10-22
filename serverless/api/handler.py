@@ -400,7 +400,7 @@ def _gallery_record(item: dict[str, Any]) -> dict[str, Any]:
         "mode": item["mode"]["S"],
         "artifacts": json.loads(item["artifactsJson"]["S"]),
         "model": json.loads(item["modelJson"]["S"]) if "modelJson" in item else {
-            "name": "SOILIE-3D V4", "implementation": item["modelImplementation"]["S"],
+            "name": "SOILIE-3D", "implementation": item["modelImplementation"]["S"],
             "version": "4.0.0", "channel": "legacy",
         },
     }
@@ -433,7 +433,7 @@ def _gallery(event: dict[str, Any]) -> dict[str, Any]:
             return _response(400, {"error": {"code": "INVALID_CURSOR", "message": "The gallery cursor is invalid."}})
     response = dynamodb.query(**arguments)
     # Records created by the retired prototype renderer did not identify an
-    # original-model implementation. Keep them out of the V4 gallery instead
+    # original-model implementation. Keep them out of the SOILIE-3D gallery instead
     # of presenting approximate scenes as SOILIE-3D output.
     exact_items = [
         item
@@ -511,7 +511,7 @@ def _publish_scene(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     result = json.loads(scene["resultJson"]["S"])
     if result.get("model", {}).get("implementation") != "original":
-        raise ValueError("Only scenes produced by the original SOILIE-3D V4 renderer can be published.")
+        raise ValueError("Only scenes produced by the original SOILIE-3D renderer can be published.")
     request = json.loads(meta["requestJson"]["S"])
     gallery_id = _gallery_id(job_id, scene_index)
     source_prefix = f"generated/{job_id}/{scene_index + 1}"

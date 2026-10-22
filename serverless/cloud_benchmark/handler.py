@@ -33,12 +33,12 @@ def request_document(event):
 
 @lru_cache(maxsize=1)
 def verify_build_inputs():
-    """Check all inherited assets and modules before creating the immutable image."""
+    """Check every inherited asset and copied model input in the derived image."""
     from serverless.compiler.runtime_assets import verify, checksum
-    runtime = Path(os.environ['V4_RUNTIME_DIR'])
+    runtime = Path(os.environ['SOILIE_RUNTIME_DIR'])
     manifest = Path('/var/task/serverless/runtime-assets.json')
     verify(runtime, json.loads(manifest.read_text()))
-    provenance = json.loads((runtime/'v4-provenance.json').read_text())
+    provenance = json.loads((runtime/'model-provenance.json').read_text())
     for relative, expected in provenance['files'].items():
         path = runtime/relative
         if not path.resolve().is_relative_to(runtime.resolve()) or checksum(path) != expected['sha256']:
@@ -51,7 +51,7 @@ def verified_provenance():
     # Lambda mounts the digest-pinned image read-only. Rehashing 2 GiB of assets
     # in every cold environment forces unnecessary remote image-page reads.
     # The Docker build validates every byte; here verify its small attestation.
-    raw = (Path(os.environ['V4_RUNTIME_DIR'])/'v4-provenance.json').read_bytes()
+    raw = (Path(os.environ['SOILIE_RUNTIME_DIR'])/'model-provenance.json').read_bytes()
     expected = Path('/var/task/benchmark-inputs.sha256').read_text().strip()
     if hashlib.sha256(raw).hexdigest() != expected:
         raise RuntimeError('Immutable image input attestation differs')
@@ -62,7 +62,7 @@ def lambda_handler(event, context):
     import boto3
     request = request_document(event)
     provenance = verified_provenance()
-    runtime = Path(os.environ['V4_RUNTIME_DIR'])
+    runtime = Path(os.environ['SOILIE_RUNTIME_DIR'])
     identity = 'soilie-'+request['roomType']+'-'+str(request['seed'])
     print(json.dumps({'scene': identity, 'stage': 'placing'}), flush=True)
     row = {'id': identity, 'request': request, 'status': 'failed',

@@ -1,6 +1,6 @@
-"""Blender-only observer at existing V4 function boundaries.
+"""Blender-only observer at existing SOILIE-3D function boundaries.
 
-The imported V4 functions still perform every placement. Wrappers observe their
+The imported model functions still perform every placement. Wrappers observe their
 inputs/outputs without changing randomness or scene state. Layout-only mode exits
 after the final wall treatment; full mode continues through the ordinary renders.
 """
@@ -33,7 +33,7 @@ def corners(obj):
 
 
 def front_direction(obj):
-    """Return the V4-corrected local +X axis as a horizontal unit vector."""
+    """Return the asset-corrected local +X axis as a horizontal unit vector."""
     direction = obj.matrix_world.to_3x3() @ Vector((1, 0, 0))
     horizontal = Vector((direction.x, direction.y))
     if horizontal.length <= 1e-9:
@@ -82,7 +82,7 @@ def snapshot(inputs, stage, measure_support=False, measure_solids=False):
                "asset": data.get("asset_name"), "corners": corners(obj),
                "transform": [list(row) for row in obj.matrix_world],
                "frontDirection": front_direction(obj),
-               "frontConvention": "V4 asset-corrected local +X"}
+               "frontConvention": "SOILIE-3D asset-corrected local +X"}
         objects.append(row)
         if label not in ARCHITECTURE:
             solid_objects.append((identifier, obj))
@@ -95,7 +95,7 @@ def snapshot(inputs, stage, measure_support=False, measure_solids=False):
                 row['support'] = contacts[row['id']]
     result = {"schemaVersion": 2, "stage": stage, "units": "m", "objects": objects,
             "room": {"polygon": [[xmin,ymin],[xmax,ymin],[xmax,ymax],[xmin,ymax]], "floorZ": floor_z,
-                     "boundarySource": "original V4 interior wall faces, before cutaway or optional room fitting"}}
+                     "boundarySource": "SOILIE-3D interior wall faces, before cutaway or optional room fitting"}}
     if stage == "final":
         tolerance = 1e-6
         outside = [row["id"] for row in objects if row["kind"] == "furniture" and (
@@ -105,7 +105,7 @@ def snapshot(inputs, stage, measure_support=False, measure_solids=False):
             or max(point[1] for point in row["corners"]) > ymax+tolerance
         )]
         if outside:
-            raise RuntimeError("Final V4 room does not contain furniture: " + ", ".join(outside))
+            raise RuntimeError("Final SOILIE-3D room does not contain furniture: " + ", ".join(outside))
     if measure_solids:
         from serverless.benchmark.solid_overlap import measure
         result["solidMeshOverlap"] = measure(solid_objects)
@@ -128,7 +128,7 @@ def main():
     if os.environ.get("SOILIE_ROOM_REQUEST"):
         raise RuntimeError("Model benchmarks must not enable the website room-size extension")
     sys.path.insert(0, str(Path.cwd()/"modules"))
-    spec = importlib.util.spec_from_file_location("observed_v4", "modules/render.py")
+    spec = importlib.util.spec_from_file_location("observed_model", "modules/render.py")
     model = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(model)
     original_overlap, original_finalize = model.adjust_overlapping_objects, model.finalize_room_placement

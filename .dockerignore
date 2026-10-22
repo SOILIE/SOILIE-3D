@@ -5,7 +5,7 @@
 .codex/*
 !.codex/runtime/
 !.codex/runtime/relations.sqlite3
-!.codex/runtime/v4-provenance.json
+!.codex/runtime/model-provenance.json
 assets/*
 !assets/*.obj
 !assets/asset_rotations.csv

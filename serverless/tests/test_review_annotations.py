@@ -43,7 +43,7 @@ class AnnotationTests(unittest.TestCase):
     def test_all_sources_show_the_same_functional_front_and_geometry(self):
         scene = normalize(LayoutImportTests().layout(30), 'bedroom', 0, 'fixture')
         expected = diagram(scene)
-        for model, convention in (('soilie', 'V4 asset-corrected local +X'),
+        for model, convention in (('soilie', 'SOILIE-3D asset-corrected local +X'),
                                   ('infinigen_controlled', 'Infinigen canonical Subpart.Front local +X axis')):
             other = deepcopy(scene)
             other['model'] = model

@@ -5,7 +5,7 @@ import unittest
 
 from serverless.benchmark.diversity import coverage_sample, freeze
 from serverless.benchmark.run_batch import load_request_plan
-from serverless.common.v4_runtime import ROOM_COMBINATION_FILES
+from serverless.common.model_runtime import ROOM_COMBINATION_FILES
 from modules.working_combos import supports_coordinate_construction
 
 

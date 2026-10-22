@@ -3,11 +3,20 @@ import hashlib
 import io
 from pathlib import Path
 import tarfile
+import tempfile
 import unittest
 from unittest.mock import Mock
 
 from serverless.benchmark.private_archive import archive_path, contained, evict, inventory
-from serverless.tests.test_remote_inventory import temporary_directory
+
+
+SCRATCH = Path(__file__).resolve().parents[2] / '.codex' / 'test-private-archive'
+
+
+def temporary_directory():
+    """Keep test artifacts in the repository's ignored scratch directory."""
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=SCRATCH)
 
 
 class PrivateArchiveTests(unittest.TestCase):

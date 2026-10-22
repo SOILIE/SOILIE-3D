@@ -1,4 +1,4 @@
-"""Blender-side import smoke test for every asset V4 can select."""
+"""Blender-side import smoke test for every asset SOILIE-3D can select."""
 
 from __future__ import annotations
 
@@ -38,14 +38,14 @@ def main() -> None:
         if row["asset_name"] not in rotations.get(row["object_name"].lower(), {})
     ]
     if missing_rotations:
-        raise RuntimeError("V4 rotation lookup cannot resolve: " + ", ".join(missing_rotations))
+        raise RuntimeError("SOILIE-3D rotation lookup cannot resolve: " + ", ".join(missing_rotations))
     imported = []
     for name in assets:
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete(use_global=False)
         path = runtime / "assets" / name
         if not path.exists():
-            raise RuntimeError(f"{name}: asset listed by V4 is missing")
+            raise RuntimeError(f"{name}: asset listed by SOILIE-3D is missing")
         bpy.ops.import_scene.obj(
             filepath=str(path),
             use_split_objects=False,

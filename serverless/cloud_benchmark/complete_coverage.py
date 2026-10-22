@@ -23,13 +23,14 @@ from serverless.cloud_benchmark.publication_views import model_summary, room_mod
 from serverless.cloud_benchmark.staged_pilot import read, digest
 from serverless.cloud_benchmark.checkpoint import write_json
 
-EXPORTS = ('benchmark/layoutgpt-bedroom-timing-20', 'benchmark/layoutgpt-controlled',
-           'benchmark/layoutgpt-controlled-supplement', 'remote-inventory/layoutgpt',
-           'remote-inventory/layoutgpt-supplement', 'remote-inventory/layoutgpt-topup')
+DEFAULT_EXPORTS = ('benchmark/layoutgpt-bedroom-timing-20', 'benchmark/layoutgpt-controlled',
+                   'benchmark/layoutgpt-controlled-supplement', 'remote-inventory/layoutgpt',
+                   'remote-inventory/layoutgpt-supplement', 'remote-inventory/layoutgpt-topup')
 API_STAGE = 'API request to complete response, including network and provider queue. Excludes retrieval, parsing, mesh retrieval and rendering.'
 INFI_STAGE = 'Blender startup, constraint solving, procedural meshes, camera preparation and scene saving. Excludes export, measurement, transfer and rendering.'
 DESKTOP = 'Core Ultra 7 155H; WSL2 with 8 visible vCPUs and approximately 12 GB RAM'
-SERVER = '32-vCPU Xeon (Sapphire Rapids) KVM virtual machine; 118 GiB RAM; shared concurrent workers'
+REMOTE_VM = ('x86-64 KVM virtual machine; Intel Xeon (Sapphire Rapids) CPU family; '
+             '32 vCPUs; 118 GiB RAM; Blender threads reported per row; concurrent workers')
 
 
 def api_records(export, ledger):
@@ -63,7 +64,7 @@ def api_records(export, ledger):
 
 def complete_receipts(root):
     result = {}
-    for host in ('cloud','local'):
+    for host in ('remote', 'local'):
         for path in sorted((root/host).glob('*/receipt.json')):
             record = read(path)
             if record['status'] == 'delegated': continue
@@ -112,16 +113,21 @@ def update_contacts(scene, record):
     return scene
 
 
-def compile_all(backend, website, contacts, output):
+def compile_all(backend, website, contacts, output, inventory_root=None,
+                review_source=None, api_exports=None):
     backend,website,contacts,output=map(Path,(backend,website,contacts,output))
     scratch=backend/'.codex'; source=website/'benchmarks'
+    inventory_root = Path(inventory_root) if inventory_root else scratch/'remote-inventory'
+    review_source = Path(review_source) if review_source else inventory_root/'review-functional-use-v4-audited'
+    export_paths = ([Path(path) for path in api_exports] if api_exports else
+                    [scratch/path for path in DEFAULT_EXPORTS])
     shutil.copytree(source,output,dirs_exist_ok=True)
     document=read(source/'comparison.json'); public=read(source/'room-measurements.json')
     by_id={r['sceneId']:r for r in public['rows']}
     support=read(source/'support-measurements.json')
     support_rooms={r['sceneId']:r for r in support['rooms']}
     original=read(scratch/'publication-022-floor-check/original-rows.json')['rows']
-    audited=read(scratch/'remote-inventory/review-source-v4-audited/source-scenes.json')['scenes']
+    audited=read(review_source/'source-scenes.json')['scenes']
     additions=[{'scene':deepcopy(s),'metrics':{}} for s in audited if s['model']=='infinigen_controlled']
     native_records=[]; changed=[]
     for row in original+additions:
@@ -147,8 +153,8 @@ def compile_all(backend, website, contacts, output):
         npz.setdefault(path.parent.name,path)
     scale=read(source/'layoutgpt-scale.json'); scale_ids={r['sceneId'] for r in scale['rooms']}
     calls=[]; input_hashes=[]
-    for folder in EXPORTS:
-        path=scratch/folder/'export.json'; export=read(path)
+    for folder in export_paths:
+        path=folder/'export.json'; export=read(path)
         input_hashes.append(digest(path.read_bytes()))
         records=api_records(export,read(path.with_name('inference-ledger.json')))
         calls.extend(records)
@@ -192,11 +198,13 @@ def compile_all(backend, website, contacts, output):
     # Rebuild timing from receipts, not from whichever scenes happened to match
     # an AI pair. Never pool different CPUs into one latency distribution.
     timed=old_infinigen_timing(scratch,original)
-    for receipt in complete_receipts(scratch/'remote-inventory').values():
-        vm=receipt['host']=='remote'
+    for receipt in complete_receipts(inventory_root).values():
+        if receipt['host'] not in ('local', 'remote'):
+            raise ValueError('Inventory receipt host must be local or remote')
+        remote=receipt['host']=='remote'
         timed.append({'id':receipt['id'],'model':'infinigen_controlled','roomType':receipt['task']['roomType'],
-            'seconds':positive(receipt['generationSeconds']), 'platform':'cpu-vm' if vm else 'cpu-desktop',
-            'hardware':SERVER if vm else DESKTOP,'blenderThreads':receipt['threads'],
+            'seconds':positive(receipt['generationSeconds']), 'platform':'cpu-vm' if remote else 'cpu-desktop',
+            'hardware':REMOTE_VM if remote else DESKTOP,'blenderThreads':receipt['threads'],
             'condition':'inventory-conditioned','stage':INFI_STAGE,'concurrent':True})
     if len(timed)!=569 or len({r['id'] for r in timed})!=569: raise ValueError('Native timing coverage differs')
     groups=[]
@@ -279,4 +287,10 @@ def compile_all(backend, website, contacts, output):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     for key in ('backend','website','contacts','output'):p.add_argument('--'+key,type=Path,required=True)
+    p.add_argument('--inventory-root', type=Path,
+                   help='Completed receipt root with local/ and remote/ children')
+    p.add_argument('--review-source', type=Path,
+                   help='Directory containing the audited source-scenes.json')
+    p.add_argument('--api-export', dest='api_exports', type=Path, action='append',
+                   help='Layout API export directory; repeat to replace the default set')
     compile_all(**vars(p.parse_args()))

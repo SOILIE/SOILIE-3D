@@ -18,20 +18,20 @@ from PIL import Image, ImageSequence
 
 from serverless.common.engine import json_dumps
 from serverless.common.model_version import model_document
-from serverless.common.v4_runtime import (
+from serverless.common.model_runtime import (
     SCENE_SEED_STEP,
-    V4GenerationError,
-    animate_v4_output,
-    generate_v4_inputs,
-    load_v4_provenance,
-    select_v4_objects,
+    ModelGenerationError,
+    animate_model_output,
+    generate_model_inputs,
+    load_model_provenance,
+    select_model_objects,
 )
 
 
 TABLE_NAME = os.environ["JOB_TABLE"]
 OUTPUT_BUCKET = os.environ.get("OUTPUT_BUCKET", "soilie3d-data")
 OUTPUT_BASE_URL = os.environ.get("OUTPUT_BASE_URL", "https://soilie3d.com/data")
-V4_RUNTIME_DIR = Path(os.environ.get("V4_RUNTIME_DIR", "/var/task/v4"))
+SOILIE_RUNTIME_DIR = Path(os.environ.get("SOILIE_RUNTIME_DIR", "/var/task/soilie-runtime"))
 BLENDER_PATH = os.environ.get("BLENDER_PATH", "/opt/blender/blender")
 
 
@@ -45,7 +45,7 @@ def _process_output_tail(value: str, limit: int = 3500) -> str:
     return value.replace("\x00", "").strip()[-limit:]
 
 
-def _blender_command(work_dir: Path, scene_seed: int, v4_inputs: dict[str, Any]) -> list[str]:
+def _blender_command(work_dir: Path, scene_seed: int, model_inputs: dict[str, Any]) -> list[str]:
     """Build an invocation whose scene path is independent of Lambda's PWD."""
 
     return [
@@ -55,9 +55,9 @@ def _blender_command(work_dir: Path, scene_seed: int, v4_inputs: dict[str, Any])
         "--python-expr",
         f"import random; random.seed({scene_seed})",
         "--python",
-        str(Path(__file__).with_name("v4_entrypoint.py")),
+        str(Path(__file__).with_name("model_entrypoint.py")),
         "--",
-        json.dumps(v4_inputs, separators=(",", ":")),
+        json.dumps(model_inputs, separators=(",", ":")),
     ]
 
 dynamodb = boto3.client("dynamodb")
@@ -100,8 +100,8 @@ def _stage(job_id: str, scene_index: int, status: str) -> None:
         )
 
 
-def _webp_from_v4_gif(source: Path, destination: Path) -> None:
-    """Resize V4's completed GIF without replacing its frame sequence."""
+def _webp_from_model_gif(source: Path, destination: Path) -> None:
+    """Resize the model's completed GIF without replacing its frame sequence."""
 
     with Image.open(source) as animation:
         duration = int(animation.info.get("duration", 67))
@@ -111,7 +111,7 @@ def _webp_from_v4_gif(source: Path, destination: Path) -> None:
             resized.thumbnail((512, 512), Image.Resampling.LANCZOS)
             frames.append(resized.copy())
     if not frames:
-        raise RuntimeError("SOILIE V4 did not produce animation frames.")
+        raise RuntimeError("SOILIE-3D did not produce animation frames.")
     frames[0].save(
         destination,
         save_all=True,
@@ -125,12 +125,12 @@ def _webp_from_v4_gif(source: Path, destination: Path) -> None:
         frame.close()
 
 
-def _parse_v4_result(stdout: str) -> dict[str, Any]:
-    """Extract V4's result line without assuming it is Blender's last output.
+def _parse_model_result(stdout: str) -> dict[str, Any]:
+    """Extract the model result line without assuming it is Blender's last output.
 
     Blender may append shutdown diagnostics after the original renderer prints
     its JSON document. Reading the final matching line keeps the adapter thin
-    while avoiding any change to V4's output behavior.
+    while avoiding any change to the model's output behavior.
     """
 
     for line in reversed(stdout.splitlines()):
@@ -143,18 +143,18 @@ def _parse_v4_result(stdout: str) -> dict[str, Any]:
             continue
         if isinstance(document, dict) and "filename" in document and "data" in document:
             return document
-    raise RuntimeError("SOILIE V4 did not return its result document.")
+    raise RuntimeError("SOILIE-3D did not return its result document.")
 
 
 def _validate_room_boundary_result(render_result: dict[str, Any]) -> None:
-    """Reject a manifest if visible V4 boundaries disagree with room metadata."""
+    """Reject a manifest if visible model boundaries disagree with room metadata."""
 
     room = render_result.get("room", {})
     actual = room.get("actual", {})
     rows = {row.get("obj_name"): row for row in render_result.get("data", [])}
     required = {"FLOOR", "LEFT_WALL", "RIGHT_WALL", "FRONT_WALL", "BACK_WALL"}
     if not required <= rows.keys() or not {"widthM", "depthM", "heightM"} <= actual.keys():
-        raise RuntimeError("The V4 room-fit extension returned incomplete boundary evidence.")
+        raise RuntimeError("The room-fit extension returned incomplete boundary evidence.")
 
     checks = (
         (rows["FLOOR"]["dim_x"], actual["widthM"]),
@@ -166,7 +166,7 @@ def _validate_room_boundary_result(render_result: dict[str, Any]) -> None:
     )
     checks += tuple((rows[name]["dim_z"], actual["heightM"]) for name in required - {"FLOOR"})
     if any(not math.isclose(float(observed), float(expected), abs_tol=1e-4) for observed, expected in checks):
-        raise RuntimeError("The visible V4 floor or walls disagree with the reported room dimensions.")
+        raise RuntimeError("The visible model floor or walls disagree with the reported room dimensions.")
 
 
 def _write_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -225,11 +225,11 @@ def _upload(
         "seed": scene_seed,
         "model": {
             **model_document(),
-            "provenanceSha256": load_v4_provenance(V4_RUNTIME_DIR)["files"]["modules/render.py"]["sha256"],
+            "provenanceSha256": load_model_provenance(SOILIE_RUNTIME_DIR)["files"]["modules/render.py"]["sha256"],
         },
-        "animationModel": "original-v4-change_imagination_focus",
-        "formationViewpoint": {"mode": "original_v4_third_person", "gaze": "object_sequence"},
-        "roomFit": {"stage": "after_v4_placement", "interiorPlacementChanged": False},
+        "animationModel": "soilie-change_imagination_focus",
+        "formationViewpoint": {"mode": "soilie_third_person", "gaze": "object_sequence"},
+        "roomFit": {"stage": "after_model_placement", "interiorPlacementChanged": False},
         "artifacts": artifacts,
         "expiresAt": (datetime.now(UTC) + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
     }
@@ -316,14 +316,14 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
     try:
         _stage(job_id, scene_index, "placing")
         scene_seed = request["seed"] + scene_index * SCENE_SEED_STEP
-        objects = select_v4_objects(V4_RUNTIME_DIR, request, scene_index)
-        v4_inputs = generate_v4_inputs(V4_RUNTIME_DIR, objects, scene_seed)
+        objects = select_model_objects(SOILIE_RUNTIME_DIR, request, scene_index)
+        model_inputs = generate_model_inputs(SOILIE_RUNTIME_DIR, objects, scene_seed)
         request_path = work_dir / "request.json"
         request_path.write_text(json.dumps(request, indent=2), encoding="utf-8")
-        (work_dir / "v4-input.json").write_text(json.dumps(v4_inputs, indent=2), encoding="utf-8")
+        (work_dir / "model-input.json").write_text(json.dumps(model_inputs, indent=2), encoding="utf-8")
 
         for name in ("assets", "data", "modules", "suggested_setup.blend"):
-            os.symlink(V4_RUNTIME_DIR / name, work_dir / name, target_is_directory=(name != "suggested_setup.blend"))
+            os.symlink(SOILIE_RUNTIME_DIR / name, work_dir / name, target_is_directory=(name != "suggested_setup.blend"))
         (work_dir / "output").mkdir()
 
         _stage(job_id, scene_index, "rendering")
@@ -333,7 +333,7 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
         # when subprocess.cwd is set. Keep both sources of truth aligned.
         environment["PWD"] = str(work_dir)
         result = subprocess.run(
-            _blender_command(work_dir, scene_seed, v4_inputs),
+            _blender_command(work_dir, scene_seed, model_inputs),
             capture_output=True,
             text=True,
             timeout=840,
@@ -351,16 +351,16 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
             }
             print(json_dumps(diagnostic))
             raise BlenderProcessError(f"Blender exited with code {result.returncode}")
-        render_result = _parse_v4_result(result.stdout)
+        render_result = _parse_model_result(result.stdout)
         _validate_room_boundary_result(render_result)
-        v4_output = Path(render_result["path"])
+        model_output = Path(render_result["path"])
 
         _stage(job_id, scene_index, "animating")
-        original_gif = animate_v4_output(V4_RUNTIME_DIR, render_result["filename"], v4_output)
-        shutil.copy2(v4_output / "01_birds_eye_view.png", work_dir / "ordinary.png")
-        shutil.copy2(v4_output / "02_birds_eye_view.png", work_dir / "imagined.png")
+        original_gif = animate_model_output(SOILIE_RUNTIME_DIR, render_result["filename"], model_output)
+        shutil.copy2(model_output / "01_birds_eye_view.png", work_dir / "ordinary.png")
+        shutil.copy2(model_output / "02_birds_eye_view.png", work_dir / "imagined.png")
         shutil.copy2(original_gif, work_dir / "formation.gif")
-        _webp_from_v4_gif(original_gif, work_dir / "formation.webp")
+        _webp_from_model_gif(original_gif, work_dir / "formation.webp")
         _write_csv(render_result["data"], work_dir / "placements.csv")
         manifest = _upload(work_dir, job_id, scene_index, request, render_result, scene_seed)
         _complete_scene(job_id, scene_index, manifest)
@@ -369,13 +369,13 @@ def _process(message: dict[str, Any], receive_count: int) -> None:
                 {"event": "generation_complete", "jobId": job_id, "sceneIndex": scene_index, "durationMs": round((time.monotonic() - started) * 1000)}
             )
         )
-    except V4GenerationError as error:
-        _fail_scene(job_id, scene_index, "V4_GENERATION_FAILED", str(error))
+    except ModelGenerationError as error:
+        _fail_scene(job_id, scene_index, "SOILIE_GENERATION_FAILED", str(error))
     except BlenderProcessError:
         # A completed local child process with a nonzero exit is deterministic
         # for this immutable request and image. Queue redelivery cannot repair
         # it, so expose a terminal stable code immediately.
-        _fail_scene(job_id, scene_index, "V4_RENDER_FAILED", "The V4 renderer could not complete this scene.")
+        _fail_scene(job_id, scene_index, "SOILIE_RENDER_FAILED", "The SOILIE-3D renderer could not complete this scene.")
     except Exception as error:
         if receive_count < 2:
             # The first failed attempt will be redelivered by SQS. Reflect that

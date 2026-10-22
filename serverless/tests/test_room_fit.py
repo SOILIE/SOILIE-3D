@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from modules.room_fit import WALL_CLEARANCE_M, fit_axis, plan_room_fit
+from serverless.renderer.room_fit import WALL_CLEARANCE_M, fit_axis, plan_room_fit
 
 
 class RoomFitTests(unittest.TestCase):
-    def test_auto_is_tight_envelope_after_v4(self):
+    def test_auto_is_tight_envelope_after_model_placement(self):
         plan = plan_room_fit((-1.0, 2.0, -0.5, 1.5, 0.0, 1.8), {"mode": "auto"})
         self.assertAlmostEqual(3.0 + 2 * WALL_CLEARANCE_M, plan["actual"]["widthM"])
         self.assertAlmostEqual(2.0 + 2 * WALL_CLEARANCE_M, plan["actual"]["depthM"])

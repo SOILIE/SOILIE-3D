@@ -19,10 +19,11 @@ def write_json(path, data):
     Path(path).write_text(json.dumps(data, separators=(',', ':')), encoding='utf-8')
 
 
-def prepare(backend, output):
+def prepare(backend, output, inventory_root=None):
     backend, output = Path(backend), Path(output)
+    inventory_root = Path(inventory_root) if inventory_root else backend/'.codex/remote-inventory'
     output.mkdir(parents=True, exist_ok=True)
-    archive=read(backend/'.codex/remote-inventory/comparison-archive/manifest.json')
+    archive=read(inventory_root/'comparison-archive/manifest.json')
     rows={r['scene']['id']:r for r in read(backend/'.codex/benchmark/soilie-platform-grid-final/evidence/measured-scenes.json')['rows']}
     for scene in read(backend/'.codex/benchmark/infinigen-controlled-living-supplement/export.json')['scenes']:
         rows[scene['id']]={'scene':scene}
@@ -110,9 +111,13 @@ if __name__=='__main__':
     parser.add_argument('--root',type=Path,required=True)
     parser.add_argument('--backend',type=Path,required=True)
     parser.add_argument('--runtime',type=Path)
+    parser.add_argument('--inventory-root',type=Path,
+                        help='Inventory root containing comparison-archive/manifest.json')
     parser.add_argument('--workers',type=int,default=8)
     parser.add_argument('--reader',choices=['reextract_infinigen_floor.py','inspect_infinigen_support.py'],default='reextract_infinigen_floor.py')
     parser.add_argument('--contacts-only',action='store_true')
     args=parser.parse_args()
-    if args.runtime: run(**vars(args))
-    else: print(prepare(args.backend,args.root))
+    if args.runtime:
+        run(args.root,args.runtime,args.backend,args.workers,args.reader,args.contacts_only)
+    else:
+        print(prepare(args.backend,args.root,args.inventory_root))

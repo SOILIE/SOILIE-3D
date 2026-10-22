@@ -182,7 +182,7 @@ def _coordinate_triplets(filepath):
 
 
 def supports_coordinate_construction(objects, filepath="./data/triplets.csv"):
-    '''Return whether the distinct objects retain one complete V4 triplet basis.
+    '''Return whether the distinct objects retain one complete model triplet basis.
 
     Working-combination rows are valid before duplicate removal. When repeated
     labels are removed, the remaining objects may no longer share the ordered

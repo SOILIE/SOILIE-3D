@@ -17,7 +17,7 @@ class RuntimeAssetTests(unittest.TestCase):
             root = Path(temporary)
             asset = root / "assets" / "chair.obj"
             asset.parent.mkdir()
-            asset.write_bytes(b"known V4 input")
+            asset.write_bytes(b"known SOILIE-3D input")
             manifest = {
                 "schemaVersion": 1,
                 "files": [{
@@ -29,7 +29,7 @@ class RuntimeAssetTests(unittest.TestCase):
             }
             with patch("serverless.compiler.runtime_assets.expected_paths", return_value=[asset]):
                 verify(root, manifest)
-                asset.write_bytes(b"changed V4 input")
+                asset.write_bytes(b"changed SOILIE-3D input")
                 with self.assertRaisesRegex(ValueError, "checksum differs"):
                     verify(root, manifest)
 

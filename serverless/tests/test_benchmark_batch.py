@@ -46,7 +46,7 @@ class BatchTests(unittest.TestCase):
     def test_explicit_render_maintenance_resume_records_a_provenance_boundary(self):
         def provenance(render_digest):
             return {
-                "model": "SOILIE-3D V4", "version": "4.0.2", "channel": "main",
+                "model": "SOILIE-3D", "version": "4.0.2", "channel": "main",
                 "baselineCommit": render_digest, "totalBytes": 10,
                 "files": {
                     "modules/render.py": {"sha256": render_digest, "bytes": 10},

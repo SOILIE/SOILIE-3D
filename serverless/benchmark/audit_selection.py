@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from serverless.common.v4_runtime import _load_original_modules, select_v4_objects
+from serverless.common.model_runtime import _load_original_modules, select_model_objects
 
 
 def audit(runtime, source):
@@ -31,13 +31,13 @@ def audit(runtime, source):
                        "seed":prior["seed"],"objectCount":prior["requestedObjectCount"], "allowDuplicates":False,
                        "sameObjectsAcrossScenes":True}
             calls.clear()
-            selected = select_v4_objects(runtime,request,0)
+            selected = select_model_objects(runtime,request,0)
             sampled = calls[-1]
             if len(selected) != prior["selectedObjectCount"] or ("selectedObjects" in prior and Counter(selected) != Counter(prior["selectedObjects"])):
                 raise RuntimeError(f"Original selection replay differs for {prior['mode']} seed {prior['seed']}; check the pinned runtime and PYTHONHASHSEED")
             shorter = len(selected) < request["objectCount"]
             explained = len(sampled)==request["objectCount"] and set(sampled)==set(selected) and len(set(sampled))==len(selected)
-            enabled = select_v4_objects(runtime,dict(request,allowDuplicates=True),0)
+            enabled = select_model_objects(runtime,dict(request,allowDuplicates=True),0)
             rows.append({"mode":prior["mode"],"seed":prior["seed"],"requested":request["objectCount"],
                          "sampledBeforeDeduplication":sampled,"selectedWithDuplicatesDisabled":selected,
                          "selectedWithDuplicatesEnabled":enabled,"shorter":shorter,"explainedByDeduplication":explained})

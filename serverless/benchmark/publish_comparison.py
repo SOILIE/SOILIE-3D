@@ -47,7 +47,7 @@ def attach_front_directions(scene):
         if length <= 1e-9:
             raise ValueError(f"Scene {scene.get('id')} object {item.get('id')} has no horizontal front")
         item["frontDirection"] = [x/length, y/length]
-        item["frontConvention"] = "V4 asset-corrected local +X"
+        item["frontConvention"] = "SOILIE-3D asset-corrected local +X"
     return scene
 
 
@@ -170,7 +170,7 @@ def main():
                         help="Reconstructed token profile for the exact released LayoutGPT configuration")
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--combination-catalog", type=Path,
-                        help="Published V4 room-combination CSV used for category co-occurrence fidelity")
+                        help="Published SOILIE-3D room-combination CSV used for category co-occurrence fidelity")
     parser.add_argument("--incidents", type=Path,
                         help="Optional current-cohort infrastructure incidents; omitted incidents are not historical comparison results")
     parser.add_argument("--output", type=Path, required=True)
@@ -258,7 +258,7 @@ def main():
         with args.combination_catalog.open(newline="", encoding="utf-8-sig") as stream:
             source_combinations = [tuple(value for value in row if value) for row in csv.reader(stream)][1:]
         if not source_combinations or any(len(row) != 6 for row in source_combinations):
-            raise ValueError("The V4 bedroom combination catalog must contain six labels per row")
+            raise ValueError("The SOILIE-3D bedroom combination catalog must contain six labels per row")
     document = {"schemaVersion": 2, "generatedAt": datetime.now(UTC).isoformat(), "metricDefinitions": METRICS,
                 "models": {model: {"label": LABELS[model], "n": len(group), "metrics": aggregate(group),
                                    "inventory": inventory_summary(group),

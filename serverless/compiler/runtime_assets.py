@@ -1,4 +1,4 @@
-"""Create and verify the immutable non-code inputs used by SOILIE-3D V4."""
+"""Create and verify the immutable non-code inputs used by SOILIE-3D."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from serverless.compiler.build_runtime import V4_DATA_FILES
+from serverless.compiler.build_runtime import MODEL_DATA_FILES
 
 
 def checksum(path: Path) -> str:
@@ -21,14 +21,14 @@ def checksum(path: Path) -> str:
 def expected_paths(repository: Path) -> list[Path]:
     files = [repository / "assets" / "asset_rotations.csv"]
     files.extend(sorted((repository / "assets").glob("*.obj")))
-    files.extend(repository / "data" / name for name in V4_DATA_FILES)
+    files.extend(repository / "data" / name for name in MODEL_DATA_FILES)
     return files
 
 
 def build_manifest(repository: Path) -> dict:
     files = expected_paths(repository)
     if len([path for path in files if path.suffix == ".obj"]) != 191:
-        raise RuntimeError("The V4 runtime manifest requires exactly 191 OBJ meshes")
+        raise RuntimeError("The SOILIE-3D runtime manifest requires exactly 191 OBJ meshes")
     rows = []
     for path in files:
         if not path.is_file():
@@ -51,7 +51,7 @@ def verify(repository: Path, manifest: dict) -> None:
     expected = {path.relative_to(repository).as_posix() for path in expected_paths(repository)}
     declared = {row.get("path") for row in manifest["files"]}
     if declared != expected:
-        raise ValueError("Runtime manifest file set does not match the V4 inputs")
+        raise ValueError("Runtime manifest file set does not match the SOILIE-3D inputs")
     for row in manifest["files"]:
         path = (repository / row["path"]).resolve()
         if not path.is_relative_to(repository.resolve()) or not path.is_file():

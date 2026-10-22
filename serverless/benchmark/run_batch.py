@@ -1,4 +1,4 @@
-"""Resumable local V4 placement batches; one fresh process per attempt.
+"""Resumable local SOILIE-3D placement batches; one fresh process per attempt.
 
 Use --worker only internally. Failed attempts are retained for reliability
 reporting, while successful-layout timing excludes arbitrary watchdog waits.
@@ -132,19 +132,19 @@ def terminate_tree(process):
 
 
 def worker(args):
-    from serverless.common.v4_runtime import generate_v4_inputs, select_v4_objects
+    from serverless.common.model_runtime import generate_model_inputs, select_model_objects
     request = json.loads((args.work/"request.json").read_text())
     started = time.perf_counter()
-    objects = select_v4_objects(args.runtime, request, 0)
+    objects = select_model_objects(args.runtime, request, 0)
     write_json(args.work/"selection.json", {"objects": objects, "request": request})
-    inputs = generate_v4_inputs(args.runtime, objects, request["seed"])
+    inputs = generate_model_inputs(args.runtime, objects, request["seed"])
     write_json(args.work/"input.json", inputs)
     selection_seconds = time.perf_counter()-started
     for name in ("assets", "modules", "data", "suggested_setup.blend"):
         (args.work/name).symlink_to(args.runtime/name, target_is_directory=name != "suggested_setup.blend")
     (args.work/"output").mkdir()
     cmd = [str(args.blender), "--background", "suggested_setup.blend", "--threads", str(args.blender_threads), "--python-exit-code", "2",
-           "--python", str(Path(__file__).with_name("capture_v4.py")), "--",
+           "--python", str(Path(__file__).with_name("capture_model.py")), "--",
            "--input", str(args.work/"input.json"), "--output", str(args.work/"capture.json"), "--seed", str(request["seed"])]
     if args.full:
         cmd.append("--full")
@@ -161,7 +161,7 @@ def worker(args):
 
 
 def batch(args):
-    from serverless.common.v4_runtime import load_v4_provenance
+    from serverless.common.model_runtime import load_model_provenance
 
     args.output.mkdir(parents=True, exist_ok=True)
     plan_document = load_request_plan(args.request_plan) if args.request_plan else None
@@ -173,7 +173,7 @@ def batch(args):
               "full": args.full, "support": args.support, "solidMeshOverlap": args.solid_mesh_overlap,
               "pythonVersion": platform.python_version(),
               "hardware": platform.platform(), "cpu": platform.processor(), "cpuThreadsAvailable": os.cpu_count(),
-              "roomFitIncluded": False, "provenance": load_v4_provenance(args.runtime)}
+              "roomFitIncluded": False, "provenance": load_model_provenance(args.runtime)}
     if args.seed_step != 997 or args.blender_threads != 4 or args.parallel_workers != 1:
         config['execution'] = {'seedStep': args.seed_step, 'blenderThreads': args.blender_threads,
                                'parallelWorkers': args.parallel_workers,

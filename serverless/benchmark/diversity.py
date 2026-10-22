@@ -1,4 +1,4 @@
-"""Freeze broad inputs without modifying V4 or selecting by output quality.
+"""Freeze broad inputs without modifying SOILIE-3D or selecting by output quality.
 
 Preset/random requests still use the original sampler. Explicit requests use
 ordered prefixes already in its published combinations, emphasizing catalog
@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import random
 
-from serverless.common.v4_runtime import ROOM_COMBINATION_FILES
+from serverless.common.model_runtime import ROOM_COMBINATION_FILES
 from serverless.benchmark.run_batch import checkpoint_rows, write_json
 
 
@@ -23,7 +23,7 @@ def catalog_rows(path):
 
 
 def observed_triplets(runtime):
-    """Use existing observations through V4's explicit-object input path.
+    """Use existing observations through the model's explicit-object input path.
 
     The refined preset files omit some observed classes. Do not rebuild those
     files or pretend that explicit probes repair the original preset sampler.

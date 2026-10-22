@@ -9,10 +9,8 @@ import json
 import csv
 import random
 import copy
-try:
-    from collision_resolution import Box, choose_recovery_move, overlapping_pairs
-except ImportError:  # Package imports outside Blender resolve through modules.
-    from .collision_resolution import Box, choose_recovery_move, overlapping_pairs
+from dataclasses import dataclass
+from math import hypot
 try:
     from blender_names import blender_copy_index, blender_source_name
 except ImportError:  # Package imports outside Blender resolve through modules.
@@ -20,6 +18,157 @@ except ImportError:  # Package imports outside Blender resolve through modules.
 
 SIZE_MAP = {'xsmall': 0, 'small': 1, 'medium': 2, 'large': 3, 'xlarge': 4}
 SYNONYMS = {'light':'lamp'}
+COLLISION_EPSILON = 1e-9
+
+
+@dataclass(frozen=True)
+class Box:
+    '''World-axis-aligned bounds for one scene object.'''
+
+    name: str
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
+    min_z: float
+    max_z: float
+
+    def translated(self, dx, dy):
+        return Box(
+            self.name,
+            self.min_x + dx,
+            self.max_x + dx,
+            self.min_y + dy,
+            self.max_y + dy,
+            self.min_z,
+            self.max_z,
+        )
+
+
+@dataclass(frozen=True)
+class RecoveryMove:
+    '''A collision-reducing displacement selected for one object.'''
+
+    name: str
+    dx: float
+    dy: float
+    overlap_before: float
+    overlap_after: float
+
+
+def intersection_volume(first, second):
+    width = min(first.max_x, second.max_x) - max(first.min_x, second.min_x)
+    depth = min(first.max_y, second.max_y) - max(first.min_y, second.min_y)
+    height = min(first.max_z, second.max_z) - max(first.min_z, second.min_z)
+    if width <= 0 or depth <= 0 or height <= 0:
+        return 0.0
+    return width * depth * height
+
+
+def overlapping_pairs(boxes, fixed=frozenset()):
+    '''Return furniture collisions, excluding architecture in ``fixed``.'''
+
+    names = list(boxes)
+    result = []
+    for index, first_name in enumerate(names):
+        for second_name in names[index + 1:]:
+            if first_name in fixed or second_name in fixed:
+                continue
+            volume = intersection_volume(boxes[first_name], boxes[second_name])
+            if volume > COLLISION_EPSILON:
+                result.append((first_name, second_name, volume))
+    return result
+
+
+def total_overlap(boxes, fixed=frozenset()):
+    return sum(volume for _first, _second, volume in overlapping_pairs(boxes, fixed))
+
+
+def _candidate_shifts(box, others, clearance):
+    others = list(others)
+    candidates = []
+    for other in others:
+        if intersection_volume(box, other) <= COLLISION_EPSILON:
+            continue
+        candidates.extend([
+            (other.max_x - box.min_x + clearance, 0.0),
+            (other.min_x - box.max_x - clearance, 0.0),
+            (0.0, other.max_y - box.min_y + clearance),
+            (0.0, other.min_y - box.max_y - clearance),
+        ])
+
+    # Cluster-edge candidates guarantee an escape from any locally trapped
+    # overlap without consuming another random choice.
+    if others:
+        candidates.extend([
+            (max(other.max_x for other in others) - box.min_x + clearance, 0.0),
+            (min(other.min_x for other in others) - box.max_x - clearance, 0.0),
+            (0.0, max(other.max_y for other in others) - box.min_y + clearance),
+            (0.0, min(other.min_y for other in others) - box.max_y - clearance),
+        ])
+    return list(dict.fromkeys((round(dx, 12), round(dy, 12)) for dx, dy in candidates))
+
+
+def choose_recovery_move(
+    boxes,
+    movable_order,
+    original_centres,
+    room_bounds=None,
+    fixed=frozenset(),
+    clearance=0.01,
+):
+    '''Choose the least disruptive movement that reduces whole-scene overlap.'''
+
+    before = total_overlap(boxes, fixed)
+    if before <= COLLISION_EPSILON:
+        raise ValueError('Recovery was requested for a collision-free scene')
+    collisions = overlapping_pairs(boxes, fixed)
+    colliding_names = {name for first, second, _volume in collisions for name in (first, second)}
+    ranked = []
+    for priority, name in enumerate(movable_order):
+        if name in fixed or name not in colliding_names:
+            continue
+        box = boxes[name]
+        others = [
+            other for other_name, other in boxes.items()
+            if other_name != name and other_name not in fixed
+        ]
+        for candidate_index, (dx, dy) in enumerate(_candidate_shifts(box, others, clearance)):
+            moved = box.translated(dx, dy)
+            proposal = dict(boxes)
+            proposal[name] = moved
+            after = total_overlap(proposal, fixed)
+            if after >= before - COLLISION_EPSILON:
+                continue
+            original_x, original_y = original_centres[name]
+            centre_x = (moved.min_x + moved.max_x) / 2
+            centre_y = (moved.min_y + moved.max_y) / 2
+            origin_distance = hypot(centre_x - original_x, centre_y - original_y)
+            displacement = hypot(dx, dy)
+            room_expansion = 0.0
+            if room_bounds is not None:
+                min_x, max_x, min_y, max_y = room_bounds
+                room_expansion = (
+                    max(0.0, min_x - moved.min_x)
+                    + max(0.0, moved.max_x - max_x)
+                    + max(0.0, min_y - moved.min_y)
+                    + max(0.0, moved.max_y - max_y)
+                )
+            # Prefer a complete clearance, then the greatest strict reduction.
+            # Equivalent outcomes preserve the source placement before room size.
+            score = (
+                0 if after <= COLLISION_EPSILON else 1,
+                round(after, 12),
+                origin_distance,
+                displacement,
+                room_expansion,
+                priority,
+                candidate_index,
+            )
+            ranked.append((score, RecoveryMove(name, dx, dy, before, after)))
+    if not ranked:
+        raise RuntimeError('No deterministic collision-reducing movement exists')
+    return min(ranked, key=lambda item: item[0])[1]
 
 ##### HELPER FUNCTIONS
 
@@ -1381,7 +1530,7 @@ def visualize(inputs):
     # Translate overlapping objects
     adjust_overlapping_objects(inputs)
 
-    # Walls are created before V4 rotates objects toward walls and one another.
+    # Walls are created before the model rotates objects toward walls and one another.
     # A rotated corner can therefore extend past the room even in a scene that
     # never entered collision recovery. This final, deterministic containment
     # pass changes only the floor and wall envelope, never object placement.
@@ -1393,11 +1542,11 @@ def visualize(inputs):
     # after horizontal corrections and after the finite floor encloses them.
     finalize_room_placement(inputs)
 
-    # The web room request is deliberately downstream of all V4 object
+    # The web room request is deliberately downstream of all model object
     # placement. It redraws only the enclosing floor and walls.
     room_fit_result = None
     if os.environ.get('SOILIE_ROOM_REQUEST'):
-        from room_fit import apply_serverless_room_fit
+        from serverless.renderer.room_fit import apply_serverless_room_fit
         room_fit_result = apply_serverless_room_fit()
 
     # Add light for any lamps, if present

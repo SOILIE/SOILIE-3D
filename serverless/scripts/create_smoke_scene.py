@@ -1,4 +1,4 @@
-"""Create an exact V4 Blender input document for container smoke tests."""
+"""Create an exact SOILIE-3D input document for container smoke tests."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from serverless.common.v4_runtime import generate_v4_inputs
+from serverless.common.model_runtime import generate_model_inputs
 
 
 def main() -> None:
@@ -17,7 +17,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    document = generate_v4_inputs(args.runtime.resolve(), args.objects, args.seed)
+    document = generate_model_inputs(args.runtime.resolve(), args.objects, args.seed)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
     print(json.dumps({"objects": args.objects, "seed": args.seed, "output": str(args.output)}))

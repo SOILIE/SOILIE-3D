@@ -8,7 +8,7 @@ import unittest
 import bpy
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNTIME = Path(os.environ.get('V4_RUNTIME_DIR', ROOT))
+RUNTIME = Path(os.environ.get('SOILIE_RUNTIME_DIR', ROOT))
 sys.path.insert(0, str(RUNTIME / "modules"))
 import render  # noqa: E402
 

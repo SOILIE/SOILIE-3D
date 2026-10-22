@@ -13,11 +13,11 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "ca-central-1")
 os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 os.environ.setdefault("JOB_TABLE", "test-jobs")
 
-from serverless.renderer.handler import _parse_v4_result, _validate_room_boundary_result  # noqa: E402
-from serverless.common.v4_runtime import select_v4_objects  # noqa: E402
+from serverless.renderer.handler import _parse_model_result, _validate_room_boundary_result  # noqa: E402
+from serverless.common.model_runtime import select_model_objects  # noqa: E402
 
 
-class V4EntrypointTests(unittest.TestCase):
+class ModelEntrypointTests(unittest.TestCase):
     def test_duplicate_disabled_selection_preserves_relational_order(self):
         combinations = SimpleNamespace(
             load=lambda *_args, **_kwargs: ["chair", "chair", "blinds", "table"],
@@ -27,19 +27,19 @@ class V4EntrypointTests(unittest.TestCase):
             "mode": "room_type", "roomType": "bedroom", "objectCount": 4,
             "seed": 17, "allowDuplicates": False, "sameObjectsAcrossScenes": True,
         }
-        with patch("serverless.common.v4_runtime._load_original_modules", return_value=(None, combinations, None)), \
-             patch("serverless.common.v4_runtime._v4_working_directory", return_value=nullcontext()), \
-             patch("serverless.common.v4_runtime.seed_v4"):
-            self.assertEqual(["chair", "blinds", "table"], select_v4_objects(Path("."), request, 0))
+        with patch("serverless.common.model_runtime._load_original_modules", return_value=(None, combinations, None)), \
+             patch("serverless.common.model_runtime._model_working_directory", return_value=nullcontext()), \
+             patch("serverless.common.model_runtime.seed_model"):
+            self.assertEqual(["chair", "blinds", "table"], select_model_objects(Path("."), request, 0))
 
     def test_result_parser_ignores_blender_shutdown_output(self):
         result = {"status": "complete", "filename": "bed_lamp", "path": "/tmp/output", "data": []}
         stdout = f"Blender 3.6\n{json.dumps(result, separators=(',', ':'))}\nBlender quit\n"
-        self.assertEqual(result, _parse_v4_result(stdout))
+        self.assertEqual(result, _parse_model_result(stdout))
 
     def test_result_parser_rejects_unrelated_json(self):
         with self.assertRaisesRegex(RuntimeError, "did not return"):
-            _parse_v4_result('{"event":"render"}\nBlender quit\n')
+            _parse_model_result('{"event":"render"}\nBlender quit\n')
 
     def test_boundary_validator_requires_visible_dimensions_to_match_manifest(self):
         result = {

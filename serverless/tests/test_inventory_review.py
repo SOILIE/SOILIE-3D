@@ -1,9 +1,7 @@
 """Synthetic operational tests. No API calls or fabricated evaluation votes."""
 from copy import deepcopy
 import unittest
-from unittest.mock import Mock, patch
 
-from serverless.remote.comparison_archive import copy_verified, folder
 from serverless.benchmark.functional_evidence import volume_examples
 from serverless.benchmark.reference_catalog import candidate
 from serverless.study import functional_rubric_v3
@@ -22,25 +20,6 @@ class InventoryReviewTests(unittest.TestCase):
         scaled=deepcopy(compiled)
         for p in scaled['products']: p['envelopeM3']*=1000
         self.assertEqual(values,volume_examples(objects,scaled)[0]['catalogRatios'])
-
-    def test_archive_only_uses_scoped_public_prefixes(self):
-        client=Mock()
-        for source,destination in [('secret/credentials.json','files/outputs/website-comparisons/a'),
-                                   ('files/outputs/a','files/other/a')]:
-            with self.assertRaises(ValueError):
-                copy_verified(client,{'key':source},destination)
-        client.head_object.assert_not_called()
-        with self.assertRaises(ValueError):
-            folder({'model':'soilie','roomType':'bedroom','id':'../escape'})
-
-    def test_archive_existing_destination_requires_checksum_verification(self):
-        client=Mock()
-        artifact={'key':'files/outputs/old/room','sha256':'a'*64,'bytes':12}
-        destination='files/outputs/website-comparisons/room'
-        with patch('serverless.remote.comparison_archive.verify_remote',side_effect=ValueError('changed')):
-            with self.assertRaisesRegex(ValueError,'changed'):
-                copy_verified(client,artifact,destination)
-        client.copy_object.assert_not_called()
 
     def test_frozen_v3_prompt_is_not_rewritten(self):
         self.assertIn('single-retailer',functional_rubric_v3.prompt('proportions'))
