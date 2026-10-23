@@ -11,6 +11,7 @@
 	Requires JSON label files in the json folder.'''
 
 import os, json, random, sys, urllib.request, re, gc
+from urllib.parse import urljoin
 
 from io import BytesIO
 import fnmatch
@@ -33,6 +34,18 @@ from modules import menu
 from modules import import_tools as imp
 from modules.timer import *
 from modules import progress_bar
+from modules.source_geometry import (
+    EXACT_FRAME_ID,
+    SourceGeometryError,
+    WORLD_POINT_CLOUD_SCHEMA_VERSION,
+    camera_origin_world,
+    pair_rgb_depth_files,
+    pinned_extrinsics_filename,
+    reshape_c2w_rows,
+    reshape_intrinsics,
+    resolve_source_profile,
+    select_c2w_pose,
+)
 from modules.triplet_schema import TRIPLET_COLUMNS
 
 
@@ -61,6 +74,18 @@ def _angle_degrees(first, second, *, angle_name):
     return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
 
 
+def _progress_update(progress, total, suffix=''):
+    '''Render collector progress even on Windows consoles lacking block glyphs.'''
+
+    try:
+        progress_bar.update(progress, total, suffix=suffix)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or 'ascii'
+        safe_suffix = suffix.encode(encoding, errors='replace').decode(encoding)
+        sys.stdout.write(f'{progress}/{total} {safe_suffix}\r')
+        sys.stdout.flush()
+
+
 ## declare objects ---------------------------------------------- ##
 
 class Frame:
@@ -77,15 +102,16 @@ class Frame:
         self.loc = None        # location of recording
         self.objects = []      # objects in frame
         self.labels = {}       # {objectName : (x,y) centroid} pairs (2D)
-        self.centroids = {}    # {objectName : (x,y,z) centroids in meters} (3D)
-        self.objects3d = {}    # {objectName : [(x,y,z)...(x,y,z)] } all 3d points
+        self.centroids = {}    # world-space object centroids in metres
+        self.objects3d = {}    # world-space points grouped by object
         self.combos = []       # canonical named triplet relationship rows
         self.intrinsics = []   # camera intrinsics
-        self.extrinsics = []   # camera extrinsics
+        # C2W pose; identity keeps synthetic/manual Frame use well-defined.
+        self.extrinsics = np.hstack((np.eye(3), np.zeros((3, 1))))
+        self.pixel_origin = 0  # selected source's pixel-coordinate convention
         self.image = None      # image to export
         self.background = None # original image
         self.depthMap = None   # depth map
-        self.xyzCamera = []    # xyz camera coords for entire frame
         self.xyz = []          # xyz world coords for entire frame
         self.valid = []        # valid world coords corresponding to each [x,y] location
 
@@ -144,12 +170,16 @@ class Frame:
         self.image = Image.new('RGBA',(self.width,self.height))
         pix = self.image.load()
         for i,pixel in enumerate(zip(self.col, self.row)):
-            pix[pixel[0]-1,pixel[1]-1] = self.data[i].colour
-        # camera coords
-        sys.stdout.write("\tretrieving camera coords:"); sys.stdout.flush()
-        t1 = startTimer() #time to retrieve camera coords
-        cameraCoords = imp.depth2XYZcamera(self.intrinsics,self.depthMap)
-        self.xyzCamera = imp.getCameraCoords(cameraCoords)
+            pix[pixel[0],pixel[1]] = self.data[i].colour
+        # Project depth into camera coordinates; this temporary grid is then
+        # transformed to the one world frame used by all collector outputs.
+        sys.stdout.write("\tprojecting depth:"); sys.stdout.flush()
+        t1 = startTimer()
+        cameraCoords = imp.depth2XYZcamera(
+            self.intrinsics,
+            self.depthMap,
+            pixel_origin=self.pixel_origin,
+        )
         sys.stdout.write("\t%s\n"%str(endTimerPretty(t1))); sys.stdout.flush()
         # world coords
         sys.stdout.write("\tconverting to world coords:"); sys.stdout.flush()
@@ -169,7 +199,9 @@ class Frame:
             centX = sum([x for (x,y) in coords])/len(coords)
             centY = sum([y for (x,y) in coords])/len(coords)
             self.labels[name] = (centX,centY)
-        # Get 3D centroids (using only the points visible in current frame)
+        # Get world-space 3D points (using only the points visible in this
+        # frame).  Scene aggregation is only meaningful when every frame uses
+        # the same coordinate system.
         rangeX = range(self.height)
         rangeY = range(self.width)
         template = [(y,x) for y in rangeY for x in rangeX]
@@ -185,8 +217,7 @@ class Frame:
             for y,col in enumerate(objectPts):
                 for x,row in enumerate(col):
                     if row and self.valid[x][y]:
-                        #xyzCoords = self.xyz[count] # Uses xyz world coords
-                        xyzCoords = self.xyzCamera[count] # Uses xyz camera coords
+                        xyzCoords = self.xyz[count]
                         pts3d.append(xyzCoords)
                     if self.valid[x][y]:
                         count+=1
@@ -246,7 +277,29 @@ class Frame:
         sys.stdout.write("\tprocessing 3d data:"); sys.stdout.flush()
         t7 = startTimer() #time to process 3d data
         saveLoc = join(filePath,str(self.ID))
-        plotFile = open(saveLoc+'.3d','w')
+        point_clouds = {}
+        for name, coords in self.objects3d.items():
+            coordinates = np.asarray(coords, dtype=np.float64)
+            if (
+                not isinstance(name, str)
+                or not name
+                or coordinates.ndim != 2
+                or coordinates.shape[1:] != (3,)
+                or not coordinates.size
+                or not np.all(np.isfinite(coordinates))
+            ):
+                raise ValueError(
+                    f'Object {name!r} must have a non-empty finite Nx3 world point cloud',
+                )
+            point_clouds[name] = coordinates
+        if not point_clouds:
+            raise ValueError(f'Frame {self.ID} has no finite world-coordinate object points')
+
+        plotFile = open(saveLoc+'.3d','w', encoding='utf-8', newline='\n')
+        plotFile.write(json.dumps({
+            'schemaVersion': WORLD_POINT_CLOUD_SCHEMA_VERSION,
+            'coordinateFrame': 'world',
+        }, separators=(',', ':')) + '\n')
         patches = []
         #-----------------------------------------------#
         if plot:
@@ -254,15 +307,15 @@ class Frame:
                 makedirs(saveLoc+'/')
             fig = plt.figure()
             ax = fig.add_subplot(111,projection='3d')
-            ax.scatter([0],[0],[0],c='r',marker='o')
+            camera = camera_origin_world(self.extrinsics)
+            ax.scatter([camera[0]],[camera[1]],[camera[2]],c='r',marker='o')
             #fig.clf()
         #-----------------------------------------------#
-        for name, coords in self.objects3d.items():
-            plotFile.write(str(name))
-            for i, coord in enumerate(coords):
-                coord = "\n"+str(tuple(coord))
-                plotFile.write(coord)
-            plotFile.write("\n")
+        for name, coordinates in point_clouds.items():
+            plotFile.write(json.dumps({
+                'object': name,
+                'points': coordinates.tolist(),
+            }, separators=(',', ':'), allow_nan=False) + '\n')
             #---------------------------------------------------------------#
             if not plot: continue
             # get colour
@@ -271,7 +324,7 @@ class Frame:
                 if str(o.getName()) == name:
                     colour = [float(c)/255 for c in o.colour[:-1]]
                     patches.append(mpatches.Patch(color=colour,label=name))
-            xyz = np.transpose(np.array(coords))
+            xyz = np.transpose(coordinates)
             if xyz.size > 0:
                 ax.scatter([xyz[0]],[xyz[1]],[xyz[2]],color=colour,marker='.',alpha=0.003)
             if name in self.centroids:
@@ -301,7 +354,7 @@ class Frame:
 
 
     def getAngleDistCombos(self,centroidFile):
-        '''get a set of angles and distances between objects'''
+        '''Get canonical relations from world centroids and this frame's camera.'''
         #sys.stdout.write("\tcalculating triplets:"); sys.stdout.flush()
         t5 = startTimer()
 
@@ -310,7 +363,10 @@ class Frame:
         for i,row in df_c.iterrows():
             obj = row['object']
             if obj in frameObjects:
-                self.centroids[obj] = [row['X'],row['Y'],row['Z']]
+                centroid = np.asarray([row['X'], row['Y'], row['Z']], dtype=np.float64)
+                if not np.all(np.isfinite(centroid)):
+                    raise ValueError(f'Non-finite scene centroid for {obj!r}')
+                self.centroids[obj] = centroid
 
         names = []
         for name, _ in self.centroids.items():
@@ -318,11 +374,15 @@ class Frame:
         combos = []
         for combo in permutations(names,3):
             combos.append('---'.join(combo).split('---'))
+        camera_world = camera_origin_world(self.extrinsics)
+        self.combos = []
         for combo in combos:
             A = np.array(self.centroids[combo[0]])
             B = np.array(self.centroids[combo[1]])
             C = np.array(self.centroids[combo[2]])
-            O = np.array([0,0,0])
+            # O is the per-frame camera centre.  C2W maps the camera-space
+            # origin directly to the pose's translation column.
+            O = camera_world
             BA = B - A
             CA = C - A
             OA = O - A
@@ -437,41 +497,149 @@ class SceneObject:
 
 #pathTo3dFiles = 'data/princeton/hotel_umd/maryland_hotel3/'
 ## -------------------------------------------------------------- ##
-def calculateCentroidsForScene(pathTo3dFiles,allObjects):
-    ''' Calculate all object centroids for an entire scene.
-    This function is meant to be run after the .3d files have been generated
-    for all frames of a scene.
-    pathTo3dFiles: The path to the .3d files for all frames of a scene.
+def _resolve_scene_point_cloud_files(pathTo3dFiles, point_cloud_files):
+    '''Resolve an explicit current-run manifest to direct scene children.'''
+
+    scene_root = os.path.realpath(os.path.abspath(os.fspath(pathTo3dFiles)))
+    if isinstance(point_cloud_files, (str, bytes, os.PathLike)):
+        raise TypeError('point_cloud_files must be an iterable of .3d paths')
+    try:
+        supplied_files = tuple(point_cloud_files)
+    except TypeError as exc:
+        raise TypeError('point_cloud_files must be an iterable of .3d paths') from exc
+    if not supplied_files:
+        raise ValueError('point_cloud_files must identify at least one current-run .3d file')
+
+    resolved_files = []
+    seen = set()
+    for supplied in supplied_files:
+        if not isinstance(supplied, (str, bytes, os.PathLike)):
+            raise TypeError('Every point_cloud_files entry must be a filesystem path')
+        supplied_path = os.fspath(supplied)
+        if isinstance(supplied_path, bytes):
+            supplied_path = os.fsdecode(supplied_path)
+        if not supplied_path:
+            raise ValueError('point_cloud_files entries cannot be empty')
+
+        candidate = supplied_path
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(scene_root, candidate)
+        candidate = os.path.realpath(os.path.abspath(candidate))
+        try:
+            inside_scene = os.path.commonpath((scene_root, candidate)) == scene_root
+        except ValueError:
+            inside_scene = False
+        if not inside_scene or os.path.dirname(candidate) != scene_root:
+            raise ValueError(
+                f'Current-run .3d files must be direct children of {scene_root!r}: '
+                f'{supplied_path!r}',
+            )
+        if not candidate.lower().endswith('.3d'):
+            raise ValueError(f'Current-run point-cloud file must end in .3d: {supplied_path!r}')
+        key = os.path.normcase(candidate)
+        if key in seen:
+            raise ValueError(f'Duplicate current-run point-cloud file: {supplied_path!r}')
+        if not os.path.isfile(candidate):
+            raise FileNotFoundError(f'Current-run point-cloud file does not exist: {candidate}')
+        seen.add(key)
+        resolved_files.append(candidate)
+
+    return resolved_files
+
+
+def calculateCentroidsForScene(pathTo3dFiles, plot=0, *, point_cloud_files=None):
+    '''Aggregate marked world-coordinate JSONL point clouds for one scene.
+
+    Legacy/unmarked ``.3d`` files are rejected so camera-frame points can
+    never be silently combined with the corrected world-frame output.  A
+    current collector run supplies its exact file manifest so valid but stale
+    files from an earlier run cannot enter the aggregate.  Omitting the
+    manifest preserves the standalone legacy directory-scan API.
     '''
+    if type(plot) is not int or plot < 0:
+        raise ValueError('plot must be a non-negative integer view count')
     print('\n\nCalculating object centroids for entire scene...')
-    plot = 3
-    files3D = []
-    for root, dirnames, filenames in os.walk(pathTo3dFiles):
-        for filename in fnmatch.filter(filenames,'*.3d'):
-            files3D.append(os.path.join(root,filename))
+    if point_cloud_files is None:
+        files3D = []
+        for root, dirnames, filenames in os.walk(pathTo3dFiles):
+            for filename in fnmatch.filter(filenames,'*.3d'):
+                files3D.append(os.path.join(root,filename))
+    else:
+        files3D = _resolve_scene_point_cloud_files(
+            pathTo3dFiles,
+            point_cloud_files,
+        )
 
     files3D.sort() # regular in-place sort first
     files3D.sort(key=len) # then sort by filename length, as this correctly sorts number strings alphabetically
+    if not files3D:
+        raise ValueError(f'No per-frame .3d files found in {pathTo3dFiles!r}')
 
     pts3d = {}
-    progress_total = len(files3D) + len(pts3d.keys()) + len(pts3d.keys())*plot + plot # total progress needed to achieve 100% completion
     progress_so_far = 0 # keep track of progress so far
     for i, filename in enumerate(files3D):
-        progress_bar.update(progress_so_far,progress_total,suffix='Obtaining 3D points: ' + filename)
-        theFile = open(filename,'r')
-        contents = theFile.read()
-        contents = contents.replace(')[',')\n[').replace(') [',')\n[')
-        lines = contents.splitlines()
-        for line in lines:
-            vals3d = list(json.loads(line.replace("'","\"").replace('(','[').replace(')',']').replace('None','null')))
-            if len(vals3d)!=3:
-                name = repr(vals3d).rstrip('\n')
-                if name not in pts3d:
-                    pts3d[name] = []
-                continue
-            pts3d[name].append(vals3d)
-        progress_total = len(files3D) + len(pts3d.keys()) + len(pts3d.keys())*plot + plot # adjust progress_total as pts3d accumulates more data
+        _progress_update(
+            progress_so_far,
+            max(1, len(files3D)),
+            suffix='Obtaining world-space 3D points: ' + filename,
+        )
+        with open(filename, 'r', encoding='utf-8') as theFile:
+            first_line = theFile.readline()
+            try:
+                marker = json.loads(first_line)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError(
+                    f'{filename} is legacy or unmarked .3d data; remove it and '
+                    'rebuild this scene before world-coordinate aggregation',
+                ) from exc
+            expected_marker = {
+                'schemaVersion': WORLD_POINT_CLOUD_SCHEMA_VERSION,
+                'coordinateFrame': 'world',
+            }
+            if marker != expected_marker:
+                raise ValueError(
+                    f'{filename} is not schema-v{WORLD_POINT_CLOUD_SCHEMA_VERSION} '
+                    'world-coordinate .3d data; remove it and rebuild this scene',
+                )
+
+            for line_number, line in enumerate(theFile, start=2):
+                if not line.strip():
+                    raise ValueError(
+                        f'Blank .3d JSONL record at {filename}:{line_number}',
+                    )
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f'Malformed .3d record at {filename}:{line_number}',
+                    ) from exc
+                if not isinstance(record, dict) or set(record) != {'object', 'points'}:
+                    raise ValueError(
+                        f'Invalid .3d object record at {filename}:{line_number}',
+                    )
+                name = record['object']
+                points = np.asarray(record['points'], dtype=np.float64)
+                if not isinstance(name, str) or not name:
+                    raise ValueError(
+                        f'Invalid .3d object name at {filename}:{line_number}',
+                    )
+                if points.ndim != 2 or points.shape[1:] != (3,) or not points.size:
+                    raise ValueError(
+                        f'Object points must be a non-empty Nx3 array at '
+                        f'{filename}:{line_number}',
+                    )
+                if not np.all(np.isfinite(points)):
+                    raise ValueError(
+                        f'Non-finite 3D point at {filename}:{line_number}',
+                    )
+                pts3d.setdefault(name, []).extend(points)
         progress_so_far += 1
+
+    pts3d = {name: points for name, points in pts3d.items() if points}
+    if not pts3d:
+        raise ValueError(f'No finite object points found in {pathTo3dFiles!r}')
+
+    progress_total = len(files3D) + len(pts3d) + (len(pts3d) + 1) * plot
 
     maxFilenameLength = max([len(f) for f in files3D])
     maxNameLength = max([len(o) for o in pts3d.keys()])
@@ -479,7 +647,7 @@ def calculateCentroidsForScene(pathTo3dFiles,allObjects):
     centroids = {}
     df_dict = {'object':[],'X':[],'Y':[],'Z':[]}
     for i, obj in enumerate(pts3d.keys()):
-        progress_bar.update(progress_so_far,progress_total,suffix='Calculating centroids for ' + obj + ' '*(maxFilenameLength-len(obj)-4))
+        _progress_update(progress_so_far,progress_total,suffix='Calculating centroids for ' + obj + ' '*(maxFilenameLength-len(obj)-4))
         centroids[obj] = np.mean(pts3d[obj],axis=0)
         centroid = centroids[obj]
         x,y,z = centroid[0],centroid[1],centroid[2]
@@ -491,6 +659,10 @@ def calculateCentroidsForScene(pathTo3dFiles,allObjects):
 
     df = pd.DataFrame.from_dict(df_dict)
     df.to_csv(join(pathTo3dFiles,'centroids.csv'),index=False)
+
+    if not plot:
+        _progress_update(100,100)
+        return centroids
 
     if not exists(join(pathTo3dFiles,'objects')):
         os.mkdir(join(pathTo3dFiles,'objects'))
@@ -522,7 +694,7 @@ def calculateCentroidsForScene(pathTo3dFiles,allObjects):
     for count in range(0,plot):
         for i, obj in enumerate(pts3d.keys()):
             # Save per-object point clouds
-            progress_bar.update(progress_so_far,progress_total,suffix=f'Plotting {obj} point cloud {count+1}...'+' '*(maxNameLength-len(obj)+4))
+            _progress_update(progress_so_far,progress_total,suffix=f'Plotting {obj} point cloud {count+1}...'+' '*(maxNameLength-len(obj)+4))
             pts = np.array(pts3d[obj])
             centroid = centroids[obj]
             x,y,z = centroid[0],centroid[1],centroid[2]
@@ -543,17 +715,48 @@ def calculateCentroidsForScene(pathTo3dFiles,allObjects):
             plt.close(obj_fig)
             progress_so_far += 1
         # Save full point cloud
-        progress_bar.update(progress_so_far,progress_total,suffix=f'Plotting full point cloud {count+1}...'+' '*(maxNameLength-4))
+        _progress_update(progress_so_far,progress_total,suffix=f'Plotting full point cloud {count+1}...'+' '*(maxNameLength-4))
         curFig.savefig(join(pathTo3dFiles,f'point_cloud_{count+1}.png'), dpi=100) # save plot with all objects
         ax.azim+=int(360/plot)
         progress_so_far += 1
     #plt.show()
     plt.close(curFig)
     #################
-    progress_bar.update(100,100,suffix=' '*(30+maxNameLength))
+    _progress_update(100,100,suffix=' '*(30+maxNameLength))
+    return centroids
 
 
-def processJSON(data, allObjects, currentPath, datasetName, local, plot):
+def _source_join(root, *parts, local):
+    if local:
+        return join(root, *parts)
+    relative = '/'.join(str(part).strip('/\\').replace('\\', '/') for part in parts)
+    return urljoin(str(root).rstrip('/') + '/', relative)
+
+
+def _remote_directory_files(directory_url, suffix):
+    '''Return leaf filenames advertised by a simple HTTP directory listing.'''
+
+    with urllib.request.urlopen(str(directory_url).rstrip('/') + '/') as response:
+        listing = response.read().decode('utf-8')
+    candidates = re.findall(r'href=["\']?([^"\' >]+)', listing, flags=re.IGNORECASE)
+    names = []
+    for candidate in candidates:
+        leaf = candidate.rstrip('/').rsplit('/', 1)[-1]
+        if leaf.lower().endswith(suffix.lower()):
+            names.append(leaf)
+    return sorted(set(names))
+
+
+def processJSON(
+    data,
+    allObjects,
+    currentPath,
+    datasetName,
+    local,
+    plot,
+    *,
+    export_scene_relations=True,
+):
     '''process each json file
     data:           the data contained in the json file
     currentPath:    the root path of the dataset
@@ -562,22 +765,24 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
     local:          True if database is located locally, False if on web
     plot:           number of different views plotted per frame'''
 
+    if type(export_scene_relations) is not bool:
+        raise TypeError('export_scene_relations must be a boolean')
+
     # start json timer
     jsonTimer = startTimer()
 
-    # parse json data into variables
+    # Parse JSON data into variables and bind it to a named source contract.
+    # Known datasets cannot silently override their scientific conventions;
+    # a new dataset must declare a complete sourceGeometry object.
+    profile = resolve_source_profile(datasetName, data.get('sourceGeometry'))
     name = join(datasetName,data['name']) if local else data['name']
     date = data['date']
     frames = data['frames']
     objects = data['objects']
 
-    # create data folder for current scene if it does not exist
-    prev_folder='./'
-    for folder in [x for x in join('data',datasetName,data['name']).split('/') if x!='' and x!='.']:
-        new_folder = join(prev_folder,folder)
-        if not os.path.exists(new_folder):
-            os.mkdir(new_folder)
-        prev_folder = new_folder
+    # Collector output is local even when source images are fetched remotely.
+    outputScenePath = join('data', datasetName, data['name'])
+    makedirs(outputScenePath, exist_ok=True)
 
     # store indices of the empty frames & objects
     emptyFrames = []
@@ -591,17 +796,22 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
         if not o:
             emptyObjects.append(i)
 
+    scene_source_path = _source_join(currentPath, 'data', name, local=local)
+
     # get camera intrinsics
-    K = np.transpose(np.reshape(imp.readValuesFromTxt(join(currentPath,'data',name,'intrinsics.txt'),local),(3,3)))
+    intrinsics_path = _source_join(scene_source_path, 'intrinsics.txt', local=local)
+    K = reshape_intrinsics(imp.readValuesFromTxt(intrinsics_path, local))
 
-    # get camera extrinsics
-    if local:
-        exFile = listdir(join('data',name,'extrinsics'))[-1]
-    else:
-        exFile = re.compile(r'[0-9]*\.txt').findall(urllib.request.urlopen(join(currentPath,'data',name,'extrinsics')).read().decode('utf-8'))[-1]
-
-    extrinsicsC2W = np.reshape(imp.readValuesFromTxt(join(currentPath,'data',name,'extrinsics',exFile),local),(-1,3,4))
-    extrinsics_incl_cur_frames_only = extrinsicsC2W.shape[0]==len(frames)
+    # Use the exact file reviewed and pinned in the source JSON.  Selecting the
+    # last directory entry made camera poses depend on filesystem/listing order.
+    exFile = pinned_extrinsics_filename(data.get('extrinsics'))
+    extrinsics_path = _source_join(
+        scene_source_path,
+        'extrinsics',
+        exFile,
+        local=local,
+    )
+    extrinsicsC2W = reshape_c2w_rows(imp.readValuesFromTxt(extrinsics_path, local))
 
     # print file stats
     print("-- processing data.....", name)
@@ -614,41 +824,79 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
     print("    -- undefined:", len(emptyObjects))
 
     # get background image and depth data ----------------#
-    imagePath = join(currentPath,"data",name,"image")
-    depthPath = join(currentPath,"data",name,"depth")
+    imagePath = _source_join(scene_source_path, 'image', local=local)
+    depthPath = _source_join(scene_source_path, 'depth', local=local)
 
     imageList = data['fileList']
-    prefixes = [im.split('-')[0] for im in imageList]
+    if not isinstance(imageList, list) or len(imageList) != len(frames):
+        raise SourceGeometryError(
+            'Source JSON fileList must contain exactly one image filename per frame',
+        )
 
     if local:
-        depthList = listdir(depthPath)
+        depthList = sorted(
+            filename
+            for filename in listdir(depthPath)
+            if isfile(join(depthPath, filename)) and filename.lower().endswith('.png')
+        )
     else:
-        depthList = sorted(list(set(re.compile(r'[0-9]*\-[0-9]*\.png').findall(urllib.request.urlopen(depthPath).read().decode('utf-8')))))
+        depthList = _remote_directory_files(depthPath, '.png')
 
-    depthList = [d for d in depthList if d.split('-')[0] in prefixes]
+    if profile.pairing_strategy == EXACT_FRAME_ID:
+        # Washington JSON intentionally samples frames from a larger scene.
+        # Restrict the directory inventory to that declared sample before
+        # enforcing one-to-one image/depth equality within the sample.
+        annotated_frame_ids = {
+            filename.split('-', 1)[0].casefold()
+            for filename in imageList
+        }
+        depthList = [
+            filename
+            for filename in depthList
+            if filename.split('-', 1)[0].casefold() in annotated_frame_ids
+        ]
 
-    if len(imageList)!=len(depthList)!=len(frames):
-        print('ERROR: Cannot process JSON. Frame or depth image files missing.')
-        return allObjects
+    framePairs = pair_rgb_depth_files(
+        imageList,
+        depthList,
+        profile.pairing_strategy,
+    )
+    # Resolve every pose before processing any frame so a bad mapping cannot
+    # leave a partially exported scene.
+    framePoses = tuple(
+        select_c2w_pose(
+            extrinsicsC2W,
+            pair,
+            json_index,
+            profile.pose_index_strategy,
+        )
+        for json_index, pair in enumerate(framePairs)
+    )
 
     allFrames = []
+    current_point_cloud_files = []
     #for i, f in enumerate(frames[:14]):
     for i, f in enumerate(frames):
         if i in emptyFrames:
             continue
         frameTimer = startTimer()
 
-        image = join(imagePath,imageList[i])
-        depth = join(depthPath,depthList[i])
-        frameNum = str(int(image.split('/')[-1].split('-')[0]))
+        pair = framePairs[i]
+        image = _source_join(imagePath, pair.image_name, local=local)
+        depth = _source_join(depthPath, pair.depth_name, local=local)
+        frameNum = str(pair.image_frame_id)
 
         sys.stdout.write("\nCalculating Frame "+frameNum+" coordinates...\n")
         sys.stdout.write("\tgathering frame data:"); sys.stdout.flush()
 
         if local:
-            background = Image.open(image,'r').convert('RGBA')
+            with Image.open(image,'r') as source_image:
+                background = source_image.convert('RGBA')
         else:
-            background = Image.open(BytesIO(urllib.request.urlopen(image).read())).convert('RGBA')
+            with urllib.request.urlopen(image) as response:
+                image_bytes = response.read()
+            with Image.open(BytesIO(image_bytes)) as source_image:
+                background = source_image.convert('RGBA')
 
         (width,height) = background.size
 
@@ -658,14 +906,24 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
         currentFrame = Frame(frameNum,width,height)
         currentFrame.loc = data['name']
         currentFrame.background = background
-        currentFrame.depthMap = imp.depthRead(depth,local)
+        currentFrame.depthMap = imp.depthRead(depth, local, profile.depth_encoding)
+        if currentFrame.depthMap.shape != (height, width):
+            raise SourceGeometryError(
+                f'RGB/depth dimensions differ for frame {frameNum}: '
+                f'{(width, height)} RGB vs {currentFrame.depthMap.shape[::-1]} depth',
+            )
         currentFrame.intrinsics = K
-        currentFrame.extrinsics = extrinsicsC2W[i] if extrinsics_incl_cur_frames_only else extrinsicsC2W[int(frameNum)-1]
+        currentFrame.extrinsics = framePoses[i]
+        currentFrame.pixel_origin = profile.pixel_origin
         exceptions   = []
         conflicts    = []
         polygons     = {}
         for polygon in f['polygon']:
             ID = polygon['object']
+            if type(ID) is not int or ID < 0 or ID >= len(objects) or not objects[ID]:
+                raise SourceGeometryError(
+                    f'Frame {frameNum} references invalid object index {ID!r}',
+                )
             exists = False
             for o in allObjects:
                 if objects[ID]['name'] == o.name:
@@ -678,52 +936,52 @@ def processJSON(data, allObjects, currentPath, datasetName, local, plot):
                 allObjects.append(currentObject)
             polygons[str(currentObject.getName())] = []
             currentObject.addFrame(name,currentFrame)
+            if len(polygon['x']) != len(polygon['y']):
+                raise SourceGeometryError(
+                    f'Frame {frameNum} object {ID} has mismatched polygon coordinates',
+                )
             for j, x in enumerate(polygon['x']):
-                x = int(round(x))
-                y = int(round(polygon['y'][j]))
+                source_x = int(round(x))
+                source_y = int(round(polygon['y'][j]))
+                x = source_x - profile.pixel_origin
+                y = source_y - profile.pixel_origin
                 polygons[str(currentObject.getName())].append((x,y))
-                if 0 < x <= width and 0 < y <= height:
+                if 0 <= x < width and 0 <= y < height:
                     if (y,x) in zip(currentFrame.row,currentFrame.col):
-                        conflicts.append(str([(x,y),currentObject.getName()]))
+                        conflicts.append(str([(source_x,source_y),currentObject.getName()]))
                     else:
                         currentFrame.addData(currentObject,x,y)
                 else:
-                    exceptions.append(str([(x,y),currentObject.getName()]))
+                    exceptions.append(str([(source_x,source_y),currentObject.getName()]))
             currentFrame.addObject(currentObject)
 
-        if local:
-            filePath = join('data',name)
-        else:
-            filePath = join('data',datasetName,name)
-        try:
-            makedirs(filePath)
-        except OSError:
-            if not isdir(filePath):
-                raise
         sys.stdout.write("\t\t%s\n"%str(endTimerPretty(frameTimer)));
         sys.stdout.flush()
         currentFrame = (currentFrame.update()
                                .calculateCentroids(polygons)
                                .drawPolygons(polygons,datasetName)
-                               .process3dPoints(filePath,plot))
+                               .process3dPoints(outputScenePath,plot))
 
         allFrames.append(currentFrame)
+        current_point_cloud_files.append(f'{currentFrame.ID}.3d')
         # uncomment to save exceptions and conflicts to files
         #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
         #np.savetxt(join(filePath,str(i)+'.co'),conflicts,fmt="%s")
         sys.stdout.write("\ttotal time for frame %s:"%str(currentFrame.ID))
         sys.stdout.write(" \t%s"%str(endTimerPretty(frameTimer))); sys.stdout.flush()
 
-    ## SET TO TRUE TO CALCULATE CENTROIDS ON A SCENE LEVEL (WORLD COORDS)
-    if False:
-        pathTo3dFiles = join('data',datasetName,data['name'])
-        calculateCentroidsForScene(pathTo3dFiles,allObjects)
+    if export_scene_relations and allFrames:
+        calculateCentroidsForScene(
+            outputScenePath,
+            plot=plot,
+            point_cloud_files=current_point_cloud_files,
+        )
 
         print('Calculating angle and distance combinations...')
         for i, currentFrame in enumerate(allFrames):
-            progress_bar.update(i+1,len(allFrames))
-            centroidFile = join(pathTo3dFiles,'centroids.csv')
-            currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(filePath)
+            _progress_update(i+1,len(allFrames))
+            centroidFile = join(outputScenePath,'centroids.csv')
+            currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(outputScenePath)
             currentFrame = None
 
     return allObjects

@@ -14,14 +14,15 @@ os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
 os.environ.setdefault("JOB_TABLE", "test-jobs")
 
 from serverless.renderer.handler import _parse_model_result, _validate_room_boundary_result  # noqa: E402
-from serverless.common.model_runtime import select_model_objects  # noqa: E402
+from serverless.common.model_runtime import ModelGenerationError, select_model_objects  # noqa: E402
+from modules.working_combo_schema import WorkingCombinationError  # noqa: E402
 
 
 class ModelEntrypointTests(unittest.TestCase):
-    def test_duplicate_disabled_selection_preserves_relational_order(self):
+    def test_duplicate_disabled_selection_returns_the_exact_requested_count(self):
         combinations = SimpleNamespace(
-            load=lambda *_args, **_kwargs: ["chair", "chair", "blinds", "table"],
-            supports_coordinate_construction=lambda objects: objects == ["chair", "blinds", "table"],
+            select_exact=lambda *_args, **_kwargs: ["chair", "blinds", "table", "lamp"],
+            WorkingCombinationError=WorkingCombinationError,
         )
         request = {
             "mode": "room_type", "roomType": "bedroom", "objectCount": 4,
@@ -30,7 +31,28 @@ class ModelEntrypointTests(unittest.TestCase):
         with patch("serverless.common.model_runtime._load_original_modules", return_value=(None, combinations, None)), \
              patch("serverless.common.model_runtime._model_working_directory", return_value=nullcontext()), \
              patch("serverless.common.model_runtime.seed_model"):
-            self.assertEqual(["chair", "blinds", "table"], select_model_objects(Path("."), request, 0))
+            self.assertEqual(
+                ["chair", "blinds", "table", "lamp"],
+                select_model_objects(Path("."), request, 0),
+            )
+
+    def test_catalog_selection_failure_does_not_loop_or_shrink_the_request(self):
+        def reject(*_args, **_kwargs):
+            raise WorkingCombinationError("no exact row")
+
+        combinations = SimpleNamespace(
+            select_exact=reject,
+            WorkingCombinationError=WorkingCombinationError,
+        )
+        request = {
+            "mode": "room_type", "roomType": "bedroom", "objectCount": 8,
+            "seed": 17, "allowDuplicates": False, "sameObjectsAcrossScenes": True,
+        }
+        with patch("serverless.common.model_runtime._load_original_modules", return_value=(None, combinations, None)), \
+             patch("serverless.common.model_runtime._model_working_directory", return_value=nullcontext()), \
+             patch("serverless.common.model_runtime.seed_model"):
+            with self.assertRaisesRegex(ModelGenerationError, "exact requested object count"):
+                select_model_objects(Path("."), request, 0)
 
     def test_result_parser_ignores_blender_shutdown_output(self):
         result = {"status": "complete", "filename": "bed_lamp", "path": "/tmp/output", "data": []}

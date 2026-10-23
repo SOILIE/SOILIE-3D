@@ -103,26 +103,32 @@ def _stage(job_id: str, scene_index: int, status: str) -> None:
 def _webp_from_model_gif(source: Path, destination: Path) -> None:
     """Resize the model's completed GIF without replacing its frame sequence."""
 
-    with Image.open(source) as animation:
-        duration = int(animation.info.get("duration", 67))
-        frames = []
-        for frame in ImageSequence.Iterator(animation):
-            resized = frame.convert("RGB")
-            resized.thumbnail((512, 512), Image.Resampling.LANCZOS)
-            frames.append(resized.copy())
-    if not frames:
-        raise RuntimeError("SOILIE-3D did not produce animation frames.")
-    frames[0].save(
-        destination,
-        save_all=True,
-        append_images=frames[1:],
-        duration=duration,
-        loop=0,
-        method=6,
-        quality=78,
-    )
-    for frame in frames:
-        frame.close()
+    frames = []
+    durations = []
+    try:
+        with Image.open(source) as animation:
+            fallback_duration = int(animation.info.get("duration", 67))
+            for frame in ImageSequence.Iterator(animation):
+                durations.append(int(frame.info.get("duration", fallback_duration)))
+                resized = frame.convert("RGB")
+                resized.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                frames.append(resized.copy())
+        if not frames:
+            raise RuntimeError("SOILIE-3D did not produce animation frames.")
+        # GIF centisecond rounding can produce a deliberate 60/70 ms cadence.
+        # Preserve each interval when deriving the public animated preview.
+        frames[0].save(
+            destination,
+            save_all=True,
+            append_images=frames[1:],
+            duration=durations,
+            loop=0,
+            method=6,
+            quality=78,
+        )
+    finally:
+        for frame in frames:
+            frame.close()
 
 
 def _parse_model_result(stdout: str) -> dict[str, Any]:

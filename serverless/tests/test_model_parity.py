@@ -8,7 +8,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 BASELINE = {
-    "modules/png2gif.py": "e90d6273047540d7964a6210cb4cdd24bfb2d47fc8e26eb24b54a4372fc5e6c2",
     "modules/progress_bar.py": "6422be7d2d9636f108b4b49d51ef1f72b81ccd0e4a9fc4a4ae4526e4e66e694a",
     "modules/timer.py": "eae6e389f0859d25a33cd8d04429bcde6310003f9e2a7c4b1d160c2cf3c46f9d",
     "suggested_setup.blend": "46285b7334eb11cbeaae213a7ae37bca890cfd79a23cd5825125051efcc7df0b",
@@ -20,12 +19,18 @@ BASELINE = {
 # bytes keeps the reviewed maintenance surface explicit instead of weakening the
 # original-file parity check whenever a regression repair touches model code.
 REVIEWED_MAINTENANCE = {
-    "imagine.py": "5cab4b362b9532485b9bdf389ab258f0cd15e479bc142b455621e4f5f0c44112",
-    "modules/working_combos.py": "082171caa1161fa6538ad8c4e41f94a5d25a32a2516eb91dba7c5912fb0febbf",
+    "imagine.py": "1907be65a8883276004eb7b776015eee431771b20a0d0cc6dd8cabc536aa6ba9",
+    "modules/collect_data.py": "4718becd9331bb29f58e5db887e492c8d37de15c0c58603cd6fb601ada0f6f85",
+    "modules/import_tools.py": "ee6379943d29d16f144902c13364e460b96021b8f5b72a87802080750c123d17",
+    "modules/png2gif.py": "ec1ff753dbe970f303f7c8c5668cd7d9715773b54cc73613a01f17ffdf2ccc32",
     "modules/prepare_data.py": "d7d24ec2f5b16b9536fea264c9a2bc5c5ec7e24086b5c79943008590804fb0be",
-    "modules/render.py": "6df6f9480b57a1bee14346734b7aa7e120afb5c85d2c942b7758071da1c65399",
+    "modules/recency.py": "6f82ff6c76c87f88197b5a460284669982466a505970fda5f97ee2d83d82a60a",
+    "modules/render.py": "07fbb228ffed339085a73534c54a384d3a2d1ccfb94568cd27d38dbf2adf1040",
+    "modules/source_geometry.py": "a8915def7ba82ecd72992db43c1f73752c844a45ee556e3d5821aba219cdbbb6",
     # Mounted window assemblies remain fixed, but cannot support furniture.
     "modules/support_settlement.py": "cd14f0573c0dd41592757c8375b16cb21b4e7c074b9e4cfd8d3d22160ad5e65b",
+    "modules/working_combo_schema.py": "7af878e0f023c930010d11fa48a441d7e70e8d610a5896f5056682cb837d626b",
+    "modules/working_combos.py": "e37fc3aa97ba39c57bdbb743db056bed899dfa0019b4c824da9eb03ead5a49a3",
 }
 
 

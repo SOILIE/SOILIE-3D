@@ -80,21 +80,29 @@ def select_model_objects(runtime_root: Path, request: dict[str, Any], scene_inde
     if request["mode"] == "room_type":
         filename = ROOM_COMBINATION_FILES[request["roomType"]]
 
-    # This is the terminal interface's duplicate-removal loop. It keeps the
-    # selected combination order because the first pair anchors its stored
-    # triplets; set-based removal could turn a supported row into a failure.
+    requested_count = request["objectCount"]
     # There is deliberately no substitute catalog or fallback selection path.
+    # The model loader retains repeated labels as instances when requested and
+    # otherwise filters them before one finite exact-count selection.
     with _model_working_directory(runtime_root):
-        while True:
-            objects = working_combos.load(
-                request["objectCount"],
+        try:
+            objects = working_combos.select_exact(
+                requested_count,
                 filepath=str(runtime_root / "data" / filename),
+                triplet_filepath=str(runtime_root / "data" / "triplets.csv"),
+                allow_duplicates=request.get("allowDuplicates", False),
             )
-            if not request.get("allowDuplicates", False):
-                objects = list(dict.fromkeys(objects))
-            supported = request.get("allowDuplicates", False) or working_combos.supports_coordinate_construction(objects)
-            if len(objects) >= 3 and supported:
-                return objects
+        except working_combos.WorkingCombinationError as error:
+            raise ModelGenerationError(
+                f"SOILIE-3D could not select the exact requested object count: {error}"
+            ) from error
+    if len(objects) != requested_count or any(
+        not isinstance(label, str) or not label for label in objects
+    ):
+        raise ModelGenerationError(
+            "SOILIE-3D returned a selection that differs from the requested object count."
+        )
+    return objects
 
 
 def _generate_model_inputs(

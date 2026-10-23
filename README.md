@@ -159,12 +159,17 @@ an existing output.
 
 **Input**
 
-* `data/triplets.csv`, containing the observed object triplets prepared from source scenes.
+* A newly regenerated canonical `triplets.csv` from the corrected world-coordinate collector.
+* Its explicitly reviewed SHA-256, plus the registered OBJ assets and object-size table.
 
 **Outputs**
 
-* `data/working-combos.csv`, the supported combinations of three to six objects.
-* Refined and room-specific selections in `data/working-combos-refined.csv`, `data/working-combos-bedroom.csv`, `data/working-combos-livingroom.csv`, `data/working-combos-bathroom.csv`, and `data/working-combos-kitchen.csv`.
+`scripts/rebuild_working_combos.py` writes separate, deterministic random and
+room-specific candidate catalogs with the exact `obj0` through `obj7` schema,
+covering supported scene sizes from three through eight objects. It also writes
+a hash-and-count receipt, refuses the two known camera-frame-derived triplet
+tables, and never replaces active data. Candidate catalogs remain inactive
+until their regenerated source and receipt are reviewed and promoted together.
 
 </details>
 

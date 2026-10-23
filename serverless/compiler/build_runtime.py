@@ -17,6 +17,13 @@ import subprocess
 from pathlib import Path
 
 from modules.triplet_schema import validate_triplet_columns
+from modules.working_combo_schema import (
+    CATALOG_FILENAMES,
+    MAX_OBJECT_COUNT,
+    MIN_OBJECT_COUNT,
+    WorkingCombinationError,
+    iter_working_combinations,
+)
 from serverless.common.engine import ARCHITECTURE, ROOM_TYPES, normalize_label, public_catalog_document
 
 
@@ -31,13 +38,7 @@ MODEL_DATA_FILES = (
     "working-combos-kitchen.csv",
     "working-combos-bathroom.csv",
 )
-PRESET_FILES = {
-    "random": "working-combos-refined.csv",
-    "bedroom": "working-combos-bedroom.csv",
-    "living_room": "working-combos-livingroom.csv",
-    "kitchen": "working-combos-kitchen.csv",
-    "bathroom": "working-combos-bathroom.csv",
-}
+PRESET_FILES = CATALOG_FILENAMES
 
 
 def sha256(path: Path) -> str:
@@ -147,13 +148,44 @@ def iter_canonical_triplet_rows(path: Path):
         yield from reader
 
 
-def _usable_row(row: dict[str, str], allowed: set[str]) -> list[str]:
-    values = [value.strip() for value in row.values() if value and value.strip()]
-    # The model performs case-sensitive dictionary and asset matching. Do not quietly
-    # rewrite rows such as the legacy uppercase TV entries.
-    if any(value != normalize_label(value) or value not in allowed for value in values):
-        return []
-    return values
+def validated_working_rows(
+    path: Path,
+    *,
+    allowed: set[str],
+    triplets: set[tuple[str, str, str]],
+) -> list[tuple[str, ...]]:
+    """Load one strict catalog, rejecting every unsafe row instead of filtering."""
+
+    rows: list[tuple[str, ...]] = []
+    seen: set[tuple[str, ...]] = set()
+    try:
+        combinations = iter_working_combinations(path)
+        for row_index, values in enumerate(combinations, start=2):
+            unavailable = sorted(set(values) - allowed)
+            if unavailable:
+                raise RuntimeError(
+                    f"{path} row {row_index} contains non-renderable objects: "
+                    f"{', '.join(unavailable)}"
+                )
+            missing = [
+                (values[0], values[1], object_c)
+                for object_c in values[2:]
+                if (values[0], values[1], object_c) not in triplets
+            ]
+            if missing:
+                encoded = ", ".join("/".join(item) for item in missing)
+                raise RuntimeError(
+                    f"{path} row {row_index} lacks its ordered A/B triplet basis: {encoded}"
+                )
+            if values in seen:
+                raise RuntimeError(
+                    f"{path} row {row_index} duplicates an earlier canonical row"
+                )
+            seen.add(values)
+            rows.append(values)
+    except WorkingCombinationError as error:
+        raise RuntimeError(str(error)) from error
+    return rows
 
 
 def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
@@ -161,6 +193,36 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
     sizes = load_sizes(data_root / "object_sizes_manual.csv")
     asset_classes = load_exact_asset_classes(repository / "assets")
     allowed = set(sizes) & asset_classes
+
+    triplets: set[tuple[str, str, str]] = set()
+    for row in iter_canonical_triplet_rows(data_root / "triplets.csv"):
+        raw = tuple(row[key] for key in ("objectA", "objectB", "objectC"))
+        normalized = tuple(normalize_label(value) for value in raw)
+        if raw != normalized or any(value not in allowed for value in normalized):
+            continue
+        triplets.add(normalized)
+
+    catalog_rows = {
+        preset: validated_working_rows(
+            data_root / filename,
+            allowed=allowed,
+            triplets=triplets,
+        )
+        for preset, filename in PRESET_FILES.items()
+    }
+    random_counts = {
+        len(row)
+        for row in catalog_rows["random"]
+        if len(set(row)) == len(row)
+    }
+    missing_random_counts = sorted(
+        set(range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1)) - random_counts
+    )
+    if missing_random_counts:
+        raise RuntimeError(
+            "random working-combination catalog has no duplicate-free canonical rows for object "
+            f"counts: {', '.join(map(str, missing_random_counts))}"
+        )
 
     database_path = output / "relations.sqlite3"
     if database_path.exists():
@@ -186,6 +248,7 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
           preset TEXT NOT NULL,
           row_index INTEGER NOT NULL,
           object_count INTEGER NOT NULL,
+          has_duplicates INTEGER NOT NULL CHECK (has_duplicates IN (0, 1)),
           objects_json TEXT NOT NULL,
           PRIMARY KEY (preset, row_index)
         );
@@ -194,7 +257,8 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
           object_name TEXT NOT NULL,
           PRIMARY KEY (preset, object_name)
         );
-        CREATE INDEX working_count_index ON working_combinations(object_count);
+        CREATE INDEX working_capacity_index
+          ON working_combinations(preset, object_count, has_duplicates);
         """
     )
     connection.executemany(
@@ -205,31 +269,30 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
         ],
     )
 
-    triplet_count = 0
-    for row in iter_canonical_triplet_rows(data_root / "triplets.csv"):
-        raw = [row[key].strip() for key in ("objectA", "objectB", "objectC")]
-        normalized = [normalize_label(value) for value in raw]
-        if raw != normalized or any(value not in allowed for value in normalized):
-            continue
-        before = connection.total_changes
-        connection.execute("INSERT OR IGNORE INTO triplets VALUES (?, ?, ?)", normalized)
-        triplet_count += connection.total_changes - before
+    connection.executemany(
+        "INSERT INTO triplets VALUES (?, ?, ?)",
+        sorted(triplets),
+    )
+    triplet_count = len(triplets)
 
     combination_count = 0
     preset_members = {room: set() for room in ROOM_TYPES}
-    for preset, filename in PRESET_FILES.items():
-        with (data_root / filename).open(newline="", encoding="utf-8-sig") as source:
-            for row_index, row in enumerate(csv.DictReader(source)):
-                values = _usable_row(row, allowed)
-                if len(values) < 3:
-                    continue
-                connection.execute(
-                    "INSERT INTO working_combinations VALUES (?, ?, ?, ?)",
-                    (preset, row_index, len(values), json.dumps(values, separators=(",", ":"))),
-                )
-                combination_count += 1
-                if preset in preset_members:
-                    preset_members[preset].update(values)
+    for preset, rows in catalog_rows.items():
+        for row_index, values in enumerate(rows):
+            has_duplicates = int(len(set(values)) != len(values))
+            connection.execute(
+                "INSERT INTO working_combinations VALUES (?, ?, ?, ?, ?)",
+                (
+                    preset,
+                    row_index,
+                    len(values),
+                    has_duplicates,
+                    json.dumps(values, separators=(",", ":")),
+                ),
+            )
+            combination_count += 1
+            if preset in preset_members:
+                preset_members[preset].update(values)
 
     for preset, members in preset_members.items():
         connection.executemany(

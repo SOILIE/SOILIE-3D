@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import unittest
 import uuid
 from pathlib import Path
@@ -12,7 +13,24 @@ from serverless.common.model_version import MODEL_VERSION
 RUNTIME = Path(os.environ.get("SOILIE_RUNTIME_DB", ".codex/runtime/relations.sqlite3"))
 
 
-@unittest.skipUnless(RUNTIME.exists(), "Compile the runtime database before running integration tests.")
+def _has_current_runtime_schema(path: Path) -> bool:
+    if not path.exists():
+        return False
+    connection = sqlite3.connect(path)
+    try:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(working_combinations)")
+        }
+        return "has_duplicates" in columns
+    finally:
+        connection.close()
+
+
+@unittest.skipUnless(
+    _has_current_runtime_schema(RUNTIME),
+    "Compile the canonical eight-column runtime database before integration tests.",
+)
 class EngineBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -47,6 +65,26 @@ class EngineBoundaryTests(unittest.TestCase):
         )
         self.assertTrue(document["objects"])
         self.assertNotIn("window", {item["name"] for item in document["objects"]})
+        self.assertEqual({"minimum": 3, "maximum": 8}, document["limits"]["objectCount"])
+        for preset, capacities in document["presetObjectCounts"].items():
+            allowing = [
+                row[0]
+                for row in self.db.execute(
+                    "SELECT DISTINCT object_count FROM working_combinations "
+                    "WHERE preset = ? ORDER BY object_count",
+                    (preset,),
+                )
+            ]
+            without = [
+                row[0]
+                for row in self.db.execute(
+                    "SELECT DISTINCT object_count FROM working_combinations "
+                    "WHERE preset = ? AND has_duplicates = 0 ORDER BY object_count",
+                    (preset,),
+                )
+            ]
+            self.assertEqual(allowing, capacities["allowingDuplicates"])
+            self.assertEqual(without, capacities["withoutDuplicates"])
 
     def test_exact_working_combo_is_accepted(self):
         encoded = self.db.execute(
@@ -73,14 +111,32 @@ class EngineBoundaryTests(unittest.TestCase):
         self.assertEqual("UNSUPPORTED_OBJECT_COMBINATION", raised.exception.code)
         self.assertTrue(raised.exception.details["suggestions"])
 
-    def test_empty_original_preset_is_not_synthesized(self):
-        members = self.db.execute(
-            "SELECT COUNT(*) FROM working_combinations WHERE preset = 'bathroom'"
-        ).fetchone()[0]
-        self.assertEqual(0, members)
-        with self.assertRaises(RequestError) as raised:
-            self.request(mode="room_type", roomType="bathroom")
-        self.assertEqual("UNSUPPORTED_ROOM_PRESET", raised.exception.code)
+    def test_room_preset_accepts_only_its_exact_compiled_capacities(self):
+        capacities = {
+            row[0]
+            for row in self.db.execute(
+                "SELECT DISTINCT object_count FROM working_combinations "
+                "WHERE preset = 'bathroom' ORDER BY object_count"
+            )
+        }
+        self.assertTrue(capacities)
+        for count in capacities:
+            request = self.request(
+                mode="room_type",
+                roomType="bathroom",
+                objectCount=count,
+                allowDuplicates=True,
+            )
+            self.assertEqual(count, request["objectCount"])
+        for count in set(range(3, 9)) - capacities:
+            with self.assertRaises(RequestError) as raised:
+                self.request(
+                    mode="room_type",
+                    roomType="bathroom",
+                    objectCount=count,
+                    allowDuplicates=True,
+                )
+            self.assertEqual("UNSUPPORTED_ROOM_PRESET", raised.exception.code)
 
     def test_custom_room_validation_is_boundary_only_metadata(self):
         import json
@@ -99,7 +155,7 @@ class EngineBoundaryTests(unittest.TestCase):
         with self.assertRaises(RequestError):
             self.request(sceneCount=4)
         with self.assertRaises(RequestError):
-            self.request(objectCount=7)
+            self.request(objectCount=9)
 
 
 if __name__ == "__main__":

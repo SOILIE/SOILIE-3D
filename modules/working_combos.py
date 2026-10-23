@@ -1,203 +1,142 @@
-''' SOILIE 3D
-    v.24.07.05
-    Written by Mike Cichonski
-    for the Science of Imagination Laboratory
-    Carleton University
+"""Load and validate precomputed SOILIE object combinations.
 
-    File: working_combos.py
-    This module is written for python3 and the functions are
-    meant to be called from inside the imagine.py script.'''
+Catalog construction is intentionally separate from runtime sampling. Use
+``scripts/rebuild_working_combos.py`` to derive immutable candidate catalogs
+from canonical triplet data without overwriting the active runtime files.
+"""
 
-import sys
-import pickle
+from __future__ import annotations
+
+import csv
 import random
-import pandas as pd
 from functools import lru_cache
-from itertools import combinations, permutations
+from itertools import permutations
 from pathlib import Path
-from modules import progress_bar
-from modules.timer import *
-from modules.triplet_schema import validate_triplet_csv_header
 
-def determine():
-    '''determine all combinations of objects that can
-    be used as input into SOILIE3D (imagine.py script) given
-    the data gathered into the data/triplets.csv file
-    output: data/working-combos.csv'''
-
-    print ("Determining working combos...")
-    #pickleData = pickle.load(open("data/triplets.pickle",'rb'))
-
-    triplet_path = './data/triplets.csv'
-    validate_triplet_csv_header(triplet_path)
-    df = pd.read_csv(triplet_path)
-    df = df.drop_duplicates(subset=['objectA','objectB','objectC'],keep='first')
-    dictionary = {}
-    for i, row in df.iterrows():
-        objA = row['objectA']
-        objB = row['objectB']
-        objC = row['objectC']
-        comboData = [row['distanceAB'],row['distanceAC'],row['distanceAO'],
-                     row['angleBAC'],row['angleOAB'],row['angleOAC'],1]
-        dictionary[f'{objA},{objB},{objC}'] = comboData
-
-    combos = triplets = list(dictionary.keys()) # combos will be a buffer
-    pairs = [','.join(key.split(',')[:-1]) for key in triplets]
-    maxIter = 4 # max number of items per combination
-    sumIter = sum(list({p:min(pairs.count(p)-1,maxIter-1) \
-                  for p in pairs if pairs.count(p)>1}.values()))
-    extraIter = int(sumIter/10) if int(sumIter/10)%2==0 else int(sumIter/10+1)
-    pairs = list(set(pairs))
-
-    # set up progress bar
-    progress = 0
-    longest = max(len(p) for p in pairs) # longest string in pairs
-    progress_bar.update(0,sumIter+extraIter,prefix='Progress:')
-
-    # open/create file
-    wcFile = open("data/working-combos.csv",'w')
-    wcFile.write('obj0,obj1,obj2,obj3,obj4,obj5\n')
-    [wcFile.write(combo+'\n') for combo in combos] # write triplets set
-    combos = [] # clear buffer
-
-    time = startTimer()
-    for pair in pairs:
-        objs = [t.split(',')[-1] for t in triplets if t.startswith(pair+',')]
-        if len(objs)<2: continue
-        for i in range(2, min(maxIter+1,len(objs)+1)):
-            current = [','.join([pair]+list(o)) for o in combinations(objs,i)]
-            combos.extend(list(set(current)))
-            progress_bar.update(progress,sumIter+extraIter,prefix='Progress:',suffix=pair+'... + '+str(int(i))+' '*(longest-len(pair)+8))
-            progress+=1
-        [wcFile.write(combo+'\n') for combo in combos] # write to file
-        combos = [] # clear buffer
-    wcFile.close()
-
-    # add refined working combos file
-    df = pd.read_csv('./data/working-combos.csv')
-    keep = ['bathtub','bed','bin','blinds','book','bookcase','boots','bowl','cabinet','cap','cereal_box','chair','clock',
-            'closet','coffee_machine','coffee_mug','coffee_table','computer_bag','cupboard','curtain','desk','dining_table',
-            'fridge','helmet','lamp','laptop','microwave_oven','night_stand','office_chair','pillow','plant','printer',
-            'projector','sink','soda_can','sofa','sofa_chair','speaker','stand','suitcase','table','telephone','toilet',
-            'towel','trash_can','trash_bin','TV','tv_stand','window','']
-    df1 = df[(df['obj0'].isin(keep))&(df['obj1'].isin(keep))&(df['obj2'].isin(keep))&
-             (df['obj3'].isin(keep))&(df['obj4'].isin(keep))&(df['obj5'].isin(keep))]
-    df1.to_csv('./data/working-combos-refined.csv',index=False)
-    progress+=extraIter/5
-    progress_bar.update(progress,sumIter+extraIter,prefix='Progress:',suffix='Refined set...'+' '*(longest+3))
-
-    # bedroom combos
-    keep_br = ['bed','bin','blinds','book','bookcase','boots','bowl','cabinet','cap','chair','clock','closet','coffee_mug',
-               'computer_bag','cupboard','curtain','desk','helmet','lamp','laptop','night_stand','office_chair','pillow',
-               'plant','printer','projector','soda_can','sofa_chair','speaker','stand','suitcase','table','telephone',
-               'trash_bin','TV','tv_stand','window','']
-    df2 = df[(df['obj0'].isin(keep_br))&(df['obj1'].isin(keep_br))&(df['obj2'].isin(keep_br))&
-             (df['obj3'].isin(keep_br))&(df['obj4'].isin(keep_br))&(df['obj5'].isin(keep_br))]
-    df2.to_csv('./data/working-combos-bedroom.csv',index=False)
-    progress+=extraIter/5
-    progress_bar.update(progress,sumIter+extraIter,prefix='Progress:',suffix='Bedroom set...'+' '*(longest+3))
-
-    # living room combos
-    keep_lr = ['bin','blinds','book','bookcase','boots','bowl','cabinet','cap','cereal_box','chair','clock',
-               'coffee_mug','coffee_table','computer_bag','cupboard','curtain','desk','dining_table','helmet',
-               'lamp','laptop','office_chair','plant','printer','projector','soda_can','sofa','sofa_chair',
-               'speaker','stand','suitcase','table','telephone','trash_bin','TV','tv_stand','window','']
-    df3 = df[(df['obj0'].isin(keep_lr))&(df['obj1'].isin(keep_lr))&(df['obj2'].isin(keep_lr))&
-             (df['obj3'].isin(keep_lr))&(df['obj4'].isin(keep_lr))&(df['obj5'].isin(keep_lr))]
-    df3.to_csv('./data/working-combos-livingroom.csv',index=False)
-    progress+=extraIter/5
-    progress_bar.update(progress,sumIter+extraIter,prefix='Progress:',suffix='Living room set...'+' '*(longest-1))
-
-    # bathroom combos
-    keep_ba = ['bathtub','bin','cabinet','lamp','sink','toilet','towel','trash_bin','']
-    df4 = df[(df['obj0'].isin(keep_ba))&(df['obj1'].isin(keep_ba))&(df['obj2'].isin(keep_ba))&
-             (df['obj3'].isin(keep_ba))&(df['obj4'].isin(keep_ba))&(df['obj5'].isin(keep_ba))]
-    df4.to_csv('./data/working-combos-bathroom.csv',index=False)
-    progress+=extraIter/5
-    progress_bar.update(progress,sumIter+extraIter,prefix='Progress:',suffix='Bathroom set...'+' '*(longest+2))
-
-    # kitchen combos
-    keep_ki = ['bin','blinds','cabinet','cap','cereal_box','chair','clock','coffee_machine','coffee_mug',
-               'coffee_table','cupboard','curtain','dining_table','fridge','lamp','microwave_oven','plant',
-               'sink','soda_can','table','telephone','towel','trash_can','trash_bin','window','']
-    df5 = df[(df['obj0'].isin(keep_ki))&(df['obj1'].isin(keep_ki))&(df['obj2'].isin(keep_ki))&
-             (df['obj3'].isin(keep_ki))&(df['obj4'].isin(keep_ki))&(df['obj5'].isin(keep_ki))]
-    df5.to_csv('./data/working-combos-kitchen.csv',index=False)
-    progress+=extraIter/5
-    progress_bar.update(progress,sumIter+extraIter,prefix='Progress:',suffix='Kitchen set...'+' '*(longest+3))
-
-    endMessage = str(progress)+'/'+str(sumIter)+' Done! '+'('+str(endTimerPretty(time))+')'
-    endMessage = endMessage+' '*(longest-min(longest,len(endMessage)))
-    progress_bar.update(1,1,prefix='Progress:',suffix=endMessage)
+from modules.triplet_schema import validate_triplet_columns
+from modules.working_combo_schema import (
+    MAX_OBJECT_COUNT,
+    MIN_OBJECT_COUNT,
+    WorkingCombinationError,
+    iter_working_combinations,
+)
 
 
-def weighted_random_selection(df,n):
-    # Flatten the DataFrame to get a list of all items
-    all_items = df.values.flatten()
+def determine() -> None:
+    """Reject the historical in-place, nondeterministic catalog rebuild."""
 
-    # Calculate the frequency of each item across all columns
-    item_frequencies = pd.Series(all_items).value_counts().to_dict()
-
-    # Find the min and max frequencies
-    min_freq = min(item_frequencies.values())
-    max_freq = max(item_frequencies.values())
-
-    # Calculate scale factor to make the most common row slightly (1.2x) more frequent than least common
-    scale_factor = 1.2 / min_freq
-
-    # Calculate the weight for each row based on the scaled frequencies of its items
-    weights = []
-    for _, row in df.iterrows():
-        row_weight = 1
-        max_num = len(row)
-        row = [x for x in row if x!=''] # exclude counting blanks
-        for item in row:
-            scaled_frequency = item_frequencies[item] * scale_factor * (max_num/len(row))
-            row_weight *= 1 / item_frequencies[item]
-            row_weight *= scaled_frequency
-        weights.append(row_weight)
-
-    # Normalize the weights so they sum to 1
-    total_weight = sum(weights)
-    normalized_weights = [weight / total_weight for weight in weights]
-
-    # Select a row based on the weights
-    selected_row = df.iloc[random.choices(df.index, weights=normalized_weights, k=1)[0]]
-    return selected_row.values[:n].tolist()
+    raise WorkingCombinationError(
+        "in-place catalog generation was removed; run "
+        "scripts/rebuild_working_combos.py with a separate output directory"
+    )
 
 
-def load(n,filepath="./data/working-combos-refined.csv",sampling_method='weighted'):
-    '''load data/working-combos.csv and return a random
-    entry containing n objects
-    n: number of objects'''
-    df = pd.read_csv(filepath)
-    if sampling_method=='random':
-        sample = df.sample().values[0,:n].tolist()
-    elif sampling_method=='weighted':
-        sample = weighted_random_selection(df,n)
-    return sample
+@lru_cache(maxsize=16)
+def _catalog_rows(
+    resolved_path: str, size: int, modified_ns: int
+) -> tuple[tuple[str, ...], ...]:
+    # Size and mtime are cache-key provenance, not unused data. They ensure a
+    # replaced development fixture is parsed again while immutable runtimes pay
+    # the validation cost only once per worker.
+    _ = size, modified_ns
+    return tuple(iter_working_combinations(resolved_path))
 
 
-@lru_cache(maxsize=None)
-def _coordinate_triplets(filepath):
-    validate_triplet_csv_header(filepath)
-    df = pd.read_csv(filepath, usecols=['objectA','objectB','objectC'])
-    return frozenset(map(tuple, df.drop_duplicates().itertuples(index=False, name=None)))
+def _read_catalog(filepath: str | Path) -> tuple[tuple[str, ...], ...]:
+    path = Path(filepath).resolve()
+    if not path.is_file():
+        raise WorkingCombinationError(f"working-combination catalog is missing: {path}")
+    metadata = path.stat()
+    return _catalog_rows(str(path), metadata.st_size, metadata.st_mtime_ns)
 
 
-def supports_coordinate_construction(objects, filepath="./data/triplets.csv"):
-    '''Return whether the distinct objects retain one complete model triplet basis.
+def available_counts(filepath: str | Path) -> tuple[int, ...]:
+    """Return the exact object counts represented by validated rows."""
 
-    Working-combination rows are valid before duplicate removal. When repeated
-    labels are removed, the remaining objects may no longer share the ordered
-    A/B pair required by calculateCoords. Checking that condition lets the
-    existing selection loop draw another original row instead of failing later.
-    '''
-    objects = list(dict.fromkeys(objects))
-    if len(objects) < 3:
+    return tuple(sorted({len(row) for row in _read_catalog(filepath)}))
+
+
+def _validate_requested_count(n: int) -> None:
+    if (
+        isinstance(n, bool)
+        or not isinstance(n, int)
+        or not MIN_OBJECT_COUNT <= n <= MAX_OBJECT_COUNT
+    ):
+        raise WorkingCombinationError(
+            f"requested object count must be an integer from "
+            f"{MIN_OBJECT_COUNT} to {MAX_OBJECT_COUNT}"
+        )
+
+
+@lru_cache(maxsize=16)
+def _coordinate_triplets_cached(
+    filepath: str, size: int, modified_ns: int
+) -> frozenset[tuple[str, str, str]]:
+    _ = size, modified_ns
+    path = Path(filepath)
+    with path.open(newline="", encoding="utf-8-sig") as source:
+        reader = csv.DictReader(source)
+        validate_triplet_columns(reader.fieldnames or (), source=str(path))
+        return frozenset(
+            (row["objectA"], row["objectB"], row["objectC"])
+            for row in reader
+        )
+
+
+def _coordinate_triplets(filepath: str | Path) -> frozenset[tuple[str, str, str]]:
+    path = Path(filepath).resolve()
+    metadata = path.stat()
+    return _coordinate_triplets_cached(
+        str(path), metadata.st_size, metadata.st_mtime_ns
+    )
+
+
+def supports_coordinate_construction(
+    objects: list[str] | tuple[str, ...],
+    filepath: str | Path = "./data/triplets.csv",
+) -> bool:
+    """Return whether distinct objects share one complete ordered A/B basis."""
+
+    distinct_objects = list(dict.fromkeys(objects))
+    if len(distinct_objects) < MIN_OBJECT_COUNT:
         return False
-    triplets = _coordinate_triplets(str(Path(filepath).resolve()))
+    triplets = _coordinate_triplets(filepath)
     return any(
-        all(obj in (objA,objB) or (objA,objB,obj) in triplets for obj in objects)
-        for objA,objB in permutations(objects, 2)
+        all(
+            obj in (obj_a, obj_b) or (obj_a, obj_b, obj) in triplets
+            for obj in distinct_objects
+        )
+        for obj_a, obj_b in permutations(distinct_objects, 2)
+    )
+
+
+def select_exact(
+    n: int,
+    *,
+    filepath: str | Path = "./data/working-combos-refined.csv",
+    triplet_filepath: str | Path = "./data/triplets.csv",
+    allow_duplicates: bool,
+) -> list[str]:
+    """Select exactly ``n`` model-supported instances from a finite row set."""
+
+    _validate_requested_count(n)
+    if not isinstance(allow_duplicates, bool):
+        raise WorkingCombinationError("allow_duplicates must be true or false")
+    candidates = tuple(row for row in _read_catalog(filepath) if len(row) == n)
+    if not allow_duplicates:
+        candidates = tuple(row for row in candidates if len(set(row)) == n)
+    triplets = _coordinate_triplets(triplet_filepath)
+    eligible = tuple(
+        row
+        for row in candidates
+        if all((row[0], row[1], object_c) in triplets for object_c in row[2:])
+    )
+    if eligible:
+        # The legacy "weighted" calculation cancelled to a uniform row draw.
+        # Both public option names therefore intentionally retain uniformity.
+        return list(random.choice(eligible))
+
+    duplicate_policy = "allowing" if allow_duplicates else "disallowing"
+    raise WorkingCombinationError(
+        f"catalog contains no supported {n}-object rows while {duplicate_policy} duplicates"
     )

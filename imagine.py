@@ -11,6 +11,7 @@ from modules import prepare_data
 from modules import working_combos
 from modules import progress_bar
 from modules import png2gif
+from modules.working_combo_schema import MAX_OBJECT_COUNT, MIN_OBJECT_COUNT
 from modules.timer import *
 
 
@@ -67,15 +68,26 @@ def menuLoop():
             allow_multiples = True if allow_multiples.startswith('y') else False
             if same_objs.startswith('y'):
                 numObjects = '' # prompt for number of objects
-                while not numObjects.isdigit() or int(numObjects)<3:
+                while (
+                    not numObjects.isdigit()
+                    or not MIN_OBJECT_COUNT <= int(numObjects) <= MAX_OBJECT_COUNT
+                ):
                     numObjects = input("How many objects? ")
                     if numObjects=='exit' or numObjects=='quit':
                         sys.exit(0)
                     if numObjects=='menu' or numObjects=='back':
                         return menuLoop()
-                    if not numObjects.isdigit() or int(numObjects)<3:
-                        print ("Invalid input: Minimum 3 objects required.")
-                objects = working_combos.load(int(numObjects))
+                    if (
+                        not numObjects.isdigit()
+                        or not MIN_OBJECT_COUNT <= int(numObjects) <= MAX_OBJECT_COUNT
+                    ):
+                        print (
+                            f"Invalid input: Choose {MIN_OBJECT_COUNT} to "
+                            f"{MAX_OBJECT_COUNT} objects."
+                        )
+                objects = working_combos.select_exact(
+                    int(numObjects), allow_duplicates=allow_multiples
+                )
             else: # use different objects for each scene, so get a new set each time, later on
                 objects = ['<VARIABLE>']
 
@@ -91,7 +103,15 @@ def menuLoop():
                 if ',' in names or ';' in names:
                     print ("Invalid format: Use SPACE as delimiter.")
                     names = ''
-                else: objects = names.split(' ')
+                else:
+                    objects = names.split()
+                    if not MIN_OBJECT_COUNT <= len(objects) <= MAX_OBJECT_COUNT:
+                        print (
+                            f"Invalid input: Enter {MIN_OBJECT_COUNT} to "
+                            f"{MAX_OBJECT_COUNT} object names."
+                        )
+                        names = ''
+                        objects = []
             allow_multiples = True
 
         if generation_type=='3': # Specify room type
@@ -163,7 +183,10 @@ def menuLoop():
         return menuLoop()
 
     if option=='3': # determine working combos
-        working_combos.determine()
+        try:
+            working_combos.determine()
+        except working_combos.WorkingCombinationError as error:
+            print(f"Catalog rebuild not started: {error}")
         return menuLoop()
 
 
@@ -189,19 +212,24 @@ if __name__=="__main__":
             text_len = progress_bar.update(0, 100, progbar_prefix, length=10)
 
             if variable_objs:
-                num_objs=0
-                supported_selection = False
-                while num_objs<3 or not supported_selection:
-                    num_objs = random.randint(3,8)
-                    objects = working_combos.load(num_objs,filepath=f"./data/working-combos-{combo_set}.csv")
-                    if not allow_multiples:
-                        # A working combination is ordered around its first
-                        # relational pair. Remove repeated instances without
-                        # scrambling that order, or coordinate construction can
-                        # lose the triplet it was selected from.
-                        objects = list(dict.fromkeys(objects))
-                    num_objs = len(objects)
-                    supported_selection = allow_multiples or working_combos.supports_coordinate_construction(objects)
+                catalog_path = f"./data/working-combos-{combo_set}.csv"
+                available_counts = list(working_combos.available_counts(catalog_path))
+                random.shuffle(available_counts)
+                selection_error = None
+                for num_objs in available_counts:
+                    try:
+                        objects = working_combos.select_exact(
+                            num_objs,
+                            filepath=catalog_path,
+                            allow_duplicates=allow_multiples,
+                        )
+                        break
+                    except working_combos.WorkingCombinationError as error:
+                        selection_error = error
+                else:
+                    raise working_combos.WorkingCombinationError(
+                        f"catalog cannot satisfy this terminal selection: {selection_error}"
+                    )
 
             coords = None
             attempt_count = 1

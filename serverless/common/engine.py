@@ -20,6 +20,13 @@ from typing import Any, Iterable
 from serverless.common.model_version import model_document
 
 
+# Keep the API package self-contained: its production image intentionally does
+# not copy the renderer's ``modules`` package. These values mirror the strict
+# working-catalog contract that the compiler validates before deployment.
+MIN_OBJECT_COUNT = 3
+MAX_OBJECT_COUNT = 8
+
+
 ROOM_TYPES = ("bedroom", "living_room", "kitchen", "bathroom")
 MODES = ("random", "objects", "room_type")
 ARCHITECTURE = {
@@ -106,9 +113,11 @@ def compatible_suggestions(connection: sqlite3.Connection, objects: list[str], l
     requested = set(objects)
     candidates: list[tuple[int, tuple[str, ...]]] = []
     for (encoded,) in connection.execute(
-        "SELECT objects_json FROM working_combinations ORDER BY preset, row_index",
+        "SELECT objects_json FROM working_combinations "
+        "WHERE object_count = ? ORDER BY preset, row_index",
+        (len(objects),),
     ):
-        candidate = tuple(json.loads(encoded)[: len(objects)])
+        candidate = tuple(json.loads(encoded))
         candidates.append((len(requested & set(candidate)), candidate))
     candidates.sort(key=lambda item: (-item[0], item[1]))
     suggestions: list[list[str]] = []
@@ -172,8 +181,14 @@ def validate_request(connection: sqlite3.Connection, payload: Any) -> dict[str, 
 
     if mode == "objects":
         raw_objects = payload.get("objects")
-        if not isinstance(raw_objects, list) or not 3 <= len(raw_objects) <= 8:
-            raise RequestError("INVALID_REQUEST", "objects must contain 3 to 8 object labels.")
+        if (
+            not isinstance(raw_objects, list)
+            or not MIN_OBJECT_COUNT <= len(raw_objects) <= MAX_OBJECT_COUNT
+        ):
+            raise RequestError(
+                "INVALID_REQUEST",
+                f"objects must contain {MIN_OBJECT_COUNT} to {MAX_OBJECT_COUNT} object labels.",
+            )
         objects = [normalize_label(value) for value in raw_objects]
         unknown = sorted({value for value in objects if value not in known})
         if unknown:
@@ -190,24 +205,48 @@ def validate_request(connection: sqlite3.Connection, payload: Any) -> dict[str, 
             )
         normalized["objects"] = objects
     else:
-        normalized["objectCount"] = _require_int(payload.get("objectCount", 3), "objectCount", 3, 6)
-        normalized["allowDuplicates"] = _require_bool(payload.get("allowDuplicates", False), "allowDuplicates")
+        object_count = _require_int(
+            payload.get("objectCount", MIN_OBJECT_COUNT),
+            "objectCount",
+            MIN_OBJECT_COUNT,
+            MAX_OBJECT_COUNT,
+        )
+        normalized["objectCount"] = object_count
+        allow_duplicates = _require_bool(
+            payload.get("allowDuplicates", False), "allowDuplicates"
+        )
+        normalized["allowDuplicates"] = allow_duplicates
         normalized["sameObjectsAcrossScenes"] = _require_bool(
             payload.get("sameObjectsAcrossScenes", True), "sameObjectsAcrossScenes"
         )
+        preset = "random"
         if mode == "room_type":
             room_type = normalize_label(payload.get("roomType", ""))
             if room_type not in ROOM_TYPES:
                 raise RequestError("INVALID_REQUEST", f"roomType must be one of: {', '.join(ROOM_TYPES)}.")
-            available = connection.execute(
-                "SELECT 1 FROM working_combinations WHERE preset = ? LIMIT 1", (room_type,)
-            ).fetchone()
-            if not available:
-                raise RequestError(
-                    "UNSUPPORTED_ROOM_PRESET",
-                    f"The SOILIE-3D {room_type.replace('_', ' ')} working-combination file contains no usable rows.",
-                )
             normalized["roomType"] = room_type
+            preset = room_type
+
+        available = connection.execute(
+            "SELECT 1 FROM working_combinations "
+            "WHERE preset = ? AND object_count = ? "
+            "AND (? = 1 OR has_duplicates = 0) LIMIT 1",
+            (preset, object_count, int(allow_duplicates)),
+        ).fetchone()
+        if not available:
+            if mode == "room_type":
+                message = (
+                    f"The SOILIE-3D {preset.replace('_', ' ')} preset has no "
+                    f"canonical {object_count}-object combinations."
+                )
+                code = "UNSUPPORTED_ROOM_PRESET"
+            else:
+                message = (
+                    f"SOILIE-3D has no canonical random {object_count}-object "
+                    "combinations."
+                )
+                code = "UNSUPPORTED_OBJECT_COUNT"
+            raise RequestError(code, message)
 
     return normalized
 
@@ -228,15 +267,40 @@ def public_catalog_document(connection: sqlite3.Connection) -> dict[str, Any]:
         ]
         for room in ROOM_TYPES
     }
+    preset_object_counts = {
+        preset: {
+            "withoutDuplicates": [
+                row[0]
+                for row in connection.execute(
+                    "SELECT DISTINCT object_count FROM working_combinations "
+                    "WHERE preset = ? AND has_duplicates = 0 ORDER BY object_count",
+                    (preset,),
+                )
+            ],
+            "allowingDuplicates": [
+                row[0]
+                for row in connection.execute(
+                    "SELECT DISTINCT object_count FROM working_combinations "
+                    "WHERE preset = ? ORDER BY object_count",
+                    (preset,),
+                )
+            ],
+        }
+        for preset in ("random", *ROOM_TYPES)
+    }
     return {
         "schemaVersion": 2,
         "model": model_document(),
         "objects": catalog(connection),
         "roomTypes": list(ROOM_TYPES),
         "presets": presets,
+        "presetObjectCounts": preset_object_counts,
         "limits": {
             "sceneCount": {"minimum": 1, "maximum": 3},
-            "objectCount": {"minimum": 3, "maximum": 6},
+            "objectCount": {
+                "minimum": MIN_OBJECT_COUNT,
+                "maximum": MAX_OBJECT_COUNT,
+            },
             "roomDimensionM": {"minimum": 1.0, "maximum": 20.0, "step": 0.1},
         },
     }

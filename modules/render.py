@@ -15,10 +15,27 @@ try:
     from blender_names import blender_copy_index, blender_source_name
 except ImportError:  # Package imports outside Blender resolve through modules.
     from .blender_names import blender_copy_index, blender_source_name
+try:
+    from recency import (
+        light_belongs_to_object,
+        light_energy,
+        luminous_object_type,
+        transition_remesh_depths,
+        transition_visibility,
+    )
+except ImportError:  # Package imports outside Blender resolve through modules.
+    from .recency import (
+        light_belongs_to_object,
+        light_energy,
+        luminous_object_type,
+        transition_remesh_depths,
+        transition_visibility,
+    )
 
 SIZE_MAP = {'xsmall': 0, 'small': 1, 'medium': 2, 'large': 3, 'xlarge': 4}
 SYNONYMS = {'light':'lamp'}
 COLLISION_EPSILON = 1e-9
+RECENCY_REMESH_MODIFIER = 'SOILIE Recency Remesh'
 
 
 @dataclass(frozen=True)
@@ -1244,7 +1261,12 @@ def take_snapshot_from_above(filepath):
 
 def add_light_to_lamps_and_windows(max_lum_lamp = 400, max_lum_window=75):
     # Add spot light (shining downwards) in location of lamps
-    lamps = [o for o in bpy.context.scene.objects if 'lamp' in o.name.lower()]
+    # Use the same classification when lights are created and later faded.
+    # Otherwise a luminous asset can retain full energy after becoming hidden.
+    lamps = [
+        obj for obj in bpy.context.scene.objects
+        if luminous_object_type(obj.name) == 'lamp'
+    ]
     lights = []
     for lamp in lamps:
         location = Vector(list(lamp.location)[:2]+[lamp.location[2]*2+4])
@@ -1256,7 +1278,10 @@ def add_light_to_lamps_and_windows(max_lum_lamp = 400, max_lum_window=75):
         bpy.context.view_layer.update()
         lights.append(light_object)
 
-    windows = [o for o in bpy.context.scene.objects if 'window' in o.name.lower()]
+    windows = [
+        obj for obj in bpy.context.scene.objects
+        if luminous_object_type(obj.name) == 'window'
+    ]
     walls =[o for o in bpy.context.scene.objects if 'wall' in o.name.lower()]
     for window in windows:
         nearest_wall = closest_object_to_point(window.location, walls)
@@ -1352,16 +1377,16 @@ def focus_walls_floor(focus_point,colors):
         mat.node_tree.nodes.update()
 
 
-def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,colors,lights,max_lum_lamp,max_lum_window):
-    # Determine 8-bit depth values
-    curr_index = assets_in_order.index(current)
+def change_imagination_focus(
+        curr_index, assets_in_order, curr_frame, total_frames,
+        colors, lights, max_lum_lamp, max_lum_window):
+    # Keep opacity math independent of Blender so the complete sequence,
+    # including the GIF loop boundary, can be checked in ordinary unit tests.
+    current = assets_in_order[curr_index]
     t = curr_frame/total_frames # Used below to adjust focus point and object alpha
-    depths = [i+8-curr_index if i<curr_index else 0 if i==curr_index else -1 for i in range(len(assets_in_order))]
-    # Determine alpha values
-    depth_alpha_map = {2:0.03,3:0.05,4:0.1,5:0.2,6:0.35,7:0.5,0:1,-1:0,1:0.03}
-    aord = list(depth_alpha_map.values())[::-1]
-    alphas = [depth_alpha_map[d] for d in depths]
-    alphas = [a + t * (aord[(aord.index(a)+1)%len(aord)] - aord[aord.index(a)]) if a!=0 or i==alphas.index(1)+1 else 0 for i,a in enumerate(alphas)]
+    alphas = transition_visibility(len(assets_in_order), curr_index, t)
+    remesh_depths = transition_remesh_depths(
+        len(assets_in_order), curr_index, t)
     # Get the current focus object
     focus_obj = bpy.data.objects[os.path.splitext(current)[0]]
     focus_obj_loc = get_centroid(focus_obj)
@@ -1403,9 +1428,9 @@ def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,col
         # Assign color
         color = colors[obj_name]
         # Adjust the alpha value to change opacity, where 0 is fully transparent and 1 is fully
-        ## Reasonable mapping from octree depth (8-bit effect) to opacity value:
-        ## 3: 0.03, 4: 0.05, 5: 0.1, 6: 0.2, 7: 0.35, 8: 0.5
-        ## NOTE: Adjusted for partial transparency for frames in between two objects
+        ## Stable recency mapping from octree depth to opacity:
+        ## 3: 0.05, 4: 0.10, 5: 0.20, 6: 0.35, 7: 0.50.
+        ## The current object is fully opaque and has no recency remesh.
         shader_node.inputs['Alpha'].default_value = alphas[i] # Set to desired transparency level
         shader_node.inputs['Base Color'].default_value = Vector(list(color) + [alphas[i]]) # RGBA
         obj.color = Vector(list(color) + [alphas[i]]) # RGBA
@@ -1413,25 +1438,43 @@ def change_imagination_focus(current,assets_in_order,curr_frame,total_frames,col
         mat.blend_method = 'BLEND'
         mat.shadow_method = 'HASHED'
         # Adjust lamp lighting and window
-        if obj_name.lower()[:4]=='lamp' or obj_name.lower()[:4]=='window':
-            light_object = [l for l in lights if obj_name in l.name]
-            if light_object:
-                light_object = light_object[0]
-                max_lum = max_lum_lamp if 'lamp' in obj_name.lower() else max_lum_window
-                lum_fac = (1-(abs(i-curr_index)*0.25)) if abs(i-curr_index)*0.25<1 else 0
-                new_lum = max_lum * lum_fac
-                light_object.data.energy = new_lum
+        light_type = luminous_object_type(obj_name)
+        if light_type is not None:
+            owned_lights = [
+                light for light in lights
+                if light_belongs_to_object(obj_name, light.name)
+            ]
+            if owned_lights:
+                max_lum = max_lum_lamp if light_type == 'lamp' else max_lum_window
+                # Invisible objects must not continue illuminating the room.
+                # Using the same opacity also makes final-to-first light changes
+                # follow the exact transition applied to the object material.
+                new_lum = light_energy(max_lum, alphas[i])
+                for owned_light in owned_lights:
+                    owned_light.data.energy = new_lum
         ##### 8-BIT EFFECT (CURRENTLY TURNED ON)
-        if depths[i]>0: # and abs(curr_index-i)>2 and False: # UNCOMMENT TO TURN OFF 8-BIT
-            # Add a Remesh modifier
-            remesh_mod = obj.modifiers.new(name='Remesh', type='REMESH')
+        remesh_depth = remesh_depths[i]
+        owned_remesh_modifiers = [
+            modifier for modifier in obj.modifiers
+            if modifier.name == RECENCY_REMESH_MODIFIER
+            or modifier.name.startswith(f'{RECENCY_REMESH_MODIFIER}.')
+        ]
+        remesh_mod = owned_remesh_modifiers[0] if owned_remesh_modifiers else None
+        # Clean up suffix-numbered duplicates left by an interrupted older run,
+        # but never touch modifiers owned by the imported asset itself.
+        for duplicate in owned_remesh_modifiers[1:]:
+            obj.modifiers.remove(duplicate)
+        if remesh_depth is not None:
+            # Reuse one model-owned modifier. Creating one on every animation
+            # frame stacks Blender modifiers and changes geometry unintentionally.
+            if remesh_mod is None:
+                remesh_mod = obj.modifiers.new(name=RECENCY_REMESH_MODIFIER, type='REMESH')
             # Configure the Remesh modifier
             remesh_mod.mode = 'BLOCKS'  # Creates blocky features
             # Adjust depth for more or less detail
-            remesh_mod.octree_depth = depths[i] # use between 3-8 and turn off for max resolution (most recent case)
+            remesh_mod.octree_depth = remesh_depth
         else: # If this is the focus object or a 'future' object
             # Remove the blocky features to ensure object is full resolution
-            remesh_mod = obj.modifiers.get('Remesh')
             if remesh_mod:
                 obj.modifiers.remove(remesh_mod)
         mat.node_tree.nodes.update()
@@ -1629,7 +1672,9 @@ def visualize(inputs):
         obj_name = objects_in_order[obj_i]
         for i in range(fpo):
             # Change focus by i/fpo of the way to the next object
-            change_imagination_focus(asset_name,assets_in_order,i,fpo,colors,lights,max_lum_lamp,max_lum_window)
+            change_imagination_focus(
+                obj_i, assets_in_order, i, fpo, colors, lights,
+                max_lum_lamp, max_lum_window)
             # If it's the first frame of final object
             if obj_i==len(assets_in_order)-1 and i==0:
                 # Render a final bird's eye view of the imagined scene

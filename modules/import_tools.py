@@ -17,42 +17,54 @@ from plyfile import PlyData, PlyElement
 
 from PIL import Image
 
+from modules.source_geometry import decode_depth, validate_c2w
 from modules.utils import *
 
 #filename = './extrinsics_test.txt'
 def readValuesFromTxt(filename,local):
     if local:
-        fid = open(filename,'rb')
-        values = [list(map(lambda y: float(y), x.split(' '))) for x in \
-		 ''.join(fid.read().decode('utf-8')).split('\n') if x!='']
-        fid.close()
+        with open(filename, 'rb') as fid:
+            file_utf = fid.read().decode('utf-8')
     else:
-        fid = urllib.request.urlopen(filename)
-        file_utf = fid.read().decode('utf-8')
-        values = [list(map(lambda y: float(y), x.split(' '))) for x in \
-		 ''.join(file_utf).split('\n') if x!='']
-        fid.close()
-    return values
+        with urllib.request.urlopen(filename) as fid:
+            file_utf = fid.read().decode('utf-8')
+    return [list(map(float, line.split())) for line in file_utf.splitlines() if line.strip()]
 
 
 #filename = '00000-depth.png'
-def depthRead(filename,local):
+def depthRead(filename, local, depth_encoding):
+    '''Read a source depth image using its explicitly selected encoding.'''
+
     if local:
         depthfile = Image.open(filename,'r')
     else:
-        depthfile = Image.open(BytesIO(urllib.request.urlopen(filename).read()))
-    depthmap = np.array(depthfile)
-    depthfile.close()
-    # bitshift values from 16-bit to 13-bit
-    bitshift = [[(d >> 3) or (d << 16-3) for d in row] for row in depthmap]
-     # divide values by 1000 to go from millimeters to meters
-    depthmap = np.array([[float(d)/1000 for d in row] for row in bitshift])
+        with urllib.request.urlopen(filename) as response:
+            depthfile = Image.open(BytesIO(response.read()))
+    try:
+        depthmap = decode_depth(np.array(depthfile), depth_encoding)
+    finally:
+        depthfile.close()
     gc.collect()
     return depthmap
 
 #K=np.array([[525,0,320],[0,525,240],[0,0,1]])
-def depth2XYZcamera(K,depth):
-    [x,y] = np.meshgrid(range(0,depth.shape[1]),range(0,depth.shape[0]))
+def depth2XYZcamera(K, depth, *, pixel_origin):
+    '''Project depth pixels using the coordinate origin declared by the source.'''
+
+    if type(pixel_origin) is not int or pixel_origin not in {0, 1}:
+        raise ValueError('pixel_origin must be the integer 0 or 1')
+    K = np.asarray(K, dtype=np.float64)
+    depth = np.asarray(depth, dtype=np.float64)
+    if K.shape != (3, 3) or not np.all(np.isfinite(K)):
+        raise ValueError('Camera intrinsics must be one finite 3x3 matrix')
+    if depth.ndim != 2 or not np.all(np.isfinite(depth)):
+        raise ValueError('Depth must be one finite two-dimensional image')
+    if K[0, 0] == 0 or K[1, 1] == 0:
+        raise ValueError('Camera focal lengths must be non-zero')
+
+    x_values = np.arange(pixel_origin, depth.shape[1] + pixel_origin)
+    y_values = np.arange(pixel_origin, depth.shape[0] + pixel_origin)
+    [x,y] = np.meshgrid(x_values, y_values)
     XYZcamera = []
 
     # XYZcamera[0]: x-coords of corresponding point in 3d camera coordinate space for each pixel location
@@ -73,19 +85,6 @@ def depth2XYZcamera(K,depth):
     return XYZcamera
 
 
-def getCameraCoords(XYZcamera):
-    XYZ = []
-    for j in range(0,len(XYZcamera[0][0])):
-        for i in range(0,len(XYZcamera[0])):
-            if XYZcamera[3][i][j]:
-                data = (XYZcamera[0][i][j],
-                        XYZcamera[1][i][j],
-                        XYZcamera[2][i][j])
-                XYZ.append(data)
-    XYZ = np.array(XYZ)
-    return XYZ
-
-
 def camera2XYZworld(XYZcamera,extrinsics):
     XYZ = []
     for j in range(0,len(XYZcamera[0][0])):
@@ -95,15 +94,19 @@ def camera2XYZworld(XYZcamera,extrinsics):
                         XYZcamera[1][i][j],
                         XYZcamera[2][i][j])
                 XYZ.append(data)
-    XYZ = np.array(XYZ)
+    XYZ = np.asarray(XYZ, dtype=np.float64).reshape((-1, 3))
     XYZworld = transformPointCloud(XYZ,extrinsics)
     vals = (XYZworld,XYZcamera[3])
     return vals
 
 
 def transformPointCloud(XYZ,Rt):
-    rotation = [(float(r[0]),float(r[1]),float(r[2])) for r in Rt]
-    translation = np.array(Rt)[:3,3]
+    c2w = validate_c2w(Rt)
+    XYZ = np.asarray(XYZ, dtype=np.float64)
+    if XYZ.ndim != 2 or XYZ.shape[1:] != (3,) or not np.all(np.isfinite(XYZ)):
+        raise ValueError('Point cloud must be a finite Nx3 array')
+    rotation = c2w[:, :3]
+    translation = c2w[:, 3]
     return np.matmul(rotation,np.transpose(XYZ)) + np.repeat(np.reshape(translation,(3,1)),XYZ.shape[0],axis=1)
 
 #main_folder = './data/washington/scene_01'
