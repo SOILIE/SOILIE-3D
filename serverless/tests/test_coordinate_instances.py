@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import csv
+import math
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -11,6 +13,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from modules import prepare_data as prepare_data_module
 from modules.prepare_data import (
     TripletCoverageError,
     calculateCoords,
@@ -22,6 +25,7 @@ from modules.working_combos import (
     supports_coordinate_construction,
 )
 from serverless.common.engine import is_supported_combination
+from serverless.common.model_runtime import generate_model_inputs
 
 
 TEST_TEMP_ROOT = Path(__file__).parents[2] / ".codex" / "test-coordinate-instances"
@@ -68,7 +72,13 @@ class InstanceConstructionTests(unittest.TestCase):
             writer.writerows(rows)
         return path
 
-    def calculate(self, objects: list[str], rows: list[dict[str, object]]):
+    def calculate(
+        self,
+        objects: list[str],
+        rows: list[dict[str, object]],
+        *,
+        chooser=None,
+    ):
         colors = pd.DataFrame([
             {"object_name": "fixture", "R": 1, "G": 2, "B": 3, "count": 1},
         ])
@@ -82,6 +92,9 @@ class InstanceConstructionTests(unittest.TestCase):
                 return pd.DataFrame(rows)
             return colors.copy()
 
+        if chooser is None:
+            chooser = lambda values: values[0]
+
         with (
             patch("modules.prepare_data.pd.read_csv", side_effect=read_csv),
             patch("modules.prepare_data.loadObjectSizes", return_value=sizes),
@@ -89,9 +102,20 @@ class InstanceConstructionTests(unittest.TestCase):
                 "modules.prepare_data.retrieve_realistic_object_color",
                 return_value=(1, 2, 3),
             ),
-            patch("modules.prepare_data.random.choice", side_effect=lambda values: values[0]),
+            patch("modules.prepare_data.random.choice", side_effect=chooser),
         ):
             return calculateCoords(objects, return_alignment_diagnostics=True)
+
+    @staticmethod
+    def row_with_camera_range(
+        object_a: str,
+        object_b: str,
+        object_c: str,
+        camera_range: float,
+    ) -> dict[str, object]:
+        row = _row(object_a, object_b, object_c)
+        row["distanceAO"] = camera_range
+        return row
 
     def test_regression_preserves_both_chair_instances(self) -> None:
         objects = ["chair", "desk", "chair", "lamp"]
@@ -169,6 +193,120 @@ class InstanceConstructionTests(unittest.TestCase):
                 coordinates, _progress, diagnostics = self.calculate(requested, rows)
                 self.assertTrue(set(requested) <= coordinates.keys())
                 self.assertEqual(count - 3, len(diagnostics))
+
+    def test_partner_base_selection_is_independent_of_input_order(self) -> None:
+        rows = [
+            self.row_with_camera_range("a", "b", "c", 2.0),
+            self.row_with_camera_range("a", "b", "d", 4.0),
+        ]
+
+        for objects in (["a", "b", "c", "d"], ["a", "b", "d", "c"]):
+            for base_label, expected_range in (("c", 2.0), ("d", 4.0)):
+                calls = []
+
+                def choose(values):
+                    options = tuple(values)
+                    calls.append(options)
+                    if len(calls) == 1:
+                        return options[0]
+                    return next(index for index in options if objects[index] == base_label)
+
+                with self.subTest(objects=objects, base=base_label):
+                    coordinates, _progress, diagnostics = self.calculate(
+                        list(objects), rows, chooser=choose,
+                    )
+                    camera = coordinates["CAMERA"]["coords"]
+                    self.assertAlmostEqual(
+                        expected_range,
+                        math.sqrt(sum(float(component) ** 2 for component in camera)),
+                    )
+                    self.assertEqual(2, len(calls))
+                    self.assertEqual((2, 3), calls[1])
+                    self.assertEqual(base_label, diagnostics[0]["baseObjectName"])
+                    self.assertEqual(
+                        next(label for label in ("c", "d") if label != base_label),
+                        diagnostics[0]["objectName"],
+                    )
+
+    def test_partner_base_selection_uses_repeated_instance_identity(self) -> None:
+        calls = []
+
+        def choose(values):
+            options = tuple(values)
+            calls.append(options)
+            return options[0] if len(calls) == 1 else options[-1]
+
+        coordinates, _progress, diagnostics = self.calculate(
+            ["chair", "desk", "chair", "chair"],
+            [_row("chair", "desk", "chair")],
+            chooser=choose,
+        )
+
+        self.assertEqual((2, 3), calls[1])
+        self.assertEqual(
+            {"chair", "desk", "chair.1", "chair.2"},
+            set(coordinates) - {"CAMERA", "WALL", "FLOOR"},
+        )
+        self.assertEqual("chair.2", diagnostics[0]["baseObjectName"])
+        self.assertEqual("chair.1", diagnostics[0]["objectName"])
+
+    def test_runtime_retry_can_select_a_different_partner_base(self) -> None:
+        objects = ["a", "b", "d", "c"]
+        rows = [
+            self.row_with_camera_range("a", "b", "c", 2.0),
+            self.row_with_camera_range("a", "b", "d", 8.0),
+        ]
+        colors = pd.DataFrame([
+            {"object_name": "fixture", "R": 1, "G": 2, "B": 3, "count": 1},
+        ])
+        sizes = {
+            instance: [0.5, "medium"]
+            for instance in suffix_duplicates(objects)
+        }
+        choice_calls = []
+
+        def read_csv(path, *_args, **_kwargs):
+            if str(path).endswith("triplets.csv"):
+                return pd.DataFrame(rows)
+            return colors.copy()
+
+        def choose(values):
+            options = tuple(values)
+            choice_calls.append(options)
+            if len(choice_calls) in (1, 3):
+                return options[0]
+            # Attempt one retains d (AO=8) and is rejected by the runtime's
+            # five-metre gate; attempt two retains c (AO=2) and succeeds.
+            return options[0] if len(choice_calls) == 2 else options[1]
+
+        with (
+            patch("modules.prepare_data.pd.read_csv", side_effect=read_csv),
+            patch("modules.prepare_data.loadObjectSizes", return_value=sizes),
+            patch(
+                "modules.prepare_data.retrieve_realistic_object_color",
+                return_value=(1, 2, 3),
+            ),
+            patch("modules.prepare_data.random.choice", side_effect=choose),
+            patch(
+                "serverless.common.model_runtime._load_original_modules",
+                return_value=(prepare_data_module, None, None),
+            ),
+            patch(
+                "serverless.common.model_runtime._model_working_directory",
+                return_value=nullcontext(),
+            ),
+            patch("serverless.common.model_runtime.seed_model"),
+        ):
+            coordinates = generate_model_inputs(Path("."), objects, 73)
+
+        self.assertEqual(4, len(choice_calls))
+        self.assertEqual((2, 3), choice_calls[1])
+        self.assertEqual((2, 3), choice_calls[3])
+        camera = coordinates["CAMERA"]["coords"]
+        self.assertAlmostEqual(
+            2.0,
+            math.sqrt(sum(float(component) ** 2 for component in camera)),
+        )
 
     def test_runtime_and_api_require_the_same_duplicate_instance_witness(self) -> None:
         objects = ["chair", "desk", "chair", "lamp"]

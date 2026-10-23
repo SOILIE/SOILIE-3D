@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -26,6 +27,9 @@ except ModuleNotFoundError:
     sys.modules['plyfile'] = plyfile_stub
 
 from modules import import_tools as imp
+from modules.source_geometry import (
+    WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+)
 
 
 TEST_WORK_ROOT = ROOT / '.codex' / 'tests'
@@ -34,6 +38,12 @@ REVIEWED_INTRINSICS = np.array([
     [0.0, 601.0, 240.0],
     [0.0, 0.0, 1.0],
 ])
+WASHINGTON_SOURCE_GEOMETRY = {
+    'depthEncoding': WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+    'pairingStrategy': 'exact_frame_id',
+    'poseIndexStrategy': 'json_position',
+    'pixelOrigin': 0,
+}
 
 
 class WashingtonPreprocessTests(unittest.TestCase):
@@ -202,6 +212,8 @@ class WashingtonPreprocessTests(unittest.TestCase):
         self.assertEqual(1, len(receipts))
         receipt = receipts[0]
         self.assertEqual(imp.WASHINGTON_PREPROCESS_RECEIPT_KIND, receipt['kind'])
+        self.assertEqual(2, receipt['schemaVersion'])
+        self.assertEqual(WASHINGTON_SOURCE_GEOMETRY, receipt['sourceGeometry'])
         self.assertEqual(
             'Reviewed calibration fixture, revision 7',
             receipt['calibrationProvenance'],
@@ -214,6 +226,13 @@ class WashingtonPreprocessTests(unittest.TestCase):
         self.assertTrue((self.json_dir / 'scene_01.json').is_file())
         receipt_path = self.scene_dir / imp.WASHINGTON_PREPROCESS_RECEIPT
         self.assertTrue(receipt_path.is_file())
+        prepared_annotation = json.loads(
+            (self.json_dir / 'scene_01.json').read_text(encoding='utf-8'),
+        )
+        self.assertEqual(
+            WASHINGTON_SOURCE_GEOMETRY,
+            prepared_annotation['sourceGeometry'],
+        )
         np.testing.assert_array_equal(
             REVIEWED_INTRINSICS,
             np.loadtxt(self.scene_dir / 'intrinsics.txt'),
@@ -237,6 +256,71 @@ class WashingtonPreprocessTests(unittest.TestCase):
             nFrame_samples=None,
         )
         self.assertEqual(receipts, reused_from_receipts)
+
+    def test_v1_or_ambiguous_receipt_requires_an_explicit_rebuild(self):
+        self._rebuild()
+        receipt_path = self.scene_dir / imp.WASHINGTON_PREPROCESS_RECEIPT
+        receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+        receipt['schemaVersion'] = 1
+        del receipt['sourceGeometry']
+        receipt_path.write_text(
+            json.dumps(receipt, indent=2) + '\n',
+            encoding='utf-8',
+        )
+
+        with self.assertRaisesRegex(
+            imp.WashingtonPreprocessError,
+            'explicit rebuild required.*schemaVersion 1',
+        ):
+            imp.pre_process_input_files(
+                dataDir=str(self.data_dir),
+                pcDir=str(self.pc_dir),
+                jsonDir=str(self.json_dir),
+                nFrame_samples=2,
+            )
+
+    def test_receipt_and_annotation_reject_plain_or_missing_source_geometry(self):
+        receipt_path = self.scene_dir / imp.WASHINGTON_PREPROCESS_RECEIPT
+        annotation_path = self.json_dir / 'scene_01.json'
+
+        for mutation, message in (
+            ('missing-receipt', r"missing \['sourceGeometry'\]"),
+            ('plain-receipt', "conflicts with the 'washington' profile"),
+            ('missing-annotation', 'JSON sourceGeometry does not match'),
+            ('plain-annotation', 'JSON sourceGeometry does not match'),
+        ):
+            with self.subTest(mutation=mutation):
+                self._rebuild()
+                receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+                if mutation == 'missing-receipt':
+                    del receipt['sourceGeometry']
+                elif mutation == 'plain-receipt':
+                    receipt['sourceGeometry']['depthEncoding'] = 'plain_uint16_mm'
+                else:
+                    annotation = json.loads(annotation_path.read_text(encoding='utf-8'))
+                    if mutation == 'missing-annotation':
+                        del annotation['sourceGeometry']
+                    else:
+                        annotation['sourceGeometry']['depthEncoding'] = 'plain_uint16_mm'
+                    annotation_path.write_text(
+                        json.dumps(annotation, indent=4) + '\n',
+                        encoding='utf-8',
+                    )
+                    receipt['outputs']['json']['sha256'] = hashlib.sha256(
+                        annotation_path.read_bytes(),
+                    ).hexdigest()
+                receipt_path.write_text(
+                    json.dumps(receipt, indent=2) + '\n',
+                    encoding='utf-8',
+                )
+
+                with self.assertRaisesRegex(imp.WashingtonPreprocessError, message):
+                    imp.pre_process_input_files(
+                        dataDir=str(self.data_dir),
+                        pcDir=str(self.pc_dir),
+                        jsonDir=str(self.json_dir),
+                        nFrame_samples=2,
+                    )
 
     def test_one_frame_rebuild_preserves_extrinsics_row_shape(self):
         receipts = self._rebuild(frame_samples=1)

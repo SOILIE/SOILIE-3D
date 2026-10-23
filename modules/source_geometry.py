@@ -14,13 +14,20 @@ import numpy as np
 
 SUN3D_CIRCULAR_UINT16_MM = 'sun3d_circular_uint16_mm'
 PLAIN_UINT16_MM = 'plain_uint16_mm'
+WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM = (
+    'washington_rgbd_scenes_v2_native_uint16_tenth_mm'
+)
 SUN3D_NEAREST_TIMESTAMP = 'sun3d_nearest_timestamp'
 EXACT_FRAME_ID = 'exact_frame_id'
 ONE_BASED_IMAGE_FRAME = 'one_based_image_frame'
 JSON_POSITION = 'json_position'
 WORLD_POINT_CLOUD_SCHEMA_VERSION = 1
 
-_DEPTH_ENCODINGS = frozenset({SUN3D_CIRCULAR_UINT16_MM, PLAIN_UINT16_MM})
+_DEPTH_ENCODINGS = frozenset({
+    PLAIN_UINT16_MM,
+    SUN3D_CIRCULAR_UINT16_MM,
+    WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+})
 _PAIRING_STRATEGIES = frozenset({SUN3D_NEAREST_TIMESTAMP, EXACT_FRAME_ID})
 _POSE_INDEX_STRATEGIES = frozenset({ONE_BASED_IMAGE_FRAME, JSON_POSITION})
 _SUN3D_IMAGE_RE = re.compile(
@@ -67,7 +74,7 @@ SOURCE_PROFILES = {
     ),
     'washington': SourceProfile(
         name='washington',
-        depth_encoding=PLAIN_UINT16_MM,
+        depth_encoding=WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
         pairing_strategy=EXACT_FRAME_ID,
         pose_index_strategy=JSON_POSITION,
         pixel_origin=0,
@@ -160,6 +167,17 @@ def resolve_source_profile(dataset_name, metadata=None):
     known = SOURCE_PROFILES.get(dataset_key)
     if known is None:
         return _metadata_profile(dataset_name, metadata)
+    if metadata is None and dataset_key == 'washington':
+        # Legacy Washington annotations do not identify whether their PNGs are
+        # native 0.1-mm frames or converted millimetre frames.  Reinterpreting
+        # those files under a newly corrected built-in default would silently
+        # relabel old observations, so only a reviewed rebuild may add this
+        # declaration.
+        raise SourceGeometryError(
+            "Washington annotations must explicitly declare sourceGeometry "
+            "for native RGB-D Scenes v2 depth; rebuild legacy preprocessing "
+            "artifacts instead of reinterpreting them",
+        )
     if metadata is not None:
         declared = _metadata_profile(dataset_name, metadata)
         expected = (
@@ -182,7 +200,7 @@ def resolve_source_profile(dataset_name, metadata=None):
 
 
 def decode_depth(raw_depth, encoding):
-    '''Decode a two-dimensional uint16 millimetre image into float64 metres.'''
+    '''Decode a declared two-dimensional uint16 source image into float64 metres.'''
 
     if encoding not in _DEPTH_ENCODINGS:
         raise SourceGeometryError(f'Unsupported depth encoding {encoding!r}')
@@ -196,13 +214,21 @@ def decode_depth(raw_depth, encoding):
         # SUN3D stores depth with a circular 16-bit shift.  Bitwise OR is
         # essential here: Python's boolean ``or`` discards the restored high
         # bits for valid depths above 8192 mm.
-        millimetres = np.bitwise_or(
+        depth_units = np.bitwise_or(
             np.right_shift(encoded, np.uint16(3)),
             np.left_shift(encoded, np.uint16(13)),
         )
+        metres_per_unit = 1.0 / 1000.0
+    elif encoding == WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM:
+        # Native Washington RGB-D Scenes v2 PNGs store tenths of a
+        # millimetre.  Already-converted millimetre releases must instead
+        # declare PLAIN_UINT16_MM; magnitude is never used to guess a format.
+        depth_units = encoded
+        metres_per_unit = 1.0 / 10000.0
     else:
-        millimetres = encoded
-    return millimetres.astype(np.float64) / 1000.0
+        depth_units = encoded
+        metres_per_unit = 1.0 / 1000.0
+    return depth_units.astype(np.float64) * metres_per_unit
 
 
 def _parse_unique(names, pattern, *, kind):

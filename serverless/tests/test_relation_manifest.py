@@ -32,11 +32,20 @@ from modules.relation_manifest import (
     sha256_file,
     validate_relation_location,
 )
+from modules.source_geometry import (
+    WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+)
 from modules.triplet_schema import LEGACY_TRIPLET_COLUMNS, TRIPLET_COLUMNS
 
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_WORK_ROOT = ROOT / ".codex" / "tests"
+WASHINGTON_SOURCE_GEOMETRY = {
+    "depthEncoding": WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+    "pairingStrategy": "exact_frame_id",
+    "poseIndexStrategy": "json_position",
+    "pixelOrigin": 0,
+}
 
 
 class RelationManifestTests(unittest.TestCase):
@@ -408,13 +417,15 @@ class RelationManifestTests(unittest.TestCase):
         relation = self.data / "washington" / "scene_01" / "5.csv"
         annotation.parent.mkdir(parents=True)
         self.write_relation(relation)
+        annotation_document = {
+            "name": "scene_01",
+            "frames": [{"polygon": [{"object": 0}]}],
+            "fileList": ["00005-color.png"],
+            "extrinsics": "extrinsics.txt",
+            "sourceGeometry": WASHINGTON_SOURCE_GEOMETRY,
+        }
         annotation.write_text(
-            json.dumps({
-                "name": "scene_01",
-                "frames": [{"polygon": [{"object": 0}]}],
-                "fileList": ["00005-color.png"],
-                "extrinsics": "extrinsics.txt",
-            }) + "\n",
+            json.dumps(annotation_document) + "\n",
             encoding="utf-8",
         )
         record = build_relation_frame_record(
@@ -422,12 +433,7 @@ class RelationManifestTests(unittest.TestCase):
             scene="scene_01",
             annotation_path="json/washington/scene_01.json",
             annotation_sha256=sha256_file(annotation),
-            source_geometry={
-                "depthEncoding": "plain_uint16_mm",
-                "pairingStrategy": "exact_frame_id",
-                "poseIndexStrategy": "json_position",
-                "pixelOrigin": 0,
-            },
+            source_geometry=WASHINGTON_SOURCE_GEOMETRY,
             json_frame_index=0,
             image={"name": "00005-color.png", "frameId": 5, "timestamp": None},
             depth={"name": "00005-depth.png", "frameId": 5, "timestamp": None},
@@ -461,6 +467,32 @@ class RelationManifestTests(unittest.TestCase):
                 frames=[bad_timestamp],
                 data_root=self.data,
             )
+
+        for geometry, message in (
+            (None, "explicitly declare sourceGeometry"),
+            ({**WASHINGTON_SOURCE_GEOMETRY, "depthEncoding": "plain_uint16_mm"},
+             "conflicts with the 'washington' profile"),
+        ):
+            with self.subTest(geometry=geometry):
+                changed_annotation = deepcopy(annotation_document)
+                if geometry is None:
+                    del changed_annotation["sourceGeometry"]
+                else:
+                    changed_annotation["sourceGeometry"] = geometry
+                annotation.write_text(
+                    json.dumps(changed_annotation) + "\n",
+                    encoding="utf-8",
+                )
+                changed_record = deepcopy(record)
+                changed_record["annotation"]["sha256"] = sha256_file(annotation)
+                collection_id = begin_relation_run(self.manifest)
+                with self.assertRaisesRegex(RelationManifestError, message):
+                    complete_relation_run(
+                        self.manifest,
+                        collection_id=collection_id,
+                        frames=[changed_record],
+                        data_root=self.data,
+                    )
 
     def test_annotation_semantics_bind_scene_frame_file_and_source_contract(self):
         base = self.write_annotation()

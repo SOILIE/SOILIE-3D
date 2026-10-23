@@ -129,6 +129,15 @@ as proof of a complete source bundle. Reuse requires a verified per-scene
 `preprocess-receipt.json`; rebuilding requires explicit reviewed 3x3 intrinsics
 and a calibration provenance citation.
 
+Native Washington RGB-D Scenes v2 depth PNGs store unsigned 16-bit values in
+0.1 mm units and must explicitly declare
+`washington_rgbd_scenes_v2_native_uint16_tenth_mm`. Converted depth PNGs that
+really contain millimetres remain a distinct `plain_uint16_mm` source contract;
+the decoder never guesses from pixel magnitude. Historical Washington
+annotations without this declaration and schema-v1 preprocessing receipts are
+not reusable or relabeled in place. A reviewed raw-source rebuild writes the
+declaration into both the annotation and the schema-v2 receipt.
+
 </details>
 
 <details>

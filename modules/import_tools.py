@@ -21,11 +21,13 @@ from PIL import Image
 from modules.source_geometry import (
     EXACT_FRAME_ID,
     SourceGeometryError,
+    WASHINGTON_RGBD_PROFILE,
     decode_depth,
     pair_rgb_depth_files,
     pinned_extrinsics_filename,
     reshape_c2w_rows,
     reshape_intrinsics,
+    resolve_source_profile,
     validate_c2w,
 )
 from modules.utils import *
@@ -33,11 +35,23 @@ from modules.utils import *
 
 WASHINGTON_PREPROCESS_RECEIPT = 'preprocess-receipt.json'
 WASHINGTON_PREPROCESS_RECEIPT_KIND = 'soilie3d.washington-preprocess'
-WASHINGTON_PREPROCESS_RECEIPT_VERSION = 1
+WASHINGTON_PREPROCESS_RECEIPT_VERSION = 2
 
 
 class WashingtonPreprocessError(ValueError):
     '''Washington source artifacts cannot be reused without a reviewed rebuild.'''
+
+
+def _washington_source_geometry():
+    '''Return a fresh JSON-safe copy of the reviewed native source contract.'''
+
+    profile = WASHINGTON_RGBD_PROFILE
+    return {
+        'depthEncoding': profile.depth_encoding,
+        'pairingStrategy': profile.pairing_strategy,
+        'poseIndexStrategy': profile.pose_index_strategy,
+        'pixelOrigin': profile.pixel_origin,
+    }
 
 
 def _sha256_file(path):
@@ -243,6 +257,7 @@ def _build_preprocess_receipt(
         'schemaVersion': WASHINGTON_PREPROCESS_RECEIPT_VERSION,
         'kind': WASHINGTON_PREPROCESS_RECEIPT_KIND,
         'scene': fname,
+        'sourceGeometry': _washington_source_geometry(),
         'calibrationProvenance': calibration_provenance,
         'requestedFrameSamples': requested_frame_samples,
         'sourceFrameCount': source_frame_count,
@@ -302,26 +317,47 @@ def _validate_preprocess_receipt(
 ):
     receipt_path = join(main_folder, WASHINGTON_PREPROCESS_RECEIPT)
     receipt = _strict_json(receipt_path)
+    if not isinstance(receipt, dict):
+        raise WashingtonPreprocessError(
+            'Washington preprocess receipt must be a JSON object',
+        )
+    receipt_version = receipt.get('schemaVersion')
+    if (
+        type(receipt_version) is not int
+        or receipt_version != WASHINGTON_PREPROCESS_RECEIPT_VERSION
+    ):
+        raise WashingtonPreprocessError(
+            f'Unsupported Washington preprocess receipt schemaVersion '
+            f'{receipt_version!r}; rebuild with the explicit native '
+            'sourceGeometry contract',
+        )
     _require_exact_keys(
         receipt,
         {
-            'schemaVersion', 'kind', 'scene', 'calibrationProvenance',
+            'schemaVersion', 'kind', 'scene', 'sourceGeometry',
+            'calibrationProvenance',
             'requestedFrameSamples', 'sourceFrameCount', 'sourcePoseCount',
             'samples', 'annotations', 'outputs',
         },
         field='Washington preprocess receipt',
     )
-    if receipt['schemaVersion'] != WASHINGTON_PREPROCESS_RECEIPT_VERSION:
-        raise WashingtonPreprocessError(
-            f'Unsupported Washington preprocess receipt schemaVersion '
-            f'{receipt["schemaVersion"]!r}',
-        )
     if receipt['kind'] != WASHINGTON_PREPROCESS_RECEIPT_KIND:
         raise WashingtonPreprocessError('Washington preprocess receipt kind is invalid')
     if receipt['scene'] != fname:
         raise WashingtonPreprocessError(
             f'Washington preprocess receipt scene {receipt["scene"]!r} does not '
             f'match {fname!r}',
+        )
+    try:
+        resolve_source_profile('washington', receipt['sourceGeometry'])
+    except SourceGeometryError as exc:
+        raise WashingtonPreprocessError(
+            f'Washington preprocess receipt sourceGeometry is invalid: {exc}',
+        ) from exc
+    if receipt['sourceGeometry'] != _washington_source_geometry():
+        raise WashingtonPreprocessError(
+            'Washington preprocess receipt sourceGeometry is not the reviewed '
+            'native RGB-D Scenes v2 contract',
         )
     _calibration_provenance(receipt['calibrationProvenance'])
 
@@ -412,6 +448,10 @@ def _validate_preprocess_receipt(
     data = _strict_json(json_path)
     if data.get('name') != fname:
         raise WashingtonPreprocessError('Preprocessed JSON scene name does not match receipt')
+    if data.get('sourceGeometry') != receipt['sourceGeometry']:
+        raise WashingtonPreprocessError(
+            'Preprocessed JSON sourceGeometry does not match the receipt',
+        )
     if not isinstance(data.get('frames'), list) or len(data['frames']) != len(expected_samples):
         raise WashingtonPreprocessError(
             'Preprocessed JSON frame count does not match sampled frame count',
@@ -758,6 +798,7 @@ def project_annotations_3D_to_2D(
 
     data["date"] = ""
     data["name"] = fname
+    data['sourceGeometry'] = _washington_source_geometry()
     data["frames"] = frame_polygons_arr
     data['objects'] = mainObjects
     data['extrinsics'] = "extrinsics.txt"

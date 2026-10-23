@@ -46,6 +46,7 @@ from modules.source_geometry import (
     SUN3D_CIRCULAR_UINT16_MM,
     SUN3D_NEAREST_TIMESTAMP,
     WASHINGTON_RGBD_PROFILE,
+    WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
     WORLD_POINT_CLOUD_SCHEMA_VERSION,
     FramePair,
     SourceGeometryError,
@@ -119,7 +120,10 @@ class SourceProfileTests(unittest.TestCase):
         self.assertEqual(ONE_BASED_IMAGE_FRAME, PRINCETON_SUN3D_PROFILE.pose_index_strategy)
         self.assertEqual(1, PRINCETON_SUN3D_PROFILE.pixel_origin)
 
-        self.assertEqual(PLAIN_UINT16_MM, WASHINGTON_RGBD_PROFILE.depth_encoding)
+        self.assertEqual(
+            WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+            WASHINGTON_RGBD_PROFILE.depth_encoding,
+        )
         self.assertEqual(EXACT_FRAME_ID, WASHINGTON_RGBD_PROFILE.pairing_strategy)
         self.assertEqual(JSON_POSITION, WASHINGTON_RGBD_PROFILE.pose_index_strategy)
         self.assertEqual(0, WASHINGTON_RGBD_PROFILE.pixel_origin)
@@ -137,12 +141,56 @@ class SourceProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(SourceGeometryError, 'requires a sourceGeometry'):
             resolve_source_profile('unreviewed')
 
+    def test_washington_requires_an_explicit_native_source_declaration(self):
+        with self.assertRaisesRegex(
+            SourceGeometryError,
+            'explicitly declare sourceGeometry.*rebuild legacy',
+        ):
+            resolve_source_profile('washington')
+
+        metadata = {
+            'depthEncoding': WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+            'pairingStrategy': EXACT_FRAME_ID,
+            'poseIndexStrategy': JSON_POSITION,
+            'pixelOrigin': 0,
+        }
+        self.assertEqual(
+            WASHINGTON_RGBD_PROFILE,
+            resolve_source_profile('washington', metadata),
+        )
+
+        metadata['depthEncoding'] = PLAIN_UINT16_MM
+        with self.assertRaisesRegex(SourceGeometryError, 'conflicts'):
+            resolve_source_profile('washington', metadata)
+
     def test_checked_in_source_json_matches_profile_and_pins_extrinsics(self):
         for dataset_name in ('princeton', 'washington'):
-            profile = resolve_source_profile(dataset_name)
+            profile = (
+                PRINCETON_SUN3D_PROFILE
+                if dataset_name == 'princeton'
+                else WASHINGTON_RGBD_PROFILE
+            )
             for path in sorted((ROOT / 'json' / dataset_name).glob('*.json')):
                 with self.subTest(path=path):
                     payload = json.loads(path.read_text(encoding='utf-8'))
+                    if dataset_name == 'washington':
+                        # These historical annotations intentionally remain
+                        # unmodified.  Only a reviewed raw-source rebuild may
+                        # add the corrected native-depth declaration.
+                        with self.assertRaisesRegex(
+                            SourceGeometryError,
+                            'explicitly declare sourceGeometry',
+                        ):
+                            resolve_source_profile(
+                                dataset_name, payload.get('sourceGeometry'),
+                            )
+                    else:
+                        self.assertEqual(
+                            profile,
+                            resolve_source_profile(
+                                dataset_name, payload.get('sourceGeometry'),
+                            ),
+                        )
                     self.assertEqual(len(payload['frames']), len(payload['fileList']))
                     pinned_extrinsics_filename(payload.get('extrinsics'))
                     if dataset_name == 'princeton':
@@ -168,7 +216,7 @@ class DepthContractTests(unittest.TestCase):
     def _sun3d_encode(millimetres):
         return ((millimetres << 3) & 0xFFFF) | (millimetres >> 13)
 
-    def test_circular_and_plain_uint16_depth_are_not_interchangeable(self):
+    def test_circular_plain_and_native_washington_depth_are_not_interchangeable(self):
         boundary_values = [0, 1, 5_000, 8_191, 8_192, 9_000, 65_535]
         encoded_values = [self._sun3d_encode(value) for value in boundary_values]
         raw = np.array([encoded_values], dtype=np.uint16)
@@ -188,6 +236,78 @@ class DepthContractTests(unittest.TestCase):
         self.assertEqual(
             10.0,
             decode_depth(np.array([[10_000]], dtype=np.uint16), PLAIN_UINT16_MM)[0, 0],
+        )
+        self.assertEqual(
+            1.0,
+            decode_depth(
+                np.array([[10_000]], dtype=np.uint16),
+                WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+            )[0, 0],
+        )
+
+    def test_native_washington_scale_matches_original_source_evidence(self):
+        evidence_path = (
+            ROOT / 'serverless' / 'tests' / 'fixtures'
+            / 'washington-rgbd-scenes-v2-depth-scale.json'
+        )
+        evidence = json.loads(evidence_path.read_text(encoding='utf-8'))
+        self.assertEqual(
+            'diagnostic_only_not_authoritative_calibration',
+            evidence['diagnosticProjection']['calibrationStatus'],
+        )
+        self.assertEqual(
+            '9896676b09adda4509caf2b2283fdca83156b7b4e132a3ed488a845079975d23',
+            evidence['sources']['depth']['sha256'],
+        )
+        self.assertEqual(
+            'ce19e29a746e1bc82994ca287c54e871feb6e7bc4577bf556faf100ff69476b9',
+            evidence['sources']['pose']['sha256'],
+        )
+        self.assertEqual(
+            '53d10f5dc6f0bcc06db4bdb5dc4f70a1ed2d665848432b9f139d3002b08b65d1',
+            evidence['sources']['pointSample']['sha256'],
+        )
+        np.testing.assert_allclose(
+            evidence['sources']['pose']['firstPose'],
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            rtol=0.0,
+            atol=0.0,
+        )
+
+        projected = evidence['projectedPairs']
+        raw = np.array([[row['rawDepth'] for row in projected]], dtype=np.uint16)
+        point_z = np.array([row['pointZMetres'] for row in projected], dtype=np.float64)
+        native_z = decode_depth(
+            raw, WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+        )[0]
+        plain_z = decode_depth(raw, PLAIN_UINT16_MM)[0]
+        native_error = np.abs(native_z - point_z)
+        plain_error = np.abs(plain_z - point_z)
+        self.assertLess(float(np.median(native_error)), 0.01)
+        self.assertGreater(float(np.mean(native_error < 0.05)), 0.9)
+        self.assertGreater(float(np.median(plain_error)), 10.0)
+        self.assertEqual(0.0, float(np.mean(plain_error < 0.05)))
+
+        converted = evidence['convertedPairs']
+        native_raw = np.array(
+            [[row['rawDepth'] for row in converted]], dtype=np.uint16,
+        )
+        converted_mm = np.array(
+            [[row['convertedDepthMillimetres'] for row in converted]],
+            dtype=np.uint16,
+        )
+        np.testing.assert_array_equal(
+            np.floor(native_raw.astype(np.float64) / 10.0 + 0.5).astype(np.uint16),
+            converted_mm,
+        )
+        np.testing.assert_allclose(
+            decode_depth(
+                native_raw,
+                WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
+            ),
+            decode_depth(converted_mm, PLAIN_UINT16_MM),
+            rtol=0.0,
+            atol=0.0005000001,
         )
 
     def test_depth_reader_applies_selected_encoding(self):

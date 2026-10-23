@@ -1158,6 +1158,14 @@ def calculateCoords(
             'requested partner instance'
         )
     anchor_a, anchor_b, partner_indices = random.choice(witnesses)
+    if len(partner_indices) > 1:
+        # The first partner supplies the retained camera/reference frame.  Pick
+        # that *instance* independently of input order, then keep every other
+        # partner in its stable order for deterministic downstream alignment.
+        base_partner = random.choice(partner_indices)
+        partner_indices = (base_partner,) + tuple(
+            index for index in partner_indices if index != base_partner
+        )
     combos = [
         [objects[anchor_a], objects[anchor_b], objects[partner]]
         for partner in partner_indices
