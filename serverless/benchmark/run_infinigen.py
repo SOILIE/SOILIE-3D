@@ -73,6 +73,8 @@ def main():
     parser.add_argument("--profile", choices=sorted(PROFILES), default="default")
     parser.add_argument('--object-count', type=int, choices=range(3, 9), default=6)
     parser.add_argument('--blender-threads', type=int, choices=range(1, 9), default=4)
+    parser.add_argument('--native-isolation-plan', type=Path,
+                        help='Frozen credential-free Docker boundary for native Blender only')
     parser.add_argument("--bedroom-seed-offset",type=int,default=0,
                         help="Non-negative deterministic offset used to create disjoint benchmark shards")
     parser.add_argument("--living-room-seed-offset",type=int,default=0,
@@ -108,6 +110,12 @@ def main():
                   "stage":"coarse task: solving, procedural meshes and scene serialization; no image rendering",
                   "profileDescription":profile_description,
                   "hardware":platform.platform(),"cpuThreadsAvailable":os.cpu_count()}
+        if args.native_isolation_plan:
+            isolation = json.loads(args.native_isolation_plan.read_bytes())
+            config['nativeIsolationPlanSha256'] = isolation['planSha256']
+            config['nativeIsolation'] = isolation['nativeIsolation']
+            config['timingStratum'] = isolation['nativeIsolation']['timingStratum']
+            config['timingMeaning'] = 'Measured generation includes native Docker startup and shutdown; overhead is not assumed zero'
         # Omit the default field to preserve exact resume checks for existing
         # two-room campaigns. A single-room supplement has its own directory.
         if args.room_types != ['bedroom', 'living_room']:
@@ -170,6 +178,10 @@ def main():
                 command = [str(args.blender),"--background","--threads",str(args.blender_threads),"--python-use-system-env","--python-exit-code","2",
                            "--python",str(entrypoint),"--","--seed",seed,"--task","coarse",
                            "--output_folder",str(work),"-g",*configs,"-p",*overrides]
+                if args.native_isolation_plan:
+                    from serverless.benchmark.native_isolation import wrapped_command
+                    command = wrapped_command(command, args.native_isolation_plan.resolve(), work,
+                                              args.output/f'native-isolation-{room_type}-{index:03d}.json', args.timeout)
                 environment = os.environ.copy()
                 environment["PYTHONPATH"] = str(args.site_packages)+os.pathsep+str(args.repository)
                 environment["PYTHONHASHSEED"] = "0"
@@ -190,10 +202,17 @@ def main():
                     row['controlledObjectCount'] = args.object_count
                     row['controlledRoleCounts'] = config['controlledRoleCountsByRoom'][room_type]
                 started = time.perf_counter()
-                with (work/"process.log").open("wb") as log:
+                process_log = (args.output/f'native-process-{room_type}-{index:03d}.log'
+                               if args.native_isolation_plan else work/'process.log')
+                with process_log.open("wb") as log:
                     process = subprocess.Popen(supervised(command),cwd=args.repository,env=environment,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
                     try:
-                        process.wait(timeout=args.timeout)
+                        # Give the isolation supervisor time to remove its
+                        # exact container before this outer watchdog fires.
+                        process.wait(timeout=args.timeout+(60 if args.native_isolation_plan else 0))
+                        if args.native_isolation_plan:
+                            from serverless.benchmark.native_isolation import workspace_bytes
+                            workspace_bytes(work)  # Before ANY native metadata/log reads.
                         if process.returncode == 0 and (work/"scene.blend").exists() and (work/"solve_state.json").exists():
                             if args.profile in CONTROLLED_PROFILES:
                                 try:
@@ -217,7 +236,7 @@ def main():
                 row["generationSeconds"] = time.perf_counter()-started
                 row["outputDirectory"] = str(work)
                 if row["status"] != "complete":
-                    row["errorTail"] = (work/"process.log").read_text(errors="replace")[-4000:]
+                    row["errorTail"] = process_log.read_text(errors="replace")[-4000:]
                 write_json(checkpoint,row)
                 print(json.dumps({"scene":row["id"],"status":row["status"],"seconds":row["generationSeconds"]}),flush=True)
                 if row["status"] == "complete":

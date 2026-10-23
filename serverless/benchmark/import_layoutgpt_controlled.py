@@ -38,7 +38,11 @@ def compile_responses(folder, parser_path):
                    'usd': entry.get('actualUsd'), 'usage': entry.get('usage')}
         attempts.append(attempt)
         if entry['status'] != 'complete': continue
-        raw = (folder / 'responses' / (request['id'] + '.json')).read_bytes()
+        if plan['variant'] == 'inventory-extension-7-8-gpt4-v1':
+            from serverless.benchmark.layoutgpt_extension_store import load_response
+            raw = load_response(folder, request['id'])
+        else:
+            raw = (folder / 'responses' / (request['id'] + '.json')).read_bytes()
         checksum = hashlib.sha256(raw).hexdigest()
         if checksum != entry['responseSha256']: raise ValueError('Response checksum differs')
         response = json.loads(raw)

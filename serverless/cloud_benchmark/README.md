@@ -4,7 +4,9 @@ The current campaign controller is `serverless.cloud_benchmark.authoritative`.
 It generates every SOILIE room from the corrected model; it does not import,
 repair or reuse earlier SOILIE rooms. Development pilots and the final campaign
 remain separate, while their paid Lambda attempts share one US$25 ceiling.
-No command in this guide starts AI review or publishes results.
+No command in this guide starts AI review. The optional S3 archive publishes only
+validated final-cohort room geometry and diagrams marked `comparisons-pending`;
+aggregate benchmark/review publication remains a separate acceptance step.
 
 ## Source and validation gates
 
@@ -50,6 +52,10 @@ Lambda execution uses 16 concurrent x86-64 workers, 4 GB memory, a 900-second
 watchdog and 1 GB temporary storage. Provision the private benchmark stack using
 `deploy.ps1` with the corrected, digest-pinned renderer image. The controller
 checks the live function configuration before dispatch and never deploys it.
+The deploy script creates a fresh task-owned build context below `.codex/`;
+`-BuildContext` can name a dedicated empty directory, never an old populated
+build tree. Retain its logs until verification, then remove only that task's
+context. The website deployment is not involved.
 Publish a numeric Lambda version after deployment and pass the qualified name,
 such as `private-function:42`. The controller verifies that immutable version;
 mutable aliases and `$LATEST` are rejected.
@@ -76,6 +82,7 @@ campaign configuration.
 ```bash
 python -m serverless.cloud_benchmark.authoritative prepare \
   --root .codex/benchmark/replacement-pilot --phase pilot --max-count 8 \
+  --archive-date 2026-10-23 \
   --runtime . --provenance .codex/runtime/model-provenance.json \
   --blender /path/to/blender --source-audit .codex/benchmark/source-audit.json \
   --rates .codex/benchmark/rates.json --budget-root .codex/benchmark/replacement-budget \
@@ -108,6 +115,7 @@ campaign with the same configuration and these three additional arguments:
 ```bash
 python -m serverless.cloud_benchmark.authoritative prepare \
   --root .codex/benchmark/replacement-final --phase authoritative --max-count 8 \
+  --archive-date 2026-10-23 \
   --runtime . --provenance .codex/runtime/model-provenance.json \
   --blender /path/to/blender --source-audit .codex/benchmark/source-audit.json \
   --rates .codex/benchmark/rates.json --budget-root .codex/benchmark/replacement-budget \
@@ -125,13 +133,33 @@ This read-only monitor displays one terminal bar for each of the four groups,
 attempt/failure counts, and the cumulative Lambda cost plus current reservations:
 
 ```powershell
-wsl -- .codex/linux-env/bin/python -m serverless.cloud_benchmark.progress --root .codex/benchmark/replacement-final
+wsl -- .codex/campaign-env-20261023/bin/python -m serverless.cloud_benchmark.progress --root .codex/benchmark/replacement-final --color always
 ```
 
 For a one-off snapshot, append `--once`. Use the pilot directory to monitor the
 pilot instead. Ctrl+C closes only the monitor. A native Python environment can
 use the same `python -m serverless.cloud_benchmark.progress` command; when its
 Windows/WSL mount path differs, supply `--budget-root <same-budget-directory>`.
+Append `--color always` for colored bars. Use the actual frozen campaign's Python
+environment and root; an example path is not evidence that a run has started.
+
+### Incremental S3 storage
+
+`--archive-date` freezes the user-chosen output-directory label independently of
+the actual dispatch timestamps, which remain in the evidence. Use the same value
+for pilot and final preparation. For the current replacement campaign that label
+is explicitly `2026-10-23`, not a claim that every room was generated that day.
+Omitting the option preserves local-only evidence storage.
+
+Exact worker artifacts, including failed attempts and pilots, are uploaded under
+`private/new-benchmark-20261023/soilie/`. Eligible final-cohort geometry and SVG
+diagrams go under `files/outputs/2026-10-23/soilie/` using a typed public allowlist;
+raw logs and execution paths are never copied publicly. Immutable uploads are
+content-verified and a recovery sidecar is saved before local room payloads are
+removed. Resume reads the original private artifact rather than regenerating a
+completed scene. Keep the compact local ledgers/sidecars and retained execution
+receipts. Archival overhead is excluded from per-scene generation time but
+included in controller session/calendar duration.
 
 ### Failures, recovery and budget
 
@@ -209,8 +237,10 @@ filter quality, start reviewers, or publish private fields to the website.
 Reuse valid LayoutGPT and Infinigen geometry, native archives and original
 provenance; remeasure applicable metrics and construct new SOILIE pairs.
 Report cross-model comparisons only over supported shared object counts;
-the controlled Infinigen baseline currently supports 3–6. Report SOILIE's larger
-counts separately, and report actual available baseline sample sizes.
+the frozen controlled Infinigen baseline supports 3–6. Its new 7/8-item native
+inventory extension is a separately pinned condition, not a relabeling of old
+rooms or a claim of identical cross-model categories. Report actual available
+baseline sample sizes and condition boundaries.
 
 Before collecting judgments, present the matching rules, frozen rubric,
 six-view stimuli, reviewer configuration, response schema, controls and
@@ -220,9 +250,10 @@ Do not silently loosen matching or reuse previous AI responses to fill a quota.
 Use three isolated reviewer workers from the existing subscription only after
 the protocol is approved and its pilot passes.
 
-Publish a single dated `files/outputs/YYYY-MM-DD/` directory, using the Toronto
-date when authoritative SOILIE generation begins, after all coverage, timing,
-cost, metric and review gates pass. The existing 2024-06-27 demonstration remains
+Publish accepted aggregate comparisons only after all coverage, timing, cost,
+metric and review gates pass. This campaign's room output directory is explicitly
+`files/outputs/2026-10-23/`; preserve actual generation dates in its receipts.
+The existing 2024-06-27 demonstration remains
 independent of this campaign.
 
 ## Retired evidence tools

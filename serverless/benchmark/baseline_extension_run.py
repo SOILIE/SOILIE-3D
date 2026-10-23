@@ -40,6 +40,7 @@ IMPLEMENTATIONS = (
     'infinigen_metadata.py', 'geometry.py', 'mesh_support.py', 'solid_overlap.py',
     'stimuli.py', 'review_annotations.py', 'archive.py', 'stream_archive.py',
     'supervise.py', 'timing.py', 'run_batch.py', 'expand_infinigen.py',
+    'native_isolation.py', 'infinigen_isolation.Dockerfile',
 )
 
 
@@ -70,11 +71,13 @@ def hashes():
     return {name: digest(Path(__file__).with_name(name)) for name in IMPLEMENTATIONS}
 
 
-def byte_tree(path):
+def byte_tree(path, *, include_bytecode=False, python_sources=None, native_prefix=None):
     """Fingerprint actual runtime bytes, not package claims or file mtimes.
 
     Generated Python bytecode is excluded; source, extension binaries, data,
     distribution records and executable search-path files are all included.
+    Native imports use the pinned read-only derived cache (fresh /tmp only
+    during untimed preparation), never these excluded pre-existing caches.
     No size/mtime cache is accepted as evidence that runtime bytes are equal.
     """
     path = path.resolve()
@@ -83,26 +86,34 @@ def byte_tree(path):
     result = hashlib.sha256()
     count = size = 0
     for directory, children, files in os.walk(path, followlinks=False):
-        children[:] = sorted(name for name in children if name != '__pycache__')
+        children[:] = sorted(name for name in children
+                             if include_bytecode or name not in ('__pycache__', '.git'))
         if any((Path(directory)/name).is_symlink() for name in children):
             raise ValueError('Runtime directory links require an explicit fingerprint policy')
         for name in sorted(files):
-            if name.endswith(('.pyc', '.pyo')):
+            if not include_bytecode and name.endswith(('.pyc', '.pyo')):
                 continue
             source = Path(directory)/name
+            link = None
+            if source.is_symlink():
+                if not source.resolve().is_relative_to(path):
+                    raise ValueError('Runtime file link escaped its pinned byte tree')
+                link = os.readlink(source)
             before = source.stat()
             checksum = digest(source)
             after = source.stat()
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError('Runtime file changed during its byte fingerprint')
             result.update(encoded({'path': source.relative_to(path).as_posix(),
-                                  'sha256': checksum, 'bytes': after.st_size}))
+                                  'sha256': checksum, 'bytes': after.st_size, 'symlink': link}))
+            if python_sources is not None and source.suffix == '.py':
+                python_sources[str(Path(native_prefix)/source.relative_to(path))] = checksum
             count += 1
             size += after.st_size
     return {'sha256': result.hexdigest(), 'files': count, 'bytes': size}
 
 
-def runtime_fingerprint(environment):
+def runtime_fingerprint(environment, isolation):
     """Pin the actual WSL/native execution context before any model attempts."""
     if sys.platform != 'linux':
         raise ValueError('Prepare/freeze the extension with its actual Linux/WSL generation interpreter; status remains portable')
@@ -127,27 +138,58 @@ def runtime_fingerprint(environment):
              and not any(Path(value).resolve().is_relative_to(parent) for parent in known)]
     if extra:
         raise ValueError('Unexpected external Python import paths; use the dedicated campaign environment')
-    native_environment = dict(os.environ, PYTHONPATH=str(packages)+os.pathsep+str(paths['repository']),
-                              PYTHONHASHSEED='0', PWD=str(paths['repository']))
+    from serverless.benchmark import native_isolation
+    from tempfile import TemporaryDirectory
+    cache = isolation['bytecodeCache']
+    cache_bytes = byte_tree(ROOT/cache['path'], include_bytecode=True) if cache else None
+    if cache and cache_bytes != {key: cache[key] for key in ('sha256', 'files', 'bytes')}:
+        raise ValueError('Derived native bytecode bytes changed')
     marker = '__SOILIE_NATIVE_RUNTIME__'
     expression = ('import bpy,json,sys;print('+repr(marker)+'+json.dumps('
                   '{"blenderVersion":bpy.app.version_string,"pythonVersion":sys.version}))')
-    output = subprocess.check_output([str(paths['blender']), '--background', '--factory-startup',
-        '--threads', '1', '--python-use-system-env', '--python-expr', expression],
-        cwd=paths['repository'], env=native_environment, text=True, timeout=120)
+    # Even the version probe stays inside the frozen security boundary. Native
+    # dependencies are never imported into the modern host interpreter.
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix='runtime-isolation-', dir=SCRATCH) as temporary:
+        workspace = Path(temporary)/'native'
+        result = native_isolation.execute_native(
+            [str(paths['blender']), '--background', '--factory-startup', '--threads', '1',
+             '--python-use-system-env', '--python-expr', expression],
+            environment, workspace, isolation, Path(temporary)/'isolation.json', timeout=120, capture=True)
+        if result.returncode:
+            raise ValueError('Isolated native Blender version probe failed: '+str(result.stdout))
+        output = result.stdout.decode()
     native = next((json.loads(line[len(marker):]) for line in output.splitlines() if line.startswith(marker)), None)
     if native is None:
         raise ValueError('Native Blender did not report its actual Python version')
-    return {'schemaVersion': 1, 'pythonVersion': sys.version,
+    native_sources = {}
+    result = {'schemaVersion': 1, 'pythonVersion': sys.version,
             'pythonExecutableSha256': digest(Path(sys.executable)),
             'pythonStdlib': byte_tree(stdlib),
             'pythonSitePackages': [byte_tree(path) for path in sites],
             'nativeBlenderSha256': digest(paths['blender']), 'nativeVersions': native,
-            'nativeBlenderDistribution': byte_tree(paths['blender'].parent),
-            'nativeSitePackages': byte_tree(packages), 'nativeDistributions': distributions,
+            'nativeBlenderDistribution': byte_tree(paths['blender'].parent, python_sources=native_sources, native_prefix='/native/blender'),
+            'nativeSourceDistribution': byte_tree(paths['repository'], python_sources=native_sources, native_prefix='/native/repository'),
+            'nativeIsolation': native_isolation.platform_fingerprint(isolation),
+            'nativeBytecodeCache': cache_bytes,
+            'nativeSitePackages': byte_tree(packages, python_sources=native_sources, native_prefix='/native/packages'), 'nativeDistributions': distributions,
+            'nativeThreadEnvironment': native_isolation.THREADS,
             'threadEnvironment': {name: os.environ.get(name) for name in (
                 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
                 'VECLIB_MAXIMUM_THREADS', 'NUMEXPR_NUM_THREADS')}}
+    if cache:
+        producer = json.loads((ROOT/cache['producerManifest']).read_bytes())
+        source_index = ROOT/cache['path']/'compiled-sources.json'
+        if (producer['modelCommit'] != COMMIT or producer['environment'] != environment
+                or producer['nativeBlenderSha256'] != result['nativeBlenderSha256']
+                or producer['pythonVersion'] != native['pythonVersion']
+                or digest(source_index) != producer['compiledSourceIndexSha256']):
+            raise ValueError('Derived cache producer does not match the actual frozen native runtime')
+        compiled_index = json.loads(source_index.read_bytes())
+        compiled = compiled_index['sources'] + compiled_index['skippedSources']
+        if any(native_sources.get(row['source']) != row['sourceSha256'] for row in compiled):
+            raise ValueError('Native Python sources changed after the shared bytecode cache was compiled')
+    return result
 
 
 def load_plan(root, verify_code=False):
@@ -160,6 +202,10 @@ def load_plan(root, verify_code=False):
             or plan.get('publicPrefix') != PUBLIC_PREFIX or plan.get('privatePrefix') != PRIVATE_PREFIX
             or plan.get('bucket') != BUCKET):
         raise ValueError('Unknown extension contract or archive destination')
+    from serverless.benchmark.native_isolation import validate_configuration
+    validate_configuration(plan.get('nativeIsolation'))
+    if not plan['nativeIsolation']['bytecodeCache']:
+        raise ValueError('A timed native extension requires its frozen derived bytecode cache')
     if (len({task['id'] for task in plan['tasks']}) != len(plan['tasks'])
             or len({task['seed'] for task in plan['tasks']}) != len(plan['tasks'])):
         raise ValueError('Extension tasks must have disjoint identities and seeds')
@@ -173,7 +219,7 @@ def load_plan(root, verify_code=False):
             raise ValueError('Unknown or unsafe extension task inventory')
     if verify_code and plan['implementationSha256'] != hashes():
         raise ValueError('Implementation changed after the extension was frozen')
-    if verify_code and plan.get('runtimeFingerprint') != runtime_fingerprint(plan['environment']):
+    if verify_code and plan.get('runtimeFingerprint') != runtime_fingerprint(plan['environment'], plan['nativeIsolation']):
         raise ValueError('Actual Blender/Python/dependency bytes changed after the extension was frozen')
     return plan
 
@@ -197,6 +243,10 @@ def prepare(args):
         if not path.is_relative_to(ROOT):
             raise ValueError('Use the project-owned pinned source/environment/tools so the plan is Windows/WSL portable')
         environment[name] = path.relative_to(ROOT).as_posix()
+    from serverless.benchmark.native_isolation import configuration
+    isolation = configuration(args.isolation_image, args.bytecode_cache_receipt)
+    if not isolation['bytecodeCache']:
+        raise ValueError('Prepare the shared untimed native bytecode cache before freezing a campaign')
     plan = {'schemaVersion': 1, 'campaignId': args.campaign_id, 'createdAt': stamp(),
             'model': 'infinigen', 'modelCommit': COMMIT, 'inventoryVersion': INVENTORY_VERSION,
             'condition': 'model-native-count-conditioned', 'attemptsPerCell': args.attempts_per_cell,
@@ -204,7 +254,8 @@ def prepare(args):
             'blenderThreads': args.blender_threads, 'bucket': BUCKET,
             'publicPrefix': PUBLIC_PREFIX, 'privatePrefix': PRIVATE_PREFIX,
             'environment': environment,
-            'runtimeFingerprint': runtime_fingerprint(environment),
+            'nativeIsolation': isolation,
+            'runtimeFingerprint': runtime_fingerprint(environment, isolation),
             'implementationSha256': hashes(),
             'generationStage': 'Native original coarse task: solving, procedural meshes and scene serialization; no image rendering',
             'sampling': 'One attempt per frozen task; failures are retained privately, never replaced by new seeds',
@@ -223,6 +274,7 @@ def commands(root, plan, task):
     if any(not Path(path).is_relative_to(ROOT) for path in env.values()):
         raise ValueError('Frozen native environment escaped the project')
     common = ['--repository', env['repository'], '--site-packages', env['site_packages'], '--blender', env['blender']]
+    common += ['--native-isolation-plan', str(owner(root)/'plan.json')]
     # The native runner adds 100 to living-room offsets. Freeze the actual
     # integer seed, not that implementation's command-line offset convention.
     offset = task['seed'] - (100 if task['roomType'] == 'living_room' else 0)
@@ -395,7 +447,7 @@ def private_archive(shard, plan, task, outcome):
     rows = []
     excluded = {'controller.json', 'private-evidence.json', 'private-evidence.tar.gz', 'private-evidence.tar.gz.tmp'}
     for path in sorted(shard.rglob('*')):
-        if path.is_symlink():
+        if path.is_symlink() or not path.resolve().is_relative_to(shard.resolve()):
             raise ValueError('Private evidence contains a symlink; retain locally for explicit recovery review')
         if not path.is_file() or path.name in excluded:
             continue
@@ -627,6 +679,10 @@ def main():
     setup.add_argument('--campaign-id', default='infinigen-extension-20261023')
     setup.add_argument('--timeout', type=int, default=3600)
     setup.add_argument('--blender-threads', type=int, choices=range(1, 9), default=1)
+    setup.add_argument('--isolation-image', required=True,
+                       help='Existing local isolation image tag/ID; frozen to its immutable sha256 image identity')
+    setup.add_argument('--bytecode-cache-receipt', type=Path, required=True,
+                       help='Untimed native-derived cache producer receipt; original native caches are never trusted')
     for name in ('prepare', 'dry-run', 'run', 'status', 'watch'):
         item = setup if name == 'prepare' else sub.add_parser(name)
         item.add_argument('--root', type=Path, default=DEFAULT_ROOT)

@@ -2,8 +2,9 @@
 // ambiguous transport failure: its maximum possible charge stays reserved.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, openSync, closeSync, unlinkSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, relative, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
 
 export const RATE = { input: 30 / 1e6, output: 60 / 1e6 };
 // GPT-4's full 8,192-token context is reserved at input rates, plus its
@@ -13,6 +14,9 @@ export const RESERVATION_USD = 8192 * RATE.input + 1024 * RATE.output;
 export const EXTENSION_VARIANT = 'inventory-extension-7-8-gpt4-v1';
 const AUTHOR_COMMIT = 'fc31954962553e5b65bf267a904a6930d50b1f5e';
 const AUTHOR_PROMPT_SHA256 = '8aab0891a1cf60aab64b184f04170a42c7cee2832f299643ecb88a7c38048c24';
+const ARCHIVE_CONFIGURATION = { schemaVersion: 1, bucket: 'soilie3d-data',
+  publicPrefix: 'files/outputs/2026-10-23/layoutgpt/', privatePrefix: 'private/new-benchmark-20261023/layoutgpt/',
+  parserSha256: '5e8ea10b8d0980da40fe311434a9475f6f605e51b2d5c3cab6e8f87c0f9b5e56' };
 const charge = row => row.actualUsd ?? row.reservedUsd;
 export function accounted(ledger) {
   return Object.values(ledger.entries).reduce((sum, row) => sum + charge(row) +
@@ -40,6 +44,43 @@ export const extensionDigest = value => sha(canonicalJson(value));
 const save = (path, value) => {
   const temp = path + '.new'; writeFileSync(temp, JSON.stringify(value, null, 2)); renameSync(temp, path);
 };
+const saveBytes = (path, body) => {
+  const temp = path + '.new'; writeFileSync(temp, body); renameSync(temp, path);
+};
+
+function claimExtensionAuthorization(folder, plan, planRaw) {
+  if (plan.perCell !== 30 || plan.budgetUsd !== 40 ||
+      plan.inventoryPolicy !== 'fresh-soilie-first-scheduled-local-v1' ||
+      plan.requests.some(row => row.task.inventoryOrigin !== 'fresh-soilie') ||
+      canonicalJson(plan.outputArchive) !== canonicalJson(ARCHIVE_CONFIGURATION)) {
+    throw new Error('This authorization is 120 fixed shared-inventory attempts under one US$40 ceiling');
+  }
+  const sourceRaw = readFileSync(join(folder, 'source-slots.json'));
+  const sources = JSON.parse(sourceRaw);
+  const slots = new Map(sources.tasks.map(row => [row.taskId, row]));
+  if (!/^[a-f0-9]{64}$/.test(plan.sourceSlotsSha256 || '') || sha(sourceRaw) !== plan.sourceSlotsSha256 ||
+      sources.policy !== plan.inventoryPolicy || sources.sourcePlatform !== 'local' ||
+      slots.size !== plan.requests.length || plan.requests.some(row =>
+        slots.get(row.id)?.soilieSceneId !== row.task.soilieSceneId ||
+        sources.soilieCampaignSha256 !== row.task.soilieCampaignSha256)) {
+    throw new Error('Frozen quality-blind shared source slots changed');
+  }
+  const directory = resolve(import.meta.dirname, '../../.codex/benchmark/replacement-baselines-20261023/layoutgpt-authorization');
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, 'binding.json');
+  const binding = { schemaVersion: 1, folder, planSha256: sha(planRaw), budgetUsd: 40, totalAttempts: 120 };
+  try {
+    const owner = openSync(path, 'wx');
+    try { writeFileSync(owner, JSON.stringify(binding)); } finally { closeSync(owner); }
+    return true;
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    if (canonicalJson(JSON.parse(readFileSync(path))) !== canonicalJson(binding)) {
+      throw new Error('The approved US$40 campaign is already bound elsewhere; never reset it with another folder');
+    }
+    return false;
+  }
+}
 
 export function validatePlan(plan, limit) {
   const bedroom = plan.variant === 'bedroom-original-prompt-timing';
@@ -161,7 +202,8 @@ export function workerCount(value = 3) {
   return value;
 }
 
-export async function run(folder, credentialFile, limit = null, retryCreditError = false, workers = 3, authorizedBudgetUsd = null) {
+export async function run(folder, credentialFile, limit = null, retryCreditError = false, workers = 3, authorizedBudgetUsd = null,
+                          archivePython = null, archiveProfile = 'darkest') {
   workerCount(workers);
   folder = resolve(folder);
   const raw = readFileSync(join(folder, 'requests.json'));
@@ -173,6 +215,33 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
   if (plan.variant === EXTENSION_VARIANT && authorizedBudgetUsd !== plan.budgetUsd) {
     throw new Error('Pass --authorized-budget-usd matching the separately approved extension cap');
   }
+  const extension = plan.variant === EXTENSION_VARIANT;
+  if (extension && (!archivePython || !plan.outputArchive || retryCreditError)) {
+    throw new Error('Extension requires verified incremental archival and exactly one attempt per frozen task');
+  }
+  if (extension) {
+    const scoped = relative(resolve(import.meta.dirname, '../../.codex'), folder);
+    if (isAbsolute(scoped) || scoped === '..' || scoped.startsWith('../') || scoped.startsWith('..\\')) {
+      throw new Error('Extension working evidence must remain inside this project .codex directory');
+    }
+  }
+  const storage = (command, id = null) => new Promise((accept, reject) => {
+    const args = ['-m', 'serverless.benchmark.layoutgpt_extension_store', command,
+      '--root', folder, '--profile', archiveProfile, '--node-path', process.execPath];
+    if (id !== null) args.push('--task-id', id);
+    // Do not block the event loop while another worker's paid HTTP response is
+    // in flight: unrelated S3 latency must not inflate its inference timer.
+    const child = spawn(archivePython, args, { cwd: resolve(import.meta.dirname, '../..'),
+      stdio: ['ignore', 'pipe', 'ignore'] });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk.toString(); });
+    child.on('error', () => reject(new Error('Private evidence process could not start; stop inference')));
+    child.on('close', code => {
+      if (code !== 0) reject(new Error('Private evidence archival failed; resume storage before more inference'));
+      else { if (output.trim()) console.log(output.trim()); accept(); }
+    });
+  });
+  const archive = id => storage('archive', id);
   let previousBatchUsd = 0;
   if (plan.previousBatch) {
     // Windows invokes this runner; the preparation step may use WSL paths.
@@ -192,17 +261,49 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
   const lock = openSync(lockPath, 'wx');
   writeFileSync(lock, JSON.stringify({ pid: process.pid }));
   try {
+    let newAuthorization = false;
+    if (extension) {
+      await storage('validate-runtime');
+      newAuthorization = claimExtensionAuthorization(folder, plan, raw);
+    }
     const ledgerPath = join(folder, 'inference-ledger.json');
+    if (extension && !newAuthorization && !existsSync(ledgerPath)) {
+      throw new Error('Approved campaign spending ledger is missing; never reset previously reserved charges');
+    }
     const ledger = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath)) : {
       schemaVersion: 1, planSha256: sha(raw), budgetUsd: plan.budgetUsd, previousBatchUsd, rate: RATE, entries: {},
     };
     if (ledger.planSha256 !== sha(raw) || ledger.budgetUsd !== plan.budgetUsd || (ledger.previousBatchUsd || 0) !== previousBatchUsd) throw new Error('Resume plan or budget changed');
+    if (extension) {
+      // Create the durable empty ledger before credentials or dispatch. Once
+      // approval is bound, its disappearance is a reconciliation error, never
+      // implicit permission to start a fresh spending balance.
+      if (!existsSync(ledgerPath)) save(ledgerPath, ledger);
+      // A crash after a durable reservation may already have incurred a
+      // charge. Never retry it; settle its conservative reservation and store
+      // whatever response bytes survived before dispatching anything else.
+      for (const [id, entry] of Object.entries(ledger.entries)) {
+        if (entry.status === 'reserved') {
+          entry.status = 'uncertain'; entry.errorCode = 'PROCESS_INTERRUPTED_AFTER_RESERVATION';
+          entry.finishedAt = new Date().toISOString();
+          const orphan = join(folder, 'responses', id + '.json');
+          if (existsSync(orphan) && !entry.responseSha256) {
+            entry.responseSha256 = sha(readFileSync(orphan));
+            entry.orphanProviderBodyRecovered = true;
+          }
+          save(ledgerPath, ledger);
+        }
+        await archive(id);
+      }
+    }
     // Credential material is used only in the authorization header. Neither
     // the path nor its contents is copied into publication or invocation logs.
-    const secret = process.env.OPENAI_API_KEY || (credentialFile
-      ? JSON.parse(readFileSync(credentialFile, 'utf8')).OpenAI?.api_key : null);
-    if (!secret) throw new Error('An OpenAI API key is required');
+    const secret = credentialFile ? JSON.parse(readFileSync(credentialFile, 'utf8')).OpenAI?.api_key
+      : process.env.OPENAI_API_KEY;
+    if (typeof secret !== 'string' || !secret.trim()) throw new Error('An OpenAI API key is required');
     const responses = join(folder, 'responses'); mkdirSync(responses, { recursive: true });
+    const wireRequests = join(folder, 'wire-requests');
+    if (extension) mkdirSync(wireRequests, { recursive: true });
     let cursor = 0, stopped = false;
     const jobs = plan.requests.slice(0, limit);
     async function worker() {
@@ -210,11 +311,21 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
         const row = jobs[cursor++];
         const previous = ledger.entries[row.id];
         if (previous && !canRetryCreditError(previous, retryCreditError)) continue;
+        if (extension && (existsSync(join(wireRequests, row.id + '.json')) ||
+            existsSync(join(responses, row.id + '.json')) || existsSync(join(folder, 'archive', row.id, 'remote.json')))) {
+          stopped = true;
+          throw new Error('Unledgered request evidence exists; reconcile it without another paid call');
+        }
         // Only an explicit operator flag can retry a known billing rejection.
         // Its receipt and conservative spending reservation remain in history;
         // completed or ambiguous requests are NEVER automatically repeated.
         if (!canReserve(ledger)) { stopped = true; break; }
+        const wire = JSON.stringify(row.request);
         const entry = { status: 'reserved', reservedUsd: RESERVATION_USD, requestSha256: row.requestSha256 };
+        if (extension) {
+          saveBytes(join(wireRequests, row.id + '.json'), wire);
+          entry.wireRequestSha256 = sha(wire); entry.dispatchedAt = new Date().toISOString();
+        }
         if (previous) {
           const { previousAttempts = [], ...attempt } = previous;
           entry.previousAttempts = [...previousAttempts, attempt];
@@ -225,12 +336,30 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
         try {
           const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST', headers: { Authorization: 'Bearer ' + secret, 'Content-Type': 'application/json' },
-            body: JSON.stringify(row.request), signal: AbortSignal.timeout(180000),
+            body: wire, signal: AbortSignal.timeout(180000),
           });
-          const payload = await response.json();
-          entry.wallSeconds = (performance.now() - started) / 1000;
           entry.httpStatus = response.status;
           entry.providerRequestId = response.headers.get('x-request-id');
+          // Preserve the provider body bytes, rather than only a reserialized
+          // interpretation. Authorization headers are never evidence inputs.
+          let responseBytes;
+          let payload;
+          if (extension) {
+            responseBytes = Buffer.from(await response.arrayBuffer());
+            if (responseBytes.includes(Buffer.from(secret))) {
+              // A provider should never echo a credential. Do not copy it to
+              // evidence if it does; keep a disclosed redaction and raw hash.
+              entry.originalProviderBodySha256 = sha(responseBytes);
+              responseBytes = Buffer.from(responseBytes.toString('utf8').replaceAll(secret, '[redacted]'));
+              entry.providerBodyRedacted = true;
+            }
+            saveBytes(join(responses, row.id + '.json'), responseBytes);
+            entry.responseSha256 = sha(responseBytes);
+            payload = JSON.parse(responseBytes.toString('utf8'));
+          } else {
+            payload = await response.json();
+          }
+          entry.wallSeconds = (performance.now() - started) / 1000;
           if (!response.ok) {
             // Keep a conservative reservation on every error; do not assume
             // a malformed/missing receipt proves zero billing.
@@ -240,7 +369,7 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
             entry.errorMessage = String(payload.error?.message || '').replaceAll(secret, '[redacted]').slice(0, 700);
             if ([401, 403, 429].includes(response.status)) stopped = true;
           } else {
-            save(join(responses, row.id + '.json'), payload);
+            if (!extension) save(join(responses, row.id + '.json'), payload);
             entry.responseSha256 = sha(readFileSync(join(responses, row.id + '.json')));
             entry.usage = payload.usage; entry.model = payload.model;
             if (plan.variant === EXTENSION_VARIANT && payload.model !== plan.expectedResponseModel) {
@@ -256,12 +385,22 @@ export async function run(folder, credentialFile, limit = null, retryCreditError
           entry.status = 'uncertain'; entry.errorCode = 'NO_VERIFIABLE_COMPLETION';
           entry.wallSeconds = (performance.now() - started) / 1000;
         }
+        if (extension) entry.finishedAt = new Date().toISOString();
         save(ledgerPath, ledger);
+        if (extension) {
+          try { await archive(row.id); }
+          catch (error) { stopped = true; throw error; }
+        }
         console.log(JSON.stringify({ id: row.id, status: entry.status, seconds: entry.wallSeconds,
                                     accountedUsd: accounted(ledger), budgetUsd: ledger.budgetUsd }));
       }
     }
-    await Promise.all(Array.from({ length: workers }, worker));
+    // Wait for every already-dispatched request before releasing the owner
+    // lock, even when one worker's upload fails. Otherwise a resume could race
+    // a still-live paid request from the previous controller.
+    const results = await Promise.allSettled(Array.from({ length: workers }, worker));
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed) throw failed.reason;
     console.log(JSON.stringify({ attempted: Object.keys(ledger.entries).length,
       complete: Object.values(ledger.entries).filter(row => row.status === 'complete').length,
       accountedUsd: accounted(ledger), budgetUsd: ledger.budgetUsd }));
@@ -273,9 +412,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const retryCreditError = args.includes('--retry-credit-exhausted');
   const concurrency = args.find(arg => arg.startsWith('--workers='));
   const authorization = args.find(arg => arg.startsWith('--authorized-budget-usd='));
+  const archivePythonArg = args.find(arg => arg.startsWith('--archive-python='));
+  const archiveProfileArg = args.find(arg => arg.startsWith('--archive-profile='));
   const workers = workerCount(concurrency ? Number(concurrency.slice('--workers='.length)) : 3);
   const [folder, credentialFile, limit] = args.filter(arg => arg !== '--retry-credit-exhausted' &&
-    arg !== '--preflight' && arg !== concurrency && arg !== authorization);
+    arg !== '--preflight' && arg !== concurrency && arg !== authorization && arg !== archivePythonArg && arg !== archiveProfileArg);
   if (args.includes('--preflight')) {
     const plan = JSON.parse(readFileSync(join(resolve(folder), 'requests.json')));
     validatePlan(plan, limit === undefined ? plan.requests.length : Number(limit));
@@ -284,6 +425,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       inferenceStarted: false }));
   } else {
     await run(folder, credentialFile, limit === undefined ? null : Number(limit), retryCreditError, workers,
-      authorization ? Number(authorization.slice('--authorized-budget-usd='.length)) : null);
+      authorization ? Number(authorization.slice('--authorized-budget-usd='.length)) : null,
+      archivePythonArg ? archivePythonArg.slice('--archive-python='.length) : null,
+      archiveProfileArg ? archiveProfileArg.slice('--archive-profile='.length) : 'darkest');
   }
 }

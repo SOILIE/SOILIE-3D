@@ -6,6 +6,115 @@ is staged, byte-checked, by the existing runtime compiler.
 
 ## Evidence boundaries
 
+### Replacement seven/eight-object LayoutGPT extension
+
+The replacement extension is a new, fixed 120-attempt design: 30 requests per
+room type and requested count (seven/eight), under one separately authorized
+US$40 ceiling. It retains the pinned authors' GPT-4 CSS prompt, retrieval and
+parser. It does not reuse retired SOILIE rooms or replace failed requests with
+better-looking seeds. The first 30 **scheduled local** authoritative SOILIE
+requests in each cell supply the shared inventories; freeze those source IDs
+with `layoutgpt_inventory_extension source-slots` before inspecting outcomes.
+An unsupported inventory requires an explicit methods decision, not skipping
+that source seed. Native category mappings and any permitted single-instance
+substitution remain disclosed in the private task manifest.
+
+Prepare with `--inventory-policy fresh-soilie-first-scheduled-local-v1` on the
+`design` command, and pass the frozen `--source-slots` and exact
+`--source-campaign` to `prepare`. The source gate reads the selected requests'
+complete original worker artifacts locally or through verified private S3
+receipts, checks their exact SHA-256, request/runtime and retained failed
+attempts, and derives inventories from their actual original selections.
+Production duplicate/window-assembly helpers separately verify final object
+identities: added companion windows are normalized final objects, not extra
+requested instances. Original selected, normalized final and furniture-only
+inventories are recorded separately in a compact binding receipt. Its exact
+hash/task bindings are checked again before paid dispatch. Preparation
+does not authorize inference. Once the exact source inventories and publication
+permissions have passed their gates, the single-owner controller is:
+
+```powershell
+python -m serverless.benchmark.layoutgpt_extension_store run `
+  --root .codex/benchmark/replacement-baselines-20261023/layoutgpt `
+  --credential-file <existing-private-credential-file> `
+  --authorized-budget-usd 40 --workers 3
+```
+
+Use one consistent host: the pinned WSL campaign Python environment and the
+task-local Linux Node executable supplied with `--node-path` during preparation.
+The prepared plan pins that exact executable, Python, dependency versions and
+normalization/storage implementation hashes; run and archival fail on drift.
+Use working AWS profile `darkest`. Keep the credential in its existing file
+(referenced through `/mnt/c/...` from WSL); never paste it into
+commands or copy it into campaign evidence. The controller binds the approval
+to one plan/root so creating another folder cannot reset its cap. On restart,
+reserved or ambiguous calls retain their maximum possible charge and are never
+automatically repeated. A dead controller lock is recovered only after a
+non-mutating process-liveness check; a live/reused PID fails closed.
+
+The authors' parser extracts CSS lines and leaves unmatched fences/comment text
+as private diagnostics. No geometry is repaired. Each terminal attempt's exact
+dispatched JSON and raw provider body are uploaded
+privately under `private/new-benchmark-20261023/layoutgpt/`, then content-verified
+before local payload eviction. A provider body that exceptionally echoes the
+credential is redacted and explicitly marked rather than copied. Failed and
+uncertain attempts remain private evidence. Only finite, typed geometry and
+neutral SVG diagrams that satisfy the exact requested inventory enter
+`files/outputs/2026-10-23/layoutgpt/`; these are labelled **comparisons pending**,
+not final comparison scores, AI review, or mesh realization. Upload failure
+stops new dispatch, drains in-flight calls and resumes storage without paid
+reinference. The importer can read evicted responses directly from verified
+private archives without restoring local scene files.
+
+For an actually prepared/running extension, its read-only colorful monitor is:
+
+```powershell
+python -m serverless.benchmark.layoutgpt_extension_store watch `
+  --root .codex/benchmark/replacement-baselines-20261023/layoutgpt --color always
+```
+
+The four bars retain failed/uncertain counts and show verified-archive receipts
+separately from completed API responses. This command does not create or start
+a campaign. No existing benchmark result becomes authoritative through this
+tooling alone.
+
+### Isolated seven/eight-object Infinigen extension
+
+`baseline_extension_run.py` freezes a separate 120-attempt model-native design:
+30 attempts per room type and count, with immutable disjoint seeds. Its v2
+inventory does not relabel the frozen v1 three-to-six-object rooms or assert
+identical categories across models. Keep every failed or interrupted attempt;
+there is no retry-until-success replenishment.
+
+The original Blender 3.6.0 / embedded Python 3.10 / Infinigen package bytes stay
+unchanged. Their legacy Pillow dependency remains
+[unpatched](https://github.com/python-pillow/Pillow/security/advisories/GHSA-8g5g-8vmr-9782); network and
+filesystem isolation mitigate exposure rather than fix the dependency. The
+small `infinigen_isolation.Dockerfile` supplies OS libraries and supervision,
+not a replacement native model environment. Freeze its actual immutable image
+ID, runtime bytes and resource policy. Only native Blender enters the
+credential-free, network-disabled container: source/runtime inputs are read-only
+and only the individual scene scratch directory is writable. A patched modern
+host handles geometry export, private archival and allowlisted public geometry.
+
+Before freezing the plan, use `native_isolation prepare-cache` to compile a
+shared checked-hash bytecode cache with the original embedded interpreter.
+Pass its producer receipt to `baseline_extension_run prepare` using
+`--bytecode-cache-receipt`. The plan binds the compiled bytes to their original
+sources and interpreter; native imports use this cache read-only and ignore
+pre-existing unpinned caches. Preparation is untimed shared setup, not a room
+solve. Per-room measurements still include normal Docker startup/shutdown;
+report this isolation condition separately from historical host timings and
+do not assume its overhead is zero.
+
+Do not overlap these native solves with SOILIE local timing jobs. The controller
+uses the shared local-timing lock and requires an explicit scheduling
+confirmation. For an actual prepared run, monitor its four cells with
+`python -m serverless.benchmark.baseline_extension_run watch --color always`;
+this read-only command does not start generation. Native scenes, logs and
+operational receipts remain private; upload verification precedes local scene
+eviction, and public room geometry remains labelled comparisons pending.
+
 ### Balanced room-type campaign
 
 `balanced_campaign.py` freezes the first 5,000 completed bedrooms in source

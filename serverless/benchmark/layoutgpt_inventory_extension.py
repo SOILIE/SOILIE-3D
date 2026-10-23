@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 from collections import Counter
+import copy
 import hashlib
 import json
 import math
@@ -44,7 +45,8 @@ def digest(value):
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
-def freeze_design(output, campaign_id, per_cell, budget_usd, seed, retained_campaign_sha256):
+def freeze_design(output, campaign_id, per_cell, budget_usd, seed, retained_campaign_sha256,
+                  inventory_policy='explicit-model-native-or-fresh-soilie-v1'):
     """Pin attempt counts before generation; no quality-based replenishment."""
     output = scratch_path(output)
     if (not re.fullmatch(r'[a-z][a-z0-9-]{2,39}', campaign_id) or
@@ -52,7 +54,8 @@ def freeze_design(output, campaign_id, per_cell, budget_usd, seed, retained_camp
             type(seed) is not int or seed < 0 or seed + 4 * per_cell > 2**53 - 1 or
             not isinstance(budget_usd, (int, float)) or not math.isfinite(budget_usd) or
             budget_usd < 4 * per_cell * RESERVATION_USD or
-            not re.fullmatch(r'[a-f0-9]{64}', retained_campaign_sha256)):
+            not re.fullmatch(r'[a-f0-9]{64}', retained_campaign_sha256) or
+            inventory_policy not in ('explicit-model-native-or-fresh-soilie-v1', 'fresh-soilie-first-scheduled-local-v1')):
         raise ValueError('Invalid frozen allocation, seed range, or explicit budget')
     tasks = []
     for cell_index, (room, count) in enumerate(CELLS):
@@ -65,7 +68,7 @@ def freeze_design(output, campaign_id, per_cell, budget_usd, seed, retained_camp
               'retainedCampaignSha256': retained_campaign_sha256,
               'qualitySelection': False, 'attemptPolicy': 'one-request-per-task; no ambiguous automatic retry',
               'publicOutputPrefix': 'files/outputs/2026-10-23/',
-              'inventoryPolicy': 'explicit model-native mapping; do not assert identical cross-model inventories',
+              'inventoryPolicy': inventory_policy,
               'targetReusePolicy': 'held-out dimensions may repeat across campaigns; unique within this extension',
               'seedMeaning': 'task identity and held-out dimension selection, not a provider RNG guarantee',
               'tasks': tasks}
@@ -103,6 +106,8 @@ def validate_tasks(design, tasks):
         if dict(neutral) != task['inventory']:
             raise ValueError('Native categories do not realize the declared neutral inventory')
         origin = task.get('inventoryOrigin')
+        if design['inventoryPolicy'] == 'fresh-soilie-first-scheduled-local-v1' and origin != 'fresh-soilie':
+            raise ValueError('This design requires the first scheduled local fresh SOILIE inventories, not native replacements')
         allowed = {*slot, 'inventory', 'nativeInventory', 'inventoryOrigin'}
         if origin == 'fresh-soilie':
             allowed.update(('soilieSceneId', 'soilieSceneSha256', 'soilieCampaignSha256',
@@ -137,6 +142,195 @@ def validate_tasks(design, tasks):
         ordered.append(task)
     order = {row['id']: index for index, row in enumerate(design['tasks'])}
     return sorted(ordered, key=lambda row: order[row['id']])
+
+
+def source_slots(design_path, campaign, output):
+    """Freeze source request IDs before inspecting any generated room quality."""
+    from serverless.cloud_benchmark.authoritative import load_plan
+    design_raw = Path(design_path).read_bytes()
+    design = json.loads(design_raw)
+    if design.get('inventoryPolicy') != 'fresh-soilie-first-scheduled-local-v1':
+        raise ValueError('Source scheduling requires the shared fresh-SOILIE policy')
+    plan = load_plan(Path(campaign), verify_runtime=False)
+    if plan['phase'] != 'authoritative' or plan['maxObjectCount'] != 8:
+        raise ValueError('Bind only the new authoritative three-to-eight campaign')
+    rows = []
+    for room, count in CELLS:
+        scheduled = [row for row in plan['requests'] if row['platform'] == 'local'
+                     and row['request']['roomType'] == room and row['request']['objectCount'] == count]
+        targets = [row for row in design['tasks'] if row['roomType'] == room and row['requestedObjects'] == count]
+        if len(scheduled) < len(targets):
+            raise ValueError('Source plan lacks the fixed first scheduled requests')
+        for task, request in zip(targets, scheduled):
+            rows.append({'taskId': task['id'], 'sourceRequestId': request['id'],
+                         'sourceRequest': request['request'], 'soilieSceneId': 'soilie-' + request['id']})
+    document = {'schemaVersion': 1, 'policy': design['inventoryPolicy'],
+                'designSha256': hashlib.sha256(design_raw).hexdigest(),
+                'soilieCampaignSha256': plan['planSha256'], 'sourcePlatform': 'local',
+                'failurePolicy': 'Keep these source seeds; never skip failed or unsupported inventories',
+                'tasks': rows}
+    output = scratch_path(output)
+    if output.exists():
+        if json.loads(output.read_bytes()) != document:
+            raise ValueError('Frozen source request slots changed')
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        write_json(output, document)
+    return document
+
+
+def _source_render_normalizer(runtime):
+    """Extract only the frozen renderer's pure input-normalization function."""
+    path = SCRATCH_ROOT.parent / 'modules/render.py'
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != runtime['files']['modules/render.py']:
+        raise ValueError('Source renderer normalization differs from the frozen SOILIE runtime')
+    tree = ast.parse(raw)
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'load_variables']
+    assignments = [node for node in tree.body if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == 'SYNONYMS' for target in node.targets)]
+    if len(functions) != 1 or len(assignments) != 1:
+        raise ValueError('Expected one pure source normalizer and literal synonym assignment')
+    function, assignment = functions[0], assignments[0]
+    args = function.args
+    if (function.decorator_list or function.returns is not None or args.posonlyargs or args.kwonlyargs or args.defaults
+            or args.vararg or args.kwarg or [value.arg for value in args.args] != ['inputs']
+            or args.args[0].annotation is not None
+            or len(function.body) != 5
+            or [type(node) for node in function.body] != [ast.Assign] * 4 + [ast.Return]
+            or len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Name)):
+        raise ValueError('Unexpected source normalization shape; review rather than guessing semantics')
+    aliases = ast.literal_eval(assignment.value)
+    if not isinstance(aliases, dict) or any(not isinstance(key, str) or not isinstance(value, str)
+                                            for key, value in aliases.items()):
+        raise ValueError('Source synonyms must remain a literal string mapping')
+    scope = {'copy': copy}
+    # No Blender import, unrelated renderer statement or top-level side effect
+    # is executed. Both compiled nodes come from the exact pinned human source.
+    exec(compile(ast.Module(body=[assignment, function], type_ignores=[]), str(path), 'exec'), scope)
+    return scope['load_variables']
+
+
+def verify_source_artifacts(design_path, slots_path, tasks, tasks_sha, campaign):
+    """Bind inventories to exact production artifacts, never caller assertions."""
+    from serverless.benchmark.geometry import ARCHITECTURE, canonical_label, furniture
+    from serverless.benchmark.review_annotations import presentation_label
+    from serverless.cloud_benchmark.authoritative import load_plan, validate_artifact, verify_attempt_evidence
+
+    campaign = scratch_path(campaign)
+    slots = source_slots(design_path, campaign, slots_path)
+    plan = load_plan(campaign, verify_runtime=False)
+    runtime = plan['configuration']['runtimeSnapshot']
+    core = SCRATCH_ROOT.parent / 'modules/prepare_data.py'
+    if hashlib.sha256(core.read_bytes()).hexdigest() != runtime['files']['modules/prepare_data.py']:
+        raise ValueError('Source instance-normalization helpers differ from the frozen SOILIE runtime')
+    from modules import prepare_data
+    normalize_inputs = _source_render_normalizer(runtime)
+    ledger_raw = (campaign / 'local-ledger.json').read_bytes()
+    ledger = json.loads(ledger_raw)
+    if ledger['planSha256'] != plan['planSha256']:
+        raise ValueError('Source attempt ledger belongs to another campaign')
+    allocated = {row['id']: row for row in plan['requests'] if row['platform'] == 'local'}
+    bindings = []
+    for task, slot in zip(tasks, slots['tasks']):
+        expected = allocated[slot['sourceRequestId']]
+        attempts = [row for row in ledger['attempts'] if row['requestId'] == slot['sourceRequestId']]
+        complete = [row for row in attempts if row['status'] == 'complete']
+        if (len(complete) != 1 or any(row['status'] not in ('complete', 'failed') for row in attempts)
+                or sorted(row['attempt'] for row in attempts) != list(range(1, len(attempts) + 1))):
+            raise ValueError('Every fixed source request needs exactly one complete attempt and all failed attempts retained')
+        originals = {}
+        for attempt in attempts:
+            if (attempt.get('planSha256') != plan['planSha256'] or attempt['request'] != expected['request']):
+                raise ValueError('Source attempt differs from its fixed local request')
+            for name in ('artifact', 'receipt', 'log', 'invocationIdentity'):
+                if attempt.get(name) and not (campaign / attempt[name]).resolve().is_relative_to(campaign):
+                    raise ValueError('Source execution evidence escaped its campaign')
+            # Includes exact original S3-backed bytes, execution-log validation
+            # and declared receipt/log hashes, without restoring an evicted file.
+            artifact = verify_attempt_evidence(campaign, attempt, plan)
+            if artifact is None:
+                # finish_local can record a failed startup/worker exit before
+                # any terminal JSON exists. Preserve this real failure with
+                # its exact nonempty controller log, not an invented artifact.
+                if (attempt['status'] != 'failed' or 'artifact' in attempt or 'sha256' in attempt
+                        or not re.fullmatch(r'Worker exited -?\d+ without terminal evidence', attempt.get('error', ''))
+                        or not re.fullmatch('[a-f0-9]{64}', attempt.get('logSha256', ''))
+                        or not attempt.get('log') or (campaign / attempt['log']).stat().st_size == 0):
+                    raise ValueError('Missing source terminal evidence is not a verifiable retained worker failure')
+                originals[attempt['attempt']] = None
+                continue
+            if validate_artifact(artifact, expected, plan)['status'] != attempt['status']:
+                raise ValueError('Source terminal artifact or status differs from the ledger')
+            originals[attempt['attempt']] = artifact
+        attempt = complete[0]
+        artifact = originals[attempt['attempt']]
+        if (task['soilieSceneSha256'] != attempt['sha256']
+                or task['soilieCampaignSha256'] != plan['planSha256']
+                or task['soilieSceneId'] != slot['soilieSceneId']):
+            raise ValueError('Declared source scene SHA, campaign or selected request changed')
+        selection = artifact['selection']
+        if (not isinstance(selection, list) or any(not isinstance(label, str) for label in selection)
+                or len(selection) != task['requestedObjects']):
+            raise ValueError('Source primary selected instance count differs from the task')
+        inventory = dict(sorted(Counter(presentation_label(canonical_label(label)) for label in selection).items()))
+        if inventory != task['sourceInventory']:
+            raise ValueError('Declared source inventory differs from the exact SOILIE selection bytes')
+        # Reuse the human production helpers, including additive companion
+        # windows for coverings. These dummy values are never scene geometry.
+        primary = prepare_data.suffix_duplicates(selection)
+        coordinates = {name: [0., 0., 0.] for name in primary}
+        sizes = {name: [1., 0] for name in primary}
+        normalized, _ = prepare_data.ensure_window_assemblies(coordinates, sizes)
+        _original, normalized, _parameters = normalize_inputs(normalized)
+        expected_final = {name: canonical_label(name) for name in normalized}
+        final = artifact['stages']['final']
+        objects = final['objects']
+        actual_final = {row['id']: canonical_label(row['label']) for row in objects}
+        if len(actual_final) != len(objects) or actual_final != expected_final:
+            raise ValueError('Final source identities/labels differ from production instance/window normalization')
+        for row in objects:
+            if row['kind'] != ('architecture' if canonical_label(row['label']) in ARCHITECTURE else 'furniture'):
+                raise ValueError('Final source kind differs from the production label classification')
+        bindings.append({'taskId': task['id'], 'taskSha256': digest(task),
+            'sourceRequestId': slot['sourceRequestId'], 'soilieSceneId': task['soilieSceneId'],
+            'sourceArtifactSha256': attempt['sha256'], 'sourceSelectedCount': len(selection),
+            'sourceInventory': inventory,
+            'normalizedFinalInventory': dict(sorted(Counter(presentation_label(row['label']) for row in objects).items())),
+            'furnitureInventory': dict(sorted(Counter(presentation_label(row['label']) for row in furniture(final)).items())),
+            'attempts': [{**{key: row[key] for key in ('attempt', 'status')},
+                          **{key: row[key] for key in ('error', 'logSha256', 'receiptSha256', 'invocationIdentitySha256') if key in row},
+                          **({'artifactSha256': row['sha256']} if row.get('sha256') else {})} for row in attempts]})
+    return {'schemaVersion': 1, 'policy': slots['policy'], 'sourcePlatform': 'local',
+            'sourcePlanSha256': plan['planSha256'], 'sourceRuntimeSha256': digest(runtime),
+            'sourceProvenanceSha256': runtime['provenanceSha256'],
+            'sourceLedgerSha256': hashlib.sha256(ledger_raw).hexdigest(),
+            'taskManifestSha256': tasks_sha, 'sourceSlotsSha256': hashlib.sha256(Path(slots_path).read_bytes()).hexdigest(),
+            'countDefinition': 'Original requested selection counts seven/eight; additive companion windows are normalized final objects, not requested instances',
+            'tasks': bindings}
+
+
+def validate_source_binding_receipt(root, plan):
+    """Check the exact prepared byte-bound receipt before paid dispatch."""
+    raw = (Path(root) / 'source-binding.json').read_bytes()
+    receipt = json.loads(raw)
+    if (hashlib.sha256(raw).hexdigest() != plan.get('sourceBindingSha256')
+            or receipt.get('schemaVersion') != 1 or receipt.get('policy') != plan['inventoryPolicy']
+            or receipt.get('sourcePlatform') != 'local'
+            or receipt.get('taskManifestSha256') != plan['taskManifestSha256']
+            or receipt.get('sourceSlotsSha256') != plan['sourceSlotsSha256']
+            or len(receipt['tasks']) != len(plan['requests'])):
+        raise ValueError('Source artifact binding receipt changed')
+    for request, binding in zip(plan['requests'], receipt['tasks']):
+        task = request['task']
+        if (binding['taskId'] != task['id'] or binding['taskSha256'] != digest(task)
+                or binding['sourceArtifactSha256'] != task['soilieSceneSha256']
+                or binding['soilieSceneId'] != task['soilieSceneId']
+                or receipt['sourcePlanSha256'] != task['soilieCampaignSha256']
+                or binding['sourceInventory'] != task['sourceInventory']
+                or binding['sourceSelectedCount'] != task['requestedObjects']):
+            raise ValueError('Prepared task differs from its verified original source artifact')
+    return receipt
 
 
 def author_scope(source, room):
@@ -208,15 +402,15 @@ def build_requests(tasks, manifest, directory, source, room_type):
     return requests
 
 
-def prepare(design_path, tasks_path, source, output):
+def prepare(design_path, tasks_path, source, output, source_slots_path=None, node_path=None, source_campaign=None):
     from serverless.benchmark.run_batch import run_lock
 
     output = scratch_path(output)
     with run_lock(output):
-        return _prepare(design_path, tasks_path, source, output)
+        return _prepare(design_path, tasks_path, source, output, source_slots_path, node_path, source_campaign)
 
 
-def _prepare(design_path, tasks_path, source, output):
+def _prepare(design_path, tasks_path, source, output, source_slots_path=None, node_path=None, source_campaign=None):
     from serverless.benchmark.layoutgpt_controlled import hydrate
     import os
 
@@ -226,10 +420,29 @@ def _prepare(design_path, tasks_path, source, output):
     if design.get('schema') != 'soilie.layoutgpt-inventory-extension/v1':
         raise ValueError('An immutable seven/eight extension design is required')
     freeze_design(design_path, design['campaignId'], design['perCell'], design['budgetUsd'],
-                  design['selectionSeed'], design['retainedCampaignSha256'])
+                  design['selectionSeed'], design['retainedCampaignSha256'], design['inventoryPolicy'])
     if task_document.get('designSha256') != hashlib.sha256(design_raw).hexdigest():
         raise ValueError('Bound inventories refer to a different frozen design')
     tasks = validate_tasks(design, task_document['tasks'])
+    source_slot_sha = None
+    source_binding = None
+    if design['inventoryPolicy'] == 'fresh-soilie-first-scheduled-local-v1':
+        if source_slots_path is None or source_campaign is None:
+            raise ValueError('Shared inventories require source-slots and the exact source-campaign evidence')
+        source_raw = Path(source_slots_path).read_bytes()
+        source_slot_sha = hashlib.sha256(source_raw).hexdigest()
+        slots = json.loads(source_raw)
+        if (slots.get('policy') != design['inventoryPolicy'] or slots.get('sourcePlatform') != 'local'
+                or slots.get('designSha256') != hashlib.sha256(design_raw).hexdigest()
+                or task_document.get('sourceSlotsSha256') != source_slot_sha
+                or len(slots['tasks']) != len(tasks)):
+            raise ValueError('Source request schedule differs from the frozen shared-inventory design')
+        for task, slot in zip(tasks, slots['tasks']):
+            if (task['id'] != slot['taskId'] or task['soilieSceneId'] != slot['soilieSceneId']
+                    or task['soilieCampaignSha256'] != slots['soilieCampaignSha256']):
+                raise ValueError('Do not skip failed/unsupported source seeds or substitute platform duplicates')
+        source_binding = verify_source_artifacts(design_path, source_slots_path, tasks,
+                                                hashlib.sha256(tasks_raw).hexdigest(), source_campaign)
     if (output / 'requests.json').exists():
         raise ValueError('Do not overwrite a prepared inference plan')
     os.environ['TIKTOKEN_CACHE_DIR'] = str((output / 'tokenizer-cache').resolve())
@@ -242,6 +455,8 @@ def _prepare(design_path, tasks_path, source, output):
                            room='livingroom' if room == 'living_room' else room)
         requests.extend(build_requests(selected, manifest, directory / 'data', source, room))
         manifests[room] = hashlib.sha256((directory / 'data-manifest.json').read_bytes()).hexdigest()
+    from serverless.benchmark.layoutgpt_extension_store import configuration, runtime_snapshot
+    snapshot = runtime_snapshot(node_path)
     plan = {'schemaVersion': 2, 'variant': VARIANT, 'campaignId': design['campaignId'],
             'sourceCommit': AUTHOR_COMMIT, 'authorPromptSha256': AUTHOR_PROMPT_SHA256,
             'expectedResponseModel': 'gpt-4-0613',
@@ -250,12 +465,21 @@ def _prepare(design_path, tasks_path, source, output):
             'retainedCampaignSha256': design['retainedCampaignSha256'],
             'taskManifestSha256': hashlib.sha256(tasks_raw).hexdigest(), 'dataManifestSha256': manifests,
             'publicOutputPrefix': design['publicOutputPrefix'], 'requests': requests,
+            'outputArchive': configuration(), 'inventoryPolicy': design['inventoryPolicy'],
+            'sourceSlotsSha256': source_slot_sha,
+            'sourceBindingSha256': hashlib.sha256((canonical(source_binding) + '\n').encode()).hexdigest()
+                                  if source_binding is not None else None,
+            'runtimeSnapshot': snapshot, 'runtimeSnapshotSha256': digest(snapshot),
             'methods': ('New seven/eight-object inventory extension; original GPT-4, authors CSS prompt, '
                         'K=8 bedroom / K=4 living-room retrieval, training examples and held-out room dimensions. '
                         'Only the original explicit inventory sentence is added. Equal fixed attempts per room/count; '
                         'no quality-based replenishment. Model-native category mappings and inventory origins are '
-                        'recorded per task; identical cross-model inventories are not assumed. '
+                        'recorded per task; shared inventories use the first scheduled local source requests '
+                        'with no failed/unsupported-seed substitution; native mappings remain disclosed. '
                         'Retain all parse/inventory failures and uncertain charges. This is not mesh realization.')}
+    if source_slot_sha is not None:
+        (output / 'source-slots.json').write_bytes(source_raw)
+        (output / 'source-binding.json').write_bytes((canonical(source_binding) + '\n').encode())
     write_json(output / 'requests.json', plan)
     return {'prepared': len(requests), 'budgetUsd': design['budgetUsd'],
             'maximumReservedUsd': len(requests) * RESERVATION_USD, 'inferenceStarted': False}
@@ -271,17 +495,30 @@ def main():
     design.add_argument('--budget-usd', type=float, required=True)
     design.add_argument('--seed', type=int, required=True)
     design.add_argument('--retained-campaign-sha256', required=True)
+    design.add_argument('--inventory-policy', default='explicit-model-native-or-fresh-soilie-v1',
+                        choices=('explicit-model-native-or-fresh-soilie-v1', 'fresh-soilie-first-scheduled-local-v1'))
     preparation = commands.add_parser('prepare', help='Bind explicit inventories and hydrate authors metadata; no inference')
     for name in ('design', 'tasks', 'source', 'output'):
         preparation.add_argument('--' + name, type=Path, required=True)
+    preparation.add_argument('--source-slots', type=Path)
+    preparation.add_argument('--node-path', type=Path)
+    preparation.add_argument('--source-campaign', type=Path)
+    scheduling = commands.add_parser('source-slots', help='Freeze the first scheduled local source seeds, without quality filtering')
+    for name in ('design', 'campaign', 'output'):
+        scheduling.add_argument('--' + name, type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'design':
         result = freeze_design(args.output, args.campaign_id, args.per_cell, args.budget_usd,
-                               args.seed, args.retained_campaign_sha256)
+                               args.seed, args.retained_campaign_sha256, args.inventory_policy)
         print(json.dumps({'frozenTasks': len(result['tasks']), 'budgetUsd': result['budgetUsd'],
                           'inferenceStarted': False}))
+    elif args.command == 'source-slots':
+        result = source_slots(args.design, args.campaign, args.output)
+        print(json.dumps({'sourceSlots': len(result['tasks']), 'sourcePlatform': result['sourcePlatform'],
+                          'inferenceStarted': False}))
     else:
-        print(json.dumps(prepare(args.design, args.tasks, args.source, args.output)))
+        print(json.dumps(prepare(args.design, args.tasks, args.source, args.output, args.source_slots,
+                                 args.node_path, args.source_campaign)))
 
 
 if __name__ == '__main__':

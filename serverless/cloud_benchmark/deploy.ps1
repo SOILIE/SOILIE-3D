@@ -6,10 +6,39 @@ param(
     [ValidatePattern('@sha256:[0-9a-f]{64}$')]
     [string]$BaseImage,
     [int]$MemoryMB = 4096,
-    [int]$Concurrency = 16
+    [int]$Concurrency = 16,
+    [string]$BuildContext = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+# Never reuse an old build tree: Copy-Item would otherwise merge stale modules
+# into the next image, or overwrite another task's retained build evidence.
+$scratch = [IO.Path]::GetFullPath((Join-Path $repo '.codex'))
+$context = if ($BuildContext) {
+    if ([IO.Path]::IsPathRooted($BuildContext)) {
+        [IO.Path]::GetFullPath($BuildContext)
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $repo $BuildContext))
+    }
+} else {
+    Join-Path $scratch ('cloud-benchmark-build-' + [Guid]::NewGuid().ToString('N'))
+}
+if (-not $context.StartsWith($scratch + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Build context must be a dedicated directory inside this repository .codex folder'
+}
+for ($ancestor = [IO.DirectoryInfo]$context; $ancestor -and $ancestor.FullName -ne $repo; $ancestor = $ancestor.Parent) {
+    if ($ancestor.Exists -and ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Build context must not traverse a junction or symbolic link'
+    }
+}
+if (Test-Path -LiteralPath $context) {
+    if (-not (Test-Path -LiteralPath $context -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $context -Force).Count) {
+        throw 'Build context already contains files; choose a new task-owned directory'
+    }
+} else {
+    New-Item -ItemType Directory -Path $context | Out-Null
+}
 $account = (aws sts get-caller-identity --profile $Profile --query Account --output text).Trim()
 if ($LASTEXITCODE) { throw 'AWS authentication failed' }
 $registry = "$account.dkr.ecr.$Region.amazonaws.com"
@@ -19,8 +48,6 @@ if ($LASTEXITCODE) {
     aws ecr create-repository --profile $Profile --region $Region --repository-name $repository --image-tag-mutability IMMUTABLE | Out-Null
     if ($LASTEXITCODE) { throw 'Cannot create isolated benchmark repository' }
 }
-$context = Join-Path $repo '.codex/cloud-benchmark-build'
-New-Item -ItemType Directory -Force -Path $context | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'modules'),(Join-Path $repo 'serverless') -Destination $context -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repo 'package.json') -Destination $context
 Copy-Item -LiteralPath (Join-Path $repo '.codex/runtime/model-provenance.json') -Destination (Join-Path $context 'provenance.json')

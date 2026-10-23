@@ -66,6 +66,18 @@ proof that the scientific source audit or campaign acceptance gates passed.
 
 ## Pausing and recovery
 
+For read-only colored progress bars while source preparation is running:
+
+```powershell
+python -m serverless.compiler.progress --workspace .codex/source-rebuild --color always
+```
+
+Use the actual source environment and workspace; append `--once` for a snapshot.
+The bars count scene-sealed preprocessing/collection receipts, not successful
+room generation or a passed scientific audit. Active unsealed frames are shown
+separately. When a workspace has a detached continuation receipt, its audit/
+catalog phase and review/error stop are shown too. Ctrl+C closes only the monitor.
+
 A workspace `PAUSE_SOURCE` marker makes every new preprocessing/collection
 command exit with status 75 before dispatch. Already-running workers can finish
 their current scene and seal it. Keep the marker until the source issue has been

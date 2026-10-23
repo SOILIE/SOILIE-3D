@@ -54,6 +54,8 @@ def main():
                         help="Mark every completed scene in this geometry-only shard as ineligible for latency summaries")
     parser.add_argument("--workers",type=int,default=1,
                         help="Independent Blender exporters to run concurrently after generation timing has stopped")
+    parser.add_argument('--native-isolation-plan', type=Path,
+                        help='Frozen credential-free Docker boundary for native Blender only')
     args = parser.parse_args()
     if args.workers < 1:
         parser.error("--workers must be positive")
@@ -118,11 +120,22 @@ def main():
                     "blendSha256":sha256(directory/"scene.blend"),
                     "stateSha256":sha256(directory/"solve_state.json")}
         receipt = directory/"geometry-receipt.json"
+        if args.native_isolation_plan:
+            from serverless.benchmark.native_isolation import wrapped_command
+            isolation_plan = json.loads(args.native_isolation_plan.read_bytes())
+            expected['nativeIsolationPlanSha256'] = isolation_plan['planSha256']
+            command = wrapped_command(command, args.native_isolation_plan.resolve(), directory,
+                                      args.run/f'export-native-isolation-{directory.name}.json', 870)
         cached = artifact.exists() and receipt.exists() and json.loads(receipt.read_text()) == expected
         if not cached:
             try:
-                with (directory/"export.log").open("wb") as log:
+                export_log = (args.run/f'native-export-{directory.name}.log'
+                              if args.native_isolation_plan else directory/'export.log')
+                with export_log.open("wb") as log:
                     result = subprocess.run(supervised(command),cwd=args.repository,env=environment,stdout=log,stderr=subprocess.STDOUT,timeout=900)
+                if args.native_isolation_plan:
+                    from serverless.benchmark.native_isolation import workspace_bytes
+                    workspace_bytes(directory)  # Before JSON/provenance reads.
             except subprocess.TimeoutExpired:
                 return None, {"id":attempt["id"],"reason":"GEOMETRY_EXPORT_TIMEOUT"}
             if result.returncode:
