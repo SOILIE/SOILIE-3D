@@ -22,6 +22,9 @@ from modules.source_geometry import (
     EXACT_FRAME_ID,
     SourceGeometryError,
     WASHINGTON_RGBD_PROFILE,
+    WASHINGTON_RGBD_SCENES_V2_CALIBRATION_METHOD,
+    WASHINGTON_RGBD_SCENES_V2_CALIBRATION_SOURCE,
+    WASHINGTON_RGBD_SCENES_V2_INTRINSICS,
     decode_depth,
     pair_rgb_depth_files,
     pinned_extrinsics_filename,
@@ -35,7 +38,7 @@ from modules.utils import *
 
 WASHINGTON_PREPROCESS_RECEIPT = 'preprocess-receipt.json'
 WASHINGTON_PREPROCESS_RECEIPT_KIND = 'soilie3d.washington-preprocess'
-WASHINGTON_PREPROCESS_RECEIPT_VERSION = 2
+WASHINGTON_PREPROCESS_RECEIPT_VERSION = 3
 
 
 class WashingtonPreprocessError(ValueError):
@@ -51,6 +54,20 @@ def _washington_source_geometry():
         'pairingStrategy': profile.pairing_strategy,
         'poseIndexStrategy': profile.pose_index_strategy,
         'pixelOrigin': profile.pixel_origin,
+    }
+
+
+def _washington_calibration():
+    '''Return the reviewed calibration derived from first-party v2 artifacts.'''
+
+    return {
+        'model': 'pinhole',
+        'intrinsics': [list(row) for row in WASHINGTON_RGBD_SCENES_V2_INTRINSICS],
+        'pixelOrigin': WASHINGTON_RGBD_PROFILE.pixel_origin,
+        'derivation': {
+            'method': WASHINGTON_RGBD_SCENES_V2_CALIBRATION_METHOD,
+            'source': WASHINGTON_RGBD_SCENES_V2_CALIBRATION_SOURCE,
+        },
     }
 
 
@@ -117,26 +134,6 @@ def _sha256_text(value, *, field):
     if not isinstance(value, str) or re.fullmatch(r'[0-9a-f]{64}', value) is None:
         raise WashingtonPreprocessError(f'{field} must be a lowercase SHA-256 digest')
     return value
-
-
-def _reviewed_intrinsics(value):
-    if value is None:
-        raise WashingtonPreprocessError(
-            'reviewed_intrinsics is required; Washington preprocessing must not '
-            'guess camera calibration',
-        )
-    try:
-        return reshape_intrinsics(value)
-    except SourceGeometryError as exc:
-        raise WashingtonPreprocessError(str(exc)) from exc
-
-
-def _calibration_provenance(value):
-    if not isinstance(value, str) or not value.strip():
-        raise WashingtonPreprocessError(
-            'calibration_provenance must be a non-empty reviewed source citation',
-        )
-    return value.strip()
 
 
 def _pose_rows(path):
@@ -246,7 +243,6 @@ def _build_preprocess_receipt(
     fname,
     json_path,
     annotation_files,
-    calibration_provenance,
     requested_frame_samples,
     source_frame_count,
     source_pose_count,
@@ -258,7 +254,7 @@ def _build_preprocess_receipt(
         'kind': WASHINGTON_PREPROCESS_RECEIPT_KIND,
         'scene': fname,
         'sourceGeometry': _washington_source_geometry(),
-        'calibrationProvenance': calibration_provenance,
+        'calibration': _washington_calibration(),
         'requestedFrameSamples': requested_frame_samples,
         'sourceFrameCount': source_frame_count,
         'sourcePoseCount': source_pose_count,
@@ -328,14 +324,14 @@ def _validate_preprocess_receipt(
     ):
         raise WashingtonPreprocessError(
             f'Unsupported Washington preprocess receipt schemaVersion '
-            f'{receipt_version!r}; rebuild with the explicit native '
-            'sourceGeometry contract',
+            f'{receipt_version!r}; rebuild with the reviewed native geometry '
+            'and calibration contract',
         )
     _require_exact_keys(
         receipt,
         {
             'schemaVersion', 'kind', 'scene', 'sourceGeometry',
-            'calibrationProvenance',
+            'calibration',
             'requestedFrameSamples', 'sourceFrameCount', 'sourcePoseCount',
             'samples', 'annotations', 'outputs',
         },
@@ -359,7 +355,11 @@ def _validate_preprocess_receipt(
             'Washington preprocess receipt sourceGeometry is not the reviewed '
             'native RGB-D Scenes v2 contract',
         )
-    _calibration_provenance(receipt['calibrationProvenance'])
+    if receipt['calibration'] != _washington_calibration():
+        raise WashingtonPreprocessError(
+            'Washington preprocess receipt calibration does not match the '
+            'reviewed native RGB-D Scenes v2 artifact derivation',
+        )
 
     for field in ('requestedFrameSamples', 'sourceFrameCount', 'sourcePoseCount'):
         value = receipt[field]
@@ -483,9 +483,15 @@ def _validate_preprocess_receipt(
         raise WashingtonPreprocessError(
             f'Preprocessed calibration artifacts are invalid: {exc}',
         ) from exc
-    # Referencing the validated value makes this an intentional semantic check,
-    # not merely a digest check.
-    _ = intrinsics
+    expected_intrinsics = np.asarray(
+        WASHINGTON_RGBD_SCENES_V2_INTRINSICS,
+        dtype=np.float64,
+    )
+    if not np.array_equal(intrinsics, expected_intrinsics):
+        raise WashingtonPreprocessError(
+            'Pinned intrinsics do not match the reviewed artifact-derived '
+            'native Washington RGB-D Scenes calibration',
+        )
     if extrinsics.shape[0] != len(expected_samples):
         raise WashingtonPreprocessError(
             'Pinned extrinsics pose count does not match sampled frame count',
@@ -507,8 +513,7 @@ def _validate_preprocess_receipt(
 def _incomplete_preprocess_error(fname, detail):
     return WashingtonPreprocessError(
         f'Washington scene {fname!r}: incomplete preprocessing artifacts; '
-        'explicit rebuild required with rebuild=True, reviewed_intrinsics, and '
-        f'calibration_provenance ({detail})',
+        f'explicit rebuild required with rebuild=True ({detail})',
     )
 
 #filename = './extrinsics_test.txt'
@@ -608,20 +613,19 @@ def project_annotations_3D_to_2D(
     jsonDir,
     annot_files,
     nFrame_samples=30,
-    *,
-    reviewed_intrinsics=None,
-    calibration_provenance=None,
 ):
-    '''Build one Washington annotation bundle from explicitly reviewed calibration.
+    '''Build one native Washington annotation bundle with reviewed calibration.
 
-    The returned JSON-safe document contains all metadata needed for the caller
-    to publish a receipt.  Deliberately omitting a default intrinsic matrix makes
-    an unreviewed 525-pixel focal-length guess impossible in this rebuild path.
+    The fixed matrix is the reviewed artifact-consistent winner of symmetric
+    candidate comparisons across official v2 RGB, depth, pose and PLY data.
+    Keeping that result here prevents an older generic-camera helper or a
+    converted-release calibration from entering a native-source rebuild.
     '''
 
     fname = _leaf_name(fname, field='Washington scene name')
-    K = _reviewed_intrinsics(reviewed_intrinsics)
-    calibration_provenance = _calibration_provenance(calibration_provenance)
+    # Load the pinned native-v2 calibration before creating any outputs.
+    calibration = _washington_calibration()
+    K = reshape_intrinsics(calibration['intrinsics'])
     annotation_files = _classify_annotation_files(annot_files)
     lblfile = annotation_files['labels']
     posfile = annotation_files['poses']
@@ -652,9 +656,6 @@ def project_annotations_3D_to_2D(
             'Washington point-cloud coordinates and labels must be finite and '
             'contain the same number of points',
         )
-
-    # Construct the transformation matrix for the global origin using First frame's camera pose
-    T_global_origin = get_extrinsic_matrix(camera_poses[0])
 
     os.makedirs(main_folder, exist_ok=True)
     os.makedirs(jsonDir, exist_ok=True)
@@ -699,11 +700,15 @@ def project_annotations_3D_to_2D(
                     'expected 640x480',
                 )
             # Map 3D points to 2D.
-            uv, uvw, extrinsic = project_3d_2d(point_cloud, frame_pos, T_global_origin, K)
+            uv, camera_depth, extrinsic = project_3d_2d(point_cloud, frame_pos, K)
             extrinsics.append(validate_c2w(extrinsic[:3, :]))
             # Construct mask, xy and xyz frames.
-            im_frame, xyz_frame, xy_frame, test_frame = construct_frames(
-                uv, point_cloud, lbls, oimage,
+            im_frame, xyz_frame, xy_frame = construct_frames(
+                uv,
+                camera_depth,
+                point_cloud,
+                lbls,
+                pixel_origin=WASHINGTON_RGBD_PROFILE.pixel_origin,
             )
 
             prev_objs = frames[i - 1] if i>0 else None
@@ -748,14 +753,9 @@ def project_annotations_3D_to_2D(
 
             xs_idx, ys_idx = zip(*result)
             XY = xy_frame[ys_idx, xs_idx, :]
-            if 0 in XY:
-                # XY = interpolate_zeros(XY)
-                XY = replace_zeroRow_previousRow(XY)
-            xs, ys = XY[:, 0], XY[:, 1]
-
             XYZ = xyz_frame[ys_idx, xs_idx, :]
-            if 0 in XYZ:
-                XYZ = replace_zeroRow_previousRow(XYZ)
+            XY, XYZ = mapped_polygon_samples(XY, XYZ)
+            xs, ys = XY[:, 0], XY[:, 1]
 
             #cur_obj_name = object_categories[int(imgs_lbls[imidx])]
             obj_idx = int(imgs_lbls[imidx].split('_')[0])
@@ -833,7 +833,6 @@ def project_annotations_3D_to_2D(
         fname=fname,
         json_path=json_path,
         annotation_files=annotation_files,
-        calibration_provenance=calibration_provenance,
         requested_frame_samples=nFrame_samples,
         source_frame_count=len(pairs),
         source_pose_count=len(pairs),
@@ -917,15 +916,13 @@ def pre_process_input_files(
     nFrame_samples=30,
     *,
     rebuild=False,
-    reviewed_intrinsics=None,
-    calibration_provenance=None,
 ):
     '''Validate or explicitly rebuild Washington preprocessing artifacts.
 
     A JSON file by itself is never treated as proof that calibration and poses
     exist.  Reuse requires a strict receipt whose hashes and frame/pose identity
     still validate.  Any missing or stale bundle requires an explicit rebuild
-    and reviewed camera calibration.
+    using the pinned calibration derived from first-party v2 artifacts.
     '''
 
     if type(rebuild) is not bool:
@@ -985,8 +982,6 @@ def pre_process_input_files(
             print(f"Verified preprocessing receipt for {scene} in '{dataDir}'")
         return tuple(validated)
 
-    K = _reviewed_intrinsics(reviewed_intrinsics)
-    provenance = _calibration_provenance(calibration_provenance)
     missing_raw_scenes = sorted(set(json_scenes) - data_scenes)
     if missing_raw_scenes:
         raise WashingtonPreprocessError(
@@ -1017,8 +1012,6 @@ def pre_process_input_files(
             jsonDir,
             annot_files,
             nFrame_samples,
-            reviewed_intrinsics=K,
-            calibration_provenance=provenance,
         )
         # The receipt is intentionally the final write in a successful build.
         with open(receipt_path, 'w', encoding='utf-8', newline='\n') as output:

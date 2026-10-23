@@ -103,32 +103,39 @@ def interpolate_zeros(XY):
 
     return np.vstack((x,y)).T
 
-def replace_zeroRow_previousRow(XYZ):
-    XYZ = XYZ[~(XYZ == 0).all(axis=1)]
-    XYZ = np.vstack([XYZ, XYZ[0]])
+def mapped_polygon_samples(xy, xyz):
+    '''Drop unmapped raster-fill vertices without treating real zeros as empty.'''
 
-    # zero_rows = (XYZ == 0).all(axis=1)
-    # index_array = np.arange(len(XYZ))
-    # replace_indices = index_array[zero_rows]
-    # if len(replace_indices) > 0:
-    #     for ridx in replace_indices:
-    #         if ridx > 0:
-    #             XYZ[ridx] = XYZ[ridx - 1]
-    #         else:
-    #             XYZ[ridx] = XYZ[-1]
+    xy = np.asarray(xy, dtype=np.float64)
+    xyz = np.asarray(xyz, dtype=np.float64)
+    if xy.ndim != 2 or xy.shape[1:] != (2,):
+        raise ValueError('xy polygon samples must be an Nx2 array')
+    if xyz.shape != (len(xy), 3):
+        raise ValueError('xyz polygon samples must be an Nx3 array aligned with xy')
+    mapped = np.all(np.isfinite(xy), axis=1) & np.all(np.isfinite(xyz), axis=1)
+    xy = xy[mapped]
+    xyz = xyz[mapped]
+    if not len(xy):
+        raise ValueError('polygon contains no mapped source points')
+    if not np.array_equal(xy[0], xy[-1]):
+        xy = np.vstack((xy, xy[0]))
+        xyz = np.vstack((xyz, xyz[0]))
+    return xy, xyz
 
+def project_3d_2d(points_3d, frame_pos, K):
+    '''Project world points and retain camera depth for visibility filtering.'''
 
-
-    return XYZ
-
-def project_3d_2d(points_3d, frame_pos, T_global_origin, K):
-    '''
-    Vectorized function to project 3d points into 2D frame giving the camera characteristics.
-    :param points_3d:
-    :param frame_pos:
-    :param K:
-    :return:
-    '''
+    points_3d = np.asarray(points_3d, dtype=np.float64)
+    frame_pos = np.asarray(frame_pos, dtype=np.float64)
+    K = np.asarray(K, dtype=np.float64)
+    if points_3d.ndim != 2 or points_3d.shape[1:] != (3,):
+        raise ValueError('points_3d must be an Nx3 array')
+    if not np.all(np.isfinite(points_3d)):
+        raise ValueError('points_3d must contain only finite coordinates')
+    if frame_pos.shape != (7,) or not np.all(np.isfinite(frame_pos)):
+        raise ValueError('frame_pos must be a finite seven-value camera pose')
+    if K.shape != (3, 3) or not np.all(np.isfinite(K)):
+        raise ValueError('K must be a finite 3x3 matrix')
 
     T_frame = get_extrinsic_matrix(frame_pos)
 
@@ -138,55 +145,61 @@ def project_3d_2d(points_3d, frame_pos, T_global_origin, K):
 
     # print(points_camera.shape)
 
-    uvw = np.dot(K, points_camera.T).T
-    uv = (uvw[:, :2] / uvw[:, 2].reshape(-1, 1))
+    camera_depth = points_camera[:, 2]
+    uv = np.full((len(points_camera), 2), np.nan, dtype=np.float64)
+    visible = np.isfinite(camera_depth) & (camera_depth > 0.0)
+    if np.any(visible):
+        uvw = np.dot(K, points_camera[visible].T).T
+        uv[visible] = uvw[:, :2] / uvw[:, 2, np.newaxis]
 
-    # exit()
-    ######################
-    # T_relative = np.linalg.inv(T_global_origin) @ T_frame
-    #
-    # print(points_3d.shape)
-    # # # Get the 3D points as a Nx4 array
-    # points_homogeneous = np.hstack((points_3d, np.ones((points_3d.shape[0], 1))))
-    # # Transform 3D points to camera coordinates
-    # points_camera = np.dot(T_relative, points_homogeneous.T).T[:, :3]
-    #
-    # print(points_camera.shape)
-    #
-    # uvw = np.dot(K, points_camera.T).T
-    # uv = (uvw[:, :2] / uvw[:, 2].reshape(-1, 1))
-    #
-    # print(uv.shape)
-
-    ##############################
-    # Project all global coordinates to 2D image coordinates
-    # uvw = np.dot(K, global_points.T)
-    # uv = (uvw[:2] / uvw[2]).T
-
-    return uv, uvw, T_frame
+    return uv, camera_depth, T_frame
 
 
-def construct_frames(uv, point_cloud, lbls, oimage):
-    frame_coords_idx = []
+def construct_frames(uv, camera_depth, point_cloud, lbls, *, pixel_origin):
+    '''Rasterize the nearest positive-depth point at each source pixel.'''
+
+    if type(pixel_origin) is not int or pixel_origin not in {0, 1}:
+        raise ValueError('pixel_origin must be the integer 0 or 1')
+    uv = np.asarray(uv, dtype=np.float64)
+    camera_depth = np.asarray(camera_depth, dtype=np.float64)
+    point_cloud = np.asarray(point_cloud, dtype=np.float64)
+    lbls = np.asarray(lbls)
+    if camera_depth.ndim != 1:
+        raise ValueError('camera_depth must be one-dimensional')
+    point_count = camera_depth.shape[0]
+    if uv.shape != (point_count, 2):
+        raise ValueError('uv must contain one 2D coordinate per camera depth')
+    if point_cloud.shape != (point_count, 3):
+        raise ValueError('point_cloud must contain one 3D point per camera depth')
+    if lbls.shape != (point_count,):
+        raise ValueError('lbls must contain one label per camera depth')
+    if not np.all(np.isfinite(point_cloud)) or not np.all(np.isfinite(lbls)):
+        raise ValueError('point_cloud and lbls must contain only finite values')
     im_frame = np.zeros((480, 640), dtype=np.uint8)
-    xyz_frame = np.zeros((480, 640, 3), dtype=float)
-    xy_frame = np.zeros((480, 640, 2), dtype=float)
-    test_frame = np.zeros((480, 640, 2), dtype=float)
+    # NaN is an unambiguous empty sentinel: zero is a valid image coordinate
+    # and can also be a valid component of a world-space point.
+    xyz_frame = np.full((480, 640, 3), np.nan, dtype=np.float64)
+    xy_frame = np.full((480, 640, 2), np.nan, dtype=np.float64)
+    z_buffer = np.full((480, 640), np.inf, dtype=np.float64)
 
-    for uv_idx, point in enumerate(uv):
-        x, y = map(int, point)
-        if 0 <= x < 640 and 0 <= y < 480:
+    for uv_idx, (point, depth) in enumerate(zip(uv, camera_depth)):
+        if depth <= 0.0 or not np.isfinite(depth) or not np.all(np.isfinite(point)):
+            continue
+        # Quantize once and retain that exact source-grid coordinate in the
+        # annotation.  Otherwise raster truncation and collector-side rounding
+        # can select adjacent depth pixels for the same polygon vertex.
+        source_x, source_y = np.rint(point).astype(int)
+        x = source_x - pixel_origin
+        y = source_y - pixel_origin
+        if 0 <= x < 640 and 0 <= y < 480 and depth < z_buffer[y, x]:
+            # A scene point cloud can project many surfaces into one pixel.
+            # A nearer point wins regardless of PLY record order, avoiding the
+            # old last-row-wins labeling of occluded scene data.
+            z_buffer[y, x] = depth
             im_frame[y, x] = int(lbls[uv_idx])  # Set pixel to white
             xyz_frame[y, x, :] = point_cloud[uv_idx]
-            xy_frame[y, x, :] = uv[uv_idx]
-            frame_coords_idx.append(uv_idx)
-            test_frame = point_cloud[uv_idx, :2] #
-
-    # plt.imshow(oimage)
-    # plt.imshow(im_frame, alpha=0.3)
-    # plt.show()
-    # exit()
-    return im_frame, xyz_frame, xy_frame, test_frame
+            xy_frame[y, x, :] = (source_x, source_y)
+    return im_frame, xyz_frame, xy_frame
 
 
 def clean_label_mask(im_frame, oimg, prev_objs=None, prev_lbls=None):

@@ -17,6 +17,17 @@ PLAIN_UINT16_MM = 'plain_uint16_mm'
 WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM = (
     'washington_rgbd_scenes_v2_native_uint16_tenth_mm'
 )
+WASHINGTON_RGBD_SCENES_V2_INTRINSICS = (
+    (525.0, 0.0, 319.0),
+    (0.0, 525.0, 239.0),
+    (0.0, 0.0, 1.0),
+)
+WASHINGTON_RGBD_SCENES_V2_CALIBRATION_METHOD = (
+    'native_v2_artifact_candidate_comparison'
+)
+WASHINGTON_RGBD_SCENES_V2_CALIBRATION_SOURCE = (
+    'https://rgbd-dataset.cs.washington.edu/dataset/rgbd-scenes-v2/'
+)
 SUN3D_NEAREST_TIMESTAMP = 'sun3d_nearest_timestamp'
 EXACT_FRAME_ID = 'exact_frame_id'
 ONE_BASED_IMAGE_FRAME = 'one_based_image_frame'
@@ -77,6 +88,8 @@ SOURCE_PROFILES = {
         depth_encoding=WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
         pairing_strategy=EXACT_FRAME_ID,
         pose_index_strategy=JSON_POSITION,
+        # The v2 artifact evaluation uses native zero-based PNG indices.
+        # Its equivalent MATLAB one-based principal point is (320, 240).
         pixel_origin=0,
     ),
 }

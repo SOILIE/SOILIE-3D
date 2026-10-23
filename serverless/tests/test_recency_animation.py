@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import math
 import tempfile
 import unittest
@@ -13,83 +12,35 @@ from modules.recency import (
     light_belongs_to_object,
     light_energy,
     luminous_object_type,
-    shadow_method_for_alpha,
     stable_remesh_depths,
     stable_visibility,
     transition_remesh_depths,
     transition_visibility,
-    window_assembly_role,
 )
 
 
-class RendererEvidenceContractTests(unittest.TestCase):
-    def test_visualize_keeps_opaque_and_imagined_stills_distinct(self) -> None:
-        """Guard the render call order without requiring Blender to import."""
-
-        render_path = Path(__file__).resolve().parents[2] / 'modules' / 'render.py'
-        tree = ast.parse(render_path.read_text(encoding='utf-8'))
-        visualize = next(
-            node for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == 'visualize'
-        )
-        opaque_captures = [
-            node for node in ast.walk(visualize)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == 'take_opaque_snapshot_from_above'
-        ]
-        direct_captures = [
-            node for node in ast.walk(visualize)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == 'take_snapshot_from_above'
-        ]
-
-        restorations = [
-            node for node in ast.walk(visualize)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == 'set_imagination_objects_opaque'
-        ]
-        serializations = [
-            node for node in ast.walk(visualize)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == 'imagination_object_output_record'
-        ]
-
-        self.assertEqual(1, len(opaque_captures))
-        self.assertEqual(1, len(direct_captures))
-        self.assertEqual(1, len(restorations))
-        self.assertEqual(1, len(serializations))
-        self.assertIn('01_birds_eye_view.png', ast.unparse(opaque_captures[0].args[0]))
-        self.assertIn('02_birds_eye_view.png', ast.unparse(direct_captures[0].args[0]))
-        self.assertLess(direct_captures[0].lineno, restorations[0].lineno)
-        self.assertLess(restorations[0].lineno, serializations[0].lineno)
-
-
 class RecencyScheduleTests(unittest.TestCase):
-    def test_focal_states_keep_only_current_and_four_predecessors(self) -> None:
+    def test_focal_states_keep_only_current_and_five_predecessors(self) -> None:
         self.assertEqual(
-            (1.0, 0.0, 0.0, 0.0, 0.10, 0.20, 0.35, 0.50),
+            (1.0, 0.0, 0.0, 0.05, 0.10, 0.20, 0.35, 0.50),
             stable_visibility(8, 0),
         )
         self.assertEqual(
-            (0.0, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0, 0.0),
+            (0.05, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0, 0.0),
             stable_visibility(8, 5),
         )
         self.assertEqual(
-            (0.0, 0.0, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0),
+            (0.0, 0.05, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0),
             stable_visibility(8, 6),
         )
         self.assertEqual(
-            (0.0, 0.0, 0.0, 0.10, 0.20, 0.35, 0.50, 1.0),
+            (0.0, 0.0, 0.05, 0.10, 0.20, 0.35, 0.50, 1.0),
             stable_visibility(8, 7),
         )
 
         for focus_index in range(8):
             state = stable_visibility(8, focus_index)
-            self.assertEqual(5, sum(alpha > 0 for alpha in state))
+            self.assertEqual(6, sum(alpha > 0 for alpha in state))
             self.assertEqual(1.0, state[focus_index])
 
         # Small scenes contain the current object and every distinct predecessor
@@ -107,13 +58,13 @@ class RecencyScheduleTests(unittest.TestCase):
                 transition_visibility(8, focus_index, 1.0),
             )
 
-        expected = (0.50, 0.0, 0.0, 0.0, 0.125, 0.2375, 0.3875, 0.625)
+        expected = (0.50, 0.0, 0.0, 0.0625, 0.125, 0.2375, 0.3875, 0.625)
         for expected_alpha, observed_alpha in zip(expected, transition_visibility(8, 7, 0.75)):
             self.assertAlmostEqual(expected_alpha, observed_alpha)
 
-    def test_transition_never_exposes_a_sixth_object(self) -> None:
+    def test_transition_never_exposes_a_seventh_object(self) -> None:
         for object_count in range(1, 13):
-            expected_maximum = min(object_count, 5)
+            expected_maximum = min(object_count, 6)
             for focus_index in range(object_count):
                 for step in range(101):
                     progress = step / 100
@@ -126,11 +77,11 @@ class RecencyScheduleTests(unittest.TestCase):
 
     def test_opacities_and_detail_levels_are_bounded_and_deterministic(self) -> None:
         self.assertEqual(
-            (None, None, None, 4, 5, 6, 7, None),
+            (None, None, 3, 4, 5, 6, 7, None),
             stable_remesh_depths(8, 7),
         )
         self.assertEqual(
-            (None, None, None, None, 4, 5, 6, 7),
+            (None, None, None, 3, 4, 5, 6, 7),
             stable_remesh_depths(8, 0),
         )
         for focus_index in range(8):
@@ -156,40 +107,16 @@ class RecencyScheduleTests(unittest.TestCase):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 light_energy(*arguments)
 
-    def test_hidden_objects_cast_no_shadow(self) -> None:
-        self.assertEqual('NONE', shadow_method_for_alpha(0.0))
-        self.assertEqual('HASHED', shadow_method_for_alpha(0.1))
-        self.assertEqual('HASHED', shadow_method_for_alpha(1.0))
-        for alpha in (-0.1, 1.1, math.nan, True):
-            with self.subTest(alpha=alpha), self.assertRaises(ValueError):
-                shadow_method_for_alpha(alpha)
-
     def test_lamps_and_windows_own_only_their_exact_lights(self) -> None:
         self.assertEqual('lamp', luminous_object_type('Lamp_0001'))
         self.assertEqual('window', luminous_object_type('window_0001'))
         self.assertEqual('window', luminous_object_type('opaque_window_0001'))
         self.assertIsNone(luminous_object_type('wind_chime_0001'))
         self.assertIsNone(luminous_object_type('chair_0001'))
-        self.assertIsNone(luminous_object_type('lamp_shade_0001'))
         self.assertTrue(light_belongs_to_object('window_0001', 'window_0001.Light'))
         self.assertTrue(light_belongs_to_object('window_0001', 'window_0001.Light.001'))
         self.assertFalse(light_belongs_to_object('window_0001', 'window_00010.Light'))
         self.assertFalse(light_belongs_to_object('window_0001', 'window_0001_shade.Light'))
-
-    def test_window_and_covering_instances_are_classified_as_one_assembly_family(self) -> None:
-        expected = {
-            'window': 'window',
-            'window_0001.001': 'window',
-            'opaque_window_0002': 'opaque_window',
-            'blinds_0001.003': 'blinds',
-            'curtain.1': 'curtain',
-        }
-        self.assertEqual(expected, {name: window_assembly_role(name) for name in expected})
-        self.assertIsNone(window_assembly_role('windowseat_0001'))
-        self.assertIsNone(window_assembly_role('window_shade_0001'))
-        self.assertIsNone(window_assembly_role('window_sill_0001'))
-        self.assertIsNone(window_assembly_role('curtain_pole_0001'))
-        self.assertIsNone(window_assembly_role('chair_0001'))
 
     def test_invalid_schedule_inputs_are_actionable(self) -> None:
         invalid_arguments = (

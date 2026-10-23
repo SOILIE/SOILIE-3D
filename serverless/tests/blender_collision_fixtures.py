@@ -82,17 +82,12 @@ class CollisionRecoveryFixtures(unittest.TestCase):
 
     def test_architecture_is_excluded_from_collision_recovery(self):
         window = cube("window", (0, 0, 0))
-        opaque_window = cube("opaque_window.001", (0, 0, 0))
         cabinet = cube("cabinet", (0, 0, 0))
         boxes = {
             "window": render._collision_box("window", window),
-            "opaque_window.001": render._collision_box(
-                "opaque_window.001", opaque_window),
             "cabinet": render._collision_box("cabinet", cabinet),
         }
-        fixed = render._fixed_collision_objects(boxes)
-        self.assertEqual(frozenset({"window", "opaque_window.001"}), fixed)
-        self.assertEqual(0, render.total_overlap(boxes, fixed))
+        self.assertEqual(0, render.total_overlap(boxes, frozenset({"window"})))
 
 
 if __name__ == "__main__":

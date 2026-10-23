@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from modules.prepare_data import TripletCoverageError, TripletGeometryError
+from modules.prepare_data import TripletGeometryError
 from serverless.common.model_runtime import (
     ModelGenerationError,
     generate_model_inputs,
@@ -20,7 +20,6 @@ class AlignmentModelRuntimeTests(unittest.TestCase):
     def invoke_with_prepare_data(self, function, calculate_coords):
         prepare_data = SimpleNamespace(
             calculateCoords=calculate_coords,
-            TripletCoverageError=TripletCoverageError,
             TripletGeometryError=TripletGeometryError,
         )
         with (
@@ -100,19 +99,6 @@ class AlignmentModelRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ModelGenerationError,
             "rejected invalid triplet geometry: angles cannot form real coordinates",
-        ):
-            self.invoke_with_prepare_data(generate_model_inputs, calculate_coords)
-
-        self.assertEqual(1, calculate_coords.call_count)
-
-    def test_missing_triplet_coverage_keeps_its_public_data_error(self):
-        calculate_coords = Mock(
-            side_effect=TripletCoverageError("no complete ordered basis")
-        )
-
-        with self.assertRaisesRegex(
-            ModelGenerationError,
-            "could not find the ordered triplets required",
         ):
             self.invoke_with_prepare_data(generate_model_inputs, calculate_coords)
 

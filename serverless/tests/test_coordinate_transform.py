@@ -252,10 +252,7 @@ class CoordinateTransformTests(unittest.TestCase):
             ),
             # Keep the first requested pair as A/B so this fixture deterministically
             # exercises one base triplet plus one appended triplet.
-            patch(
-                "modules.prepare_data.random.choice",
-                side_effect=lambda values: values[0],
-            ),
+            patch("modules.prepare_data.random.shuffle"),
         )
         with patches[0], patches[1], patches[2], patches[3]:
             legacy = calculateCoords(["chair", "table", "bed", "lamp"])

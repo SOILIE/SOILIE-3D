@@ -23,7 +23,6 @@ except ModuleNotFoundError:
     sys.modules["plyfile"] = plyfile_stub
 
 from modules.collect_data import Frame, _angle_degrees
-from modules.object_identity import decode_collector_object_label
 from modules.prepare_data import reconstruct_triplet_coordinates
 from modules.triplet_schema import (
     LEGACY_TRIPLET_COLUMNS,
@@ -124,14 +123,9 @@ class TripletSchemaTests(unittest.TestCase):
                 row = next(
                     candidate
                     for candidate in reader
-                    if tuple(
-                        decode_collector_object_label(candidate[column])
-                        for column in ("objectA", "objectB", "objectC")
-                    ) == (
-                        ("anchor_a", "1"),
-                        ("anchor_b", "1"),
-                        ("object_c", "1"),
-                    )
+                    if candidate["objectA"] == "anchor_a_1"
+                    and candidate["objectB"] == "anchor_b_1"
+                    and candidate["objectC"] == "object_c_1"
                 )
 
             self.assertNotEqual(row["angleBAC"], row["angleOAB"])

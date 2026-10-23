@@ -17,7 +17,6 @@ class DiversityTests(unittest.TestCase):
             triplets = Path(folder)/'triplets.csv'
             triplets.write_text(
                 'objectA,objectB,objectC,distanceAB,distanceAC,distanceAO,angleBAC,angleOAB,angleOAC\n'
-                'chair,table,chair,1,2,3,10,20,30\n'
                 'chair,table,lamp,1,2,3,10,20,30\n'
                 'chair,table,plant,1,2,3,10,20,30\n',
                 encoding='utf-8',

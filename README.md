@@ -124,19 +124,30 @@ When the optional scene-level centroid block is enabled, it also writes:
 * `data/{datasetName}/{sceneName}/{frameNumber}.csv`, containing angles (degrees) and distances (meters) between every permutation of **3 objects + camera** in the frame.
 * `data/{datasetName}/{sceneName}/{frameNumber}.jpg`, an annotated source image with colored object polygons and centroid labels.
 
-Washington preprocessing never infers camera intrinsics or treats a JSON file
-as proof of a complete source bundle. Reuse requires a verified per-scene
-`preprocess-receipt.json`; rebuilding requires explicit reviewed 3x3 intrinsics
-and a calibration provenance citation.
+Washington preprocessing pins the artifact-derived native-v2 matrix
+`K = [[525, 0, 319], [0, 525, 239], [0, 0, 1]]` on the zero-based 640x480
+PNG grid (equivalent MATLAB one-based centre: `(320, 240)`). UW's
+[v2 documentation](https://rgbd-dataset.cs.washington.edu/dataset/rgbd-scenes-v2/README.txt)
+does not publish an exact `K`; 525 was selected by projecting official native-v2
+PLY points into the aligned RGB/depth frames across all 14 scenes. It fit every
+scene better than the 570.3-pixel
+[UW helper](https://rgbd-dataset.cs.washington.edu/software/depthToCloud.m) and
+the half-pixel-adjusted 540.021232
+[3DMatch conversion](https://github.com/andyzeng/3dmatch-toolbox/blob/72b08694710b5222855d1447a9b489d676b83557/training/match.hpp#L127-L133).
+Extrinsics are frame-specific: preprocessing converts each matching official
+`.pose` quaternion and camera-position row to a camera-to-world matrix and pins
+those sampled matrices in the scene receipt.
 
 Native Washington RGB-D Scenes v2 depth PNGs store unsigned 16-bit values in
 0.1 mm units and must explicitly declare
 `washington_rgbd_scenes_v2_native_uint16_tenth_mm`. Converted depth PNGs that
 really contain millimetres remain a distinct `plain_uint16_mm` source contract;
 the decoder never guesses from pixel magnitude. Historical Washington
-annotations without this declaration and schema-v1 preprocessing receipts are
-not reusable or relabeled in place. A reviewed raw-source rebuild writes the
-declaration into both the annotation and the schema-v2 receipt.
+annotations used an estimated 525-pixel matrix but treated `(320, 240)` as a
+zero-based center; they lack the one-pixel principal-point correction, source
+calibration contract, and receipts. They are not reusable or relabeled in place.
+A raw-source rebuild writes the corrected declaration into the annotation and
+the reviewed calibration contract into the schema-v3 receipt.
 
 </details>
 
