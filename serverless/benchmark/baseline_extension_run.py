@@ -34,6 +34,13 @@ BUCKET = 'soilie3d-data'
 PUBLIC_PREFIX = 'files/outputs/2026-10-23/infinigen/'
 PRIVATE_PREFIX = 'private/new-benchmark-20261023/infinigen/'
 CELLS = tuple((room, count) for room in ('bedroom', 'living_room') for count in (7, 8))
+# Ubuntu's pinned controller Python has two real stdlib file links outside its
+# stdlib directory. Permit only these exact targets, never a containing folder;
+# their link identities and actual target bytes remain part of the fingerprint.
+CONTROLLER_STDLIB_EXTERNAL_LINKS = {
+    'config-3.12-x86_64-linux-gnu/libpython3.12.so': '/usr/lib/x86_64-linux-gnu/libpython3.12.so.1.0',
+    'sitecustomize.py': '/etc/python3.12/sitecustomize.py',
+}
 IMPLEMENTATIONS = (
     'baseline_extension_run.py', 'run_infinigen.py', 'infinigen_controlled_entry.py',
     'infinigen_task.py', 'import_infinigen.py', 'export_infinigen.py',
@@ -71,7 +78,8 @@ def hashes():
     return {name: digest(Path(__file__).with_name(name)) for name in IMPLEMENTATIONS}
 
 
-def byte_tree(path, *, include_bytecode=False, python_sources=None, native_prefix=None):
+def byte_tree(path, *, include_bytecode=False, python_sources=None, native_prefix=None,
+              external_file_targets=None):
     """Fingerprint actual runtime bytes, not package claims or file mtimes.
 
     Generated Python bytecode is excluded; source, extension binaries, data,
@@ -83,8 +91,22 @@ def byte_tree(path, *, include_bytecode=False, python_sources=None, native_prefi
     path = path.resolve()
     if not path.is_dir():
         raise ValueError('Runtime fingerprint needs an existing directory')
+    external_file_targets = dict(external_file_targets or {})
+    for relative, target in external_file_targets.items():
+        declared = Path(relative)
+        expected = Path(target)
+        link = path/declared
+        if declared.is_absolute() or '..' in declared.parts or not expected.is_absolute():
+            raise ValueError('External runtime links need exact relative-file and absolute-target declarations')
+        try:
+            valid = link.is_symlink() and link.resolve(strict=True) == expected and expected.is_file()
+        except (OSError, RuntimeError):
+            valid = False
+        if not valid:
+            raise ValueError('Declared external runtime file link is missing or changed: '+relative)
     result = hashlib.sha256()
     count = size = 0
+    external_seen = set()
     for directory, children, files in os.walk(path, followlinks=False):
         children[:] = sorted(name for name in children
                              if include_bytecode or name not in ('__pycache__', '.git'))
@@ -95,21 +117,34 @@ def byte_tree(path, *, include_bytecode=False, python_sources=None, native_prefi
                 continue
             source = Path(directory)/name
             link = None
+            external_target = None
             if source.is_symlink():
-                if not source.resolve().is_relative_to(path):
-                    raise ValueError('Runtime file link escaped its pinned byte tree')
+                resolved = source.resolve(strict=True)
+                if not resolved.is_relative_to(path):
+                    relative = source.relative_to(path).as_posix()
+                    if str(resolved) != external_file_targets.get(relative):
+                        raise ValueError('Runtime file link escaped its pinned byte tree')
+                    external_target = str(resolved)
+                    external_seen.add(relative)
                 link = os.readlink(source)
             before = source.stat()
             checksum = digest(source)
             after = source.stat()
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError('Runtime file changed during its byte fingerprint')
-            result.update(encoded({'path': source.relative_to(path).as_posix(),
-                                  'sha256': checksum, 'bytes': after.st_size, 'symlink': link}))
+            row = {'path': source.relative_to(path).as_posix(),
+                   'sha256': checksum, 'bytes': after.st_size, 'symlink': link}
+            if external_target:
+                if str(source.resolve(strict=True)) != external_target or os.readlink(source) != link:
+                    raise ValueError('External runtime file link changed during its fingerprint')
+                row['externalTarget'] = external_target
+            result.update(encoded(row))
             if python_sources is not None and source.suffix == '.py':
                 python_sources[str(Path(native_prefix)/source.relative_to(path))] = checksum
             count += 1
             size += after.st_size
+    if external_seen != set(external_file_targets):
+        raise ValueError('Declared external runtime links were not all byte-fingerprinted')
     return {'sha256': result.hexdigest(), 'files': count, 'bytes': size}
 
 
@@ -165,7 +200,8 @@ def runtime_fingerprint(environment, isolation):
     native_sources = {}
     result = {'schemaVersion': 1, 'pythonVersion': sys.version,
             'pythonExecutableSha256': digest(Path(sys.executable)),
-            'pythonStdlib': byte_tree(stdlib),
+            'pythonStdlib': byte_tree(stdlib, external_file_targets=CONTROLLER_STDLIB_EXTERNAL_LINKS),
+            'pythonStdlibExternalLinkTargets': dict(CONTROLLER_STDLIB_EXTERNAL_LINKS),
             'pythonSitePackages': [byte_tree(path) for path in sites],
             'nativeBlenderSha256': digest(paths['blender']), 'nativeVersions': native,
             'nativeBlenderDistribution': byte_tree(paths['blender'].parent, python_sources=native_sources, native_prefix='/native/blender'),

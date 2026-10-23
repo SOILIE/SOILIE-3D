@@ -26,8 +26,10 @@ placement, camera, render, data, or artifacts.
 The SQLite runtime index is limited to API catalog and pre-queue validation.
 The repository CSV files remain authoritative for object selection and coordinate
 generation. Native missing-triplet and render failures are reported; they are
-never recovered through another model. The source bathroom combination file
-contains no usable rows, so the bathroom preset is intentionally unavailable.
+never recovered through another model. Preset availability is derived from the
+compiled catalogs for each requested count and duplicate policy. The rebuilt
+bathroom catalog supports only 3–5 objects (3–4 without duplicates), so its
+unsupported counts remain unavailable rather than receiving invented rows.
 The established `generate_model_inputs` adapter remains coordinate-only;
 `generate_model_inputs_with_diagnostics` runs the identical seeded generation
 path and additionally returns the rigid-alignment residuals from its accepted
