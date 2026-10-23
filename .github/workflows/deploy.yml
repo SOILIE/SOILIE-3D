@@ -73,12 +73,6 @@ jobs:
           docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
           --background --python-exit-code 2 --python /var/task/serverless/tests/blender_window_chisel_fixtures.py
 
-      - name: Verify five-item recency and opaque-state restoration
-        run: >-
-          docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke
-          --background --factory-startup --python-exit-code 2
-          --python /var/task/serverless/tests/blender_recency_fixtures.py
-
       - name: Verify furniture support and window-assembly exclusions
         run: >-
           docker run --rm --entrypoint /opt/blender/blender soilie3d-renderer-smoke

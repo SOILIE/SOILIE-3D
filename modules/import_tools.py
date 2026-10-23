@@ -786,15 +786,17 @@ def project_annotations_3D_to_2D(
         # exit()
 
     for i, imgs_lbls in enumerate(all_imgs_lbls):
-        prev_lbls = all_imgs_lbls[i-1]
-        imgs_lbls
-        next_lbls = all_imgs_lbls[i+1] if i+1<len(all_imgs_lbls) else {}
+        prev_lbls = all_imgs_lbls[i - 1] if i > 0 else ()
+        next_lbls = all_imgs_lbls[i + 1] if i + 1 < len(all_imgs_lbls) else ()
+        neighbor_lbls = set(prev_lbls) | set(next_lbls)
 
-        # Remove objects that appear for a single frame - we can assume these are a glitch
-        single_frame_objs = list(set(imgs_lbls) - (set(prev_lbls) or set(next_lbls)))
-        for del_count, o in enumerate(single_frame_objs):
-            j = imgs_lbls.index(o) - del_count # index shifts each time we delete, so we subtract del_count
-            del frame_polygons_arr[i]['polygon'][j]
+        # Keep observations supported by at least one adjacent source frame.
+        single_frame_objs = set(imgs_lbls) - neighbor_lbls
+        frame_polygons_arr[i]['polygon'] = [
+            polygon
+            for j, polygon in enumerate(frame_polygons_arr[i]['polygon'])
+            if imgs_lbls[j] not in single_frame_objs
+        ]
 
     data["date"] = ""
     data["name"] = fname
