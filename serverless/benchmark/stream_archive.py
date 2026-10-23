@@ -43,10 +43,11 @@ def verify_remote(client, bucket, key, checksum, size):
     return {'key': key, 'sha256': checksum, 'bytes': size}
 
 
-def upload(client, bucket, key, body, content_type, checksum, size):
+def upload(client, bucket, key, body, content_type, checksum, size, *,
+           cache_control='public,max-age=31536000,immutable'):
     try:
         client.put_object(Bucket=bucket, Key=key, Body=body, ContentLength=size,
-            ContentType=content_type, CacheControl='public,max-age=31536000,immutable',
+            ContentType=content_type, CacheControl=cache_control,
             ServerSideEncryption='AES256', IfNoneMatch='*', Metadata={'sha256': checksum},
             ChecksumSHA256=base64.b64encode(bytes.fromhex(checksum)).decode())
     except ClientError as error:

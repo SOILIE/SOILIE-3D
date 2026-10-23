@@ -19,19 +19,21 @@ from serverless.benchmark.run_batch import run_lock, terminate_tree, write_json
 from serverless.benchmark.timing import record_session
 from serverless.benchmark.supervise import command as supervised
 from serverless.benchmark.infinigen_task import (
-    COMMIT, PROFILES, CONTROLLED_PROFILES, controlled_roles,
+    COMMIT, PROFILES, CONTROLLED_PROFILES, INVENTORY_VERSION,
+    LEGACY_INVENTORY_VERSION, controlled_role_counts, controlled_roles,
     profile_command, validate_controlled_output,
 )
 
 
-def revalidate_controlled_checkpoints(rows, output, room_type, object_count=6):
+def revalidate_controlled_checkpoints(rows, output, room_type, object_count=6,
+                                     inventory_version=LEGACY_INVENTORY_VERSION):
     """Correct old success-only checkpoints before a controlled run resumes."""
     for index, row in enumerate(rows):
         if row.get("status") != "complete":
             continue
         try:
             row["controlledRoles"] = validate_controlled_output(
-                output/f"scene-{room_type}-{index:03d}", room_type, object_count
+                output/f"scene-{room_type}-{index:03d}", room_type, object_count, inventory_version
             )
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
             row["status"] = "failed"
@@ -69,7 +71,7 @@ def main():
     parser.add_argument("--timeout",type=int,default=21600)
     parser.add_argument("--max-attempts",type=int,default=0)
     parser.add_argument("--profile", choices=sorted(PROFILES), default="default")
-    parser.add_argument('--object-count', type=int, choices=range(3, 7), default=6)
+    parser.add_argument('--object-count', type=int, choices=range(3, 9), default=6)
     parser.add_argument('--blender-threads', type=int, choices=range(1, 9), default=4)
     parser.add_argument("--bedroom-seed-offset",type=int,default=0,
                         help="Non-negative deterministic offset used to create disjoint benchmark shards")
@@ -78,11 +80,15 @@ def main():
     args = parser.parse_args()
     if args.profile == 'controlled-count-fast' and args.room_types != ['bedroom']:
         parser.error('Variable-count profile is restricted to bedrooms')
-    if args.object_count != 6 and args.profile != 'controlled-count-fast':
-        parser.error('Non-six counts require the explicit controlled-count-fast profile')
+    if args.profile == 'controlled-count-fast' and args.object_count > 6:
+        parser.error('Frozen controlled-count-fast supports only 3–6; use controlled-inventory-fast for 3–8')
+    if args.object_count != 6 and args.profile not in ('controlled-count-fast', 'controlled-inventory-fast'):
+        parser.error('Non-six counts require an explicit controlled-count-fast or controlled-inventory-fast profile')
     if (args.per_room < 1 or args.max_attempts < 0 or args.bedroom_seed_offset < 0
             or args.living_room_seed_offset < 0):
         parser.error("counts and seed offsets must be non-negative, and --per-room must be positive")
+    inventory_version = (INVENTORY_VERSION if args.profile == 'controlled-inventory-fast'
+                         else LEGACY_INVENTORY_VERSION)
     for name in ("repository","site_packages","blender","output"):
         setattr(args,name,getattr(args,name).resolve())
     revision = subprocess.check_output(["git","rev-parse","HEAD"],cwd=args.repository,text=True).strip()
@@ -109,6 +115,14 @@ def main():
         if args.profile == 'controlled-count-fast':
             config['objectCount'] = args.object_count
             config['controlledRoleCounts'] = controlled_role_counts('bedroom', args.object_count)
+        if args.profile == 'controlled-inventory-fast':
+            config['objectCount'] = args.object_count
+            config['inventoryVersion'] = inventory_version
+            config['controlledRoleCountsByRoom'] = {
+                room_type: controlled_role_counts(room_type, args.object_count, inventory_version)
+                for room_type in dict.fromkeys(args.room_types)}
+            config['inventoryScope'] = 'model-native Infinigen roles; not a cross-model semantic equivalence claim'
+        if args.profile in ('controlled-count-fast', 'controlled-inventory-fast'):
             config['controlImplementation'] = {
                 name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                 for name in ('infinigen_controlled_entry.py', 'infinigen_task.py')}
@@ -125,7 +139,8 @@ def main():
                 continue
             existing = checkpoint_rows(args.output, room_type)
             if args.profile in CONTROLLED_PROFILES:
-                existing = revalidate_controlled_checkpoints(existing, args.output, room_type, args.object_count)
+                existing = revalidate_controlled_checkpoints(
+                    existing, args.output, room_type, args.object_count, inventory_version)
             completed = sum(row.get("status") == "complete" for row in existing)
             index = len(existing)
             while completed < args.per_room:
@@ -161,11 +176,19 @@ def main():
                 # Set explicitly so an unrelated inherited variable cannot alter
                 # the frozen six-object task on a subsequent invocation.
                 environment['SOILIE_INFINIGEN_BEDROOM_COUNT'] = str(args.object_count)
+                environment['SOILIE_INFINIGEN_OBJECT_COUNT'] = str(
+                    args.object_count if inventory_version == INVENTORY_VERSION else 6)
+                environment['SOILIE_INFINIGEN_INVENTORY_VERSION'] = inventory_version
                 # Standalone Blender resolves some relative resources using PWD,
                 # which subprocess cwd alone does not rewrite in the environment.
                 environment["PWD"] = str(args.repository)
                 row = {"id":f"infinigen-{room_type}-{seed}","roomType":room_type,"seed":offset+index,"seedArgument":seed,
                        "startedAt":datetime.now(UTC).isoformat(),"status":"failed","overrides":overrides,"command":command}
+                if inventory_version == INVENTORY_VERSION:
+                    row['id'] = f'infinigen-inventory-v2-{room_type}-{seed}'
+                    row['inventoryVersion'] = inventory_version
+                    row['controlledObjectCount'] = args.object_count
+                    row['controlledRoleCounts'] = config['controlledRoleCountsByRoom'][room_type]
                 started = time.perf_counter()
                 with (work/"process.log").open("wb") as log:
                     process = subprocess.Popen(supervised(command),cwd=args.repository,env=environment,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
@@ -174,7 +197,8 @@ def main():
                         if process.returncode == 0 and (work/"scene.blend").exists() and (work/"solve_state.json").exists():
                             if args.profile in CONTROLLED_PROFILES:
                                 try:
-                                    row["controlledRoles"] = validate_controlled_output(work, room_type, args.object_count)
+                                    row["controlledRoles"] = validate_controlled_output(
+                                        work, room_type, args.object_count, inventory_version)
                                     row["status"] = "complete"
                                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
                                     row["errorCode"] = "CONTROLLED_COMPOSITION_MISMATCH"

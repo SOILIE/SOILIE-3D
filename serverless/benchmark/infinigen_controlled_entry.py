@@ -14,7 +14,8 @@ import sys
 # Blender's --python entrypoint does not reliably add this directory to sys.path.
 # The inventory contract has no dependency on the backend or its environment.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from infinigen_task import controlled_role_counts
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from infinigen_task import LEGACY_INVENTORY_VERSION, controlled_role_counts
 
 from infinigen.assets import elements, lighting, seating, shelves, tables
 from infinigen.core.constraints import constraint_language as cl
@@ -28,7 +29,13 @@ _native_home_constraints = constraints.home_constraints
 
 def controlled_home_constraints():
     """Add exact inventory constraints without changing native placement rules."""
-    counts = controlled_role_counts('bedroom', int(os.environ.get('SOILIE_INFINIGEN_BEDROOM_COUNT', '6')))
+    inventory_version = os.environ.get('SOILIE_INFINIGEN_INVENTORY_VERSION', LEGACY_INVENTORY_VERSION)
+    # Retain the legacy bedroom-only variable for frozen profiles. New runs
+    # explicitly bind a common count and version for both room inventories.
+    object_count = int(os.environ.get('SOILIE_INFINIGEN_OBJECT_COUNT', '6'))
+    bedroom_count = int(os.environ.get('SOILIE_INFINIGEN_BEDROOM_COUNT', str(object_count)))
+    counts = controlled_role_counts('bedroom', bedroom_count, inventory_version)
+    living_counts = controlled_role_counts('living_room', object_count, inventory_version)
     problem = _native_home_constraints()
 
     rooms = cl.scene()[{Semantics.Room, -Semantics.Object}]
@@ -48,13 +55,13 @@ def controlled_home_constraints():
     beds = wall_furniture[Semantics.Bed][seating.BedFactory]
     desks = wall_furniture[shelves.SimpleDeskFactory]
     bedroom_condition = bedrooms.all(lambda room: (
-        beds.related_to(room).count().equals(1)
+        beds.related_to(room).count().equals(counts['bed'])
         * storage.related_to(room).count().equals(counts['storage'])
         * side_tables.related_to(room)
             .related_to(beds.related_to(room), cu.leftright_leftright)
-            .count().equals(1)
+            .count().equals(counts['side_table'])
         * desks.related_to(room).count().equals(counts['desk'])
-        * floor_lamps.related_to(room).count().equals(1)
+        * floor_lamps.related_to(room).count().equals(counts['floor_lamp'])
         * rugs.related_to(room).count().equals(counts['rug'])
     ))
 
@@ -63,14 +70,14 @@ def controlled_home_constraints():
     tv_stands = wall_furniture[shelves.TVStandFactory]
     coffee_tables = furniture[tables.CoffeeTableFactory]
     living_condition = living_rooms.all(lambda room: (
-        sofas.related_to(room).count().equals(1)
-        * tv_stands.related_to(room).count().equals(1)
-        * storage.related_to(room).count().equals(1)
+        sofas.related_to(room).count().equals(living_counts['sofa'])
+        * tv_stands.related_to(room).count().equals(living_counts['tv_stand'])
+        * storage.related_to(room).count().equals(living_counts['storage'])
         * side_tables.related_to(room)
             .related_to(sofas.related_to(room), cu.side_by_side)
-            .count().equals(1)
-        * coffee_tables.related_to(room).count().equals(1)
-        * rugs.related_to(room).count().equals(1)
+            .count().equals(living_counts['side_table'])
+        * coffee_tables.related_to(room).count().equals(living_counts['coffee_table'])
+        * rugs.related_to(room).count().equals(living_counts['rug'])
     ))
 
     problem.constraints = OrderedDict(problem.constraints)

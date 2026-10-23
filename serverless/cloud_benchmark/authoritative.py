@@ -2,7 +2,8 @@
 
 Each requested scene keeps every attempt. The budget ledger is shared by the
 development pilots and final campaign, so starting a new directory cannot reset
-paid usage. This module never starts AI review or publishes evidence.
+paid usage. AI review remains separate. Optional frozen S3 output storage
+publishes allowlisted final-cohort room geometry, never raw private logs.
 """
 from __future__ import annotations
 
@@ -28,6 +29,9 @@ from zoneinfo import ZoneInfo
 from serverless.benchmark.run_batch import run_lock, terminate_tree, verify_execution_log
 from serverless.benchmark.supervise import command as supervised
 from serverless.cloud_benchmark.checkpoint import write_json
+from serverless.cloud_benchmark.evidence_store import (
+    archive_attempt, archive_configuration, load_artifact, recover_artifact_identity,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -238,6 +242,8 @@ def prepare(args):
                      'localWorkers': 6, 'blenderThreads': 1, 'lambdaConcurrency': 16,
                      'memoryMB': 4096, 'timeoutSeconds': 900, 'ephemeralMB': 1024,
                      'budgetUSD': 25.0, 'sourceAuditSha256': source_audit}
+    if getattr(args, 'archive_date', None):
+        configuration['outputArchive'] = archive_configuration(args.archive_date)
     gates = {}
     if args.phase == 'authoritative':
         if not all((args.pilot, args.parity, args.fixtures)):
@@ -263,7 +269,8 @@ def prepare(args):
                  'fixturesSha256': passed_gate(args.fixtures, snapshot['provenanceSha256'], 'Fixtures', FIXTURE_CHECKS)}
     body = {'schemaVersion': 1, 'phase': args.phase, 'maxObjectCount': args.max_count,
             'configuration': configuration, 'gates': gates, 'requests': allocation(args.max_count, args.phase),
-            'timingPolicy': 'Per-scene generation through support settlement; observation excluded. '
+            'timingPolicy': 'Per-scene generation through support settlement; observation and archival excluded. '
+                            'Controller session/calendar times include dispatch and archival. '
                             'Retain billed invocation, active parallel session and calendar times separately.',
             'reviewPolicy': 'No previous AI judgments. Approve and freeze the evaluation protocol before collection.'}
     body['planSha256'] = digest(body)
@@ -327,12 +334,18 @@ def validate_artifact(row, task, plan):
     return row
 
 
-def verify_attempt_evidence(root, row):
+def verify_attempt_evidence(root, row, plan=None):
+    artifact = None
     for name, sha_name in (('artifact', 'sha256'), ('receipt', 'receiptSha256'), ('log', 'logSha256'),
                           ('invocationIdentity', 'invocationIdentitySha256')):
         if row.get(name):
-            if not row.get(sha_name) or file_digest(root / row[name]) != row[sha_name]:
+            if not row.get(sha_name):
                 raise ValueError('Retained attempt evidence changed: ' + row['requestId'])
+            if name == 'artifact' and plan is not None:
+                artifact = load_artifact(root, row, plan)
+            elif file_digest(root / row[name]) != row[sha_name]:
+                raise ValueError('Retained attempt evidence changed: ' + row['requestId'])
+    return artifact
 
 
 def verify_completed(root, plan, platform_name, rows):
@@ -341,13 +354,10 @@ def verify_completed(root, plan, platform_name, rows):
     for row in rows:
         if row['requestId'] not in tasks or row['request'] != tasks[row['requestId']]['request']:
             raise ValueError('Attempt ledger contains an unallocated request')
-        verify_attempt_evidence(root, row)
+        artifact = verify_attempt_evidence(root, row, plan)
         if row['status'] != 'complete':
             continue
-        raw_path = root / row['artifact']
-        if file_digest(raw_path) != row['sha256']:
-            raise ValueError('Completed evidence changed: ' + row['requestId'])
-        validate_artifact(read(raw_path), tasks[row['requestId']], plan)
+        validate_artifact(artifact, tasks[row['requestId']], plan)
         if row['requestId'] in complete:
             raise ValueError('More than one successful attempt for the same request')
         complete.add(row['requestId'])
@@ -412,14 +422,17 @@ def finish_local(root, plan, attempt, returncode):
     if log.exists():
         attempt.update(log=log.relative_to(root).as_posix(), logSha256=file_digest(log))
     path = folder / 'attempt-00000.json'
-    if not path.exists():
+    if not path.exists() and not recover_artifact_identity(root, attempt, plan, path):
         attempt.update(status='failed', error=f'Worker exited {returncode} without terminal evidence')
         return
     task = {'request': attempt['request']}
-    row = validate_artifact(read(path), task, plan)
-    attempt.update(status=row['status'], artifact=path.relative_to(root).as_posix(), sha256=file_digest(path))
+    if path.exists():
+        attempt.update(artifact=path.relative_to(root).as_posix(), sha256=file_digest(path))
+    row = validate_artifact(load_artifact(root, attempt, plan), task, plan)
+    attempt.update(status=row['status'])
     if returncode and row['status'] == 'complete':
         raise ValueError('Worker exited unsuccessfully after writing completed evidence')
+    archive_attempt(root, attempt, plan)
 
 
 def local_run(args, plan):
@@ -534,15 +547,22 @@ def finish_cloud(root, plan, attempt):
                        error=receipt['functionError'], receipt=(folder / (seed + '-receipt.json')).relative_to(root).as_posix())
         return
     path = folder / (seed + '.json')
-    raw_sha = file_digest(path)
+    if path.exists():
+        raw_sha = file_digest(path)
+    elif recover_artifact_identity(root, attempt, plan, path):
+        raw_sha = attempt['sha256']
+    else:
+        raise ValueError('Missing Lambda scene and no verified archive recovery sidecar')
     if raw_sha != receipt['response']['sha256']:
         raise ValueError('Downloaded scene hash differs from invocation receipt')
     if identity and identity.get('awsRequestId') and not receipt['response']['key'].endswith('/' + identity['awsRequestId'] + '.json'):
         raise ValueError('S3 scene belongs to another invocation')
-    row = validate_artifact(read(path), {'request': attempt['request']}, plan)
+    attempt.update(artifact=path.relative_to(root).as_posix(), sha256=raw_sha)
+    row = validate_artifact(load_artifact(root, attempt, plan), {'request': attempt['request']}, plan)
     attempt.update(status=row['status'], billedSeconds=billed, costUSD=cost,
                    artifact=path.relative_to(root).as_posix(), sha256=raw_sha,
                    key=receipt['response']['key'], receipt=(folder / (seed + '-receipt.json')).relative_to(root).as_posix())
+    archive_attempt(root, attempt, plan)
 
 
 def cloud_run(args, plan):
@@ -722,10 +742,8 @@ def parity_run(args, plan):
     for task in parity_tasks:
         attempt = latest[task['id']]
         local_entry = locals_by_id[task['id'][len('parity-'):]]
-        remote_path = args.root / attempt['artifact']
-        if file_digest(remote_path) != attempt['sha256']:
-            raise ValueError('Parity artifact hash changed')
-        error = compare_placements(read(args.root / local_entry['artifact']), read(remote_path))
+        error = compare_placements(load_artifact(args.root, local_entry, plan),
+                                   load_artifact(args.root, attempt, plan))
         results.append({'roomType': task['request']['roomType'], 'objectCount': task['request']['objectCount'],
                         'seed': task['request']['seed'], 'maxGeometryErrorM': error,
                         'billedSeconds': attempt['billedSeconds'], 'sha256': attempt['sha256']})
@@ -902,7 +920,7 @@ def export_evidence(root, plan, output):
             if task['id'] not in completed:
                 raise ValueError('Missing frozen request: ' + task['id'])
             attempt = latest[task['id']]
-            row = read(root / attempt['artifact'])
+            row = load_artifact(root, attempt, plan)
             records.append({'requestId': task['id'], 'platform': platform_name,
                             'request': task['request'], 'sha256': attempt['sha256'],
                             'artifact': attempt['artifact'], 'scene': row})
@@ -933,6 +951,8 @@ def main():
     freeze_parser.add_argument('--root', type=Path, required=True)
     freeze_parser.add_argument('--phase', choices=['pilot', 'authoritative'], required=True)
     freeze_parser.add_argument('--max-count', type=int, choices=[7, 8], default=8)
+    freeze_parser.add_argument('--archive-date',
+                               help='Frozen public S3 output date; pilots and exact logs stay private')
     for name in ('runtime', 'provenance', 'blender', 'rates', 'source-audit', 'budget-root'):
         freeze_parser.add_argument('--' + name, type=Path, required=True)
     for name in ('pilot', 'parity', 'fixtures'):
@@ -986,7 +1006,10 @@ def main():
         if args.command == 'reconcile':
             reconcile(args, plan)
         elif args.platform == 'local':
-            local_run(args, plan)
+            # Baseline procedural solving must not compete with timed local
+            # SOILIE workers. Both controllers take this same workstation lock.
+            with run_lock(ROOT / '.codex/benchmark/local-timing-scheduler'):
+                local_run(args, plan)
         else:
             cloud_run(args, plan)
 

@@ -11,7 +11,9 @@ import subprocess
 from serverless.benchmark.geometry import measure
 from serverless.benchmark.run_batch import write_json
 from serverless.benchmark.run_infinigen import COMMIT, PROFILES
-from serverless.benchmark.infinigen_task import CONTROLLED_PROFILES
+from serverless.benchmark.infinigen_task import (CONTROLLED_PROFILES, INVENTORY_VERSION,
+                                                validate_controlled_output)
+from serverless.benchmark.infinigen_metadata import generated_instances
 from serverless.benchmark.timing import session_summary
 from serverless.benchmark.supervise import command as supervised
 
@@ -95,6 +97,17 @@ def main():
     def export_attempt(attempt):
         directory = Path(attempt["outputDirectory"])
         artifact = directory/"geometry.json"
+        if config.get('profile') == 'controlled-inventory-fast':
+            if config.get('inventoryVersion') != INVENTORY_VERSION:
+                return None, {'id': attempt['id'], 'reason': 'Unknown controlled inventory version'}
+            try:
+                roles = validate_controlled_output(directory, attempt['roomType'],
+                                                   config['objectCount'], config['inventoryVersion'])
+                declared = config['controlledRoleCountsByRoom'][attempt['roomType']]
+                if Counter(roles) != Counter({role: n for role, n in declared.items() if n}):
+                    raise ValueError('Run inventory does not match the pinned inventory contract')
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                return None, {'id': attempt['id'], 'reason': str(error)}
         command = [str(args.blender),"--background",str(directory/"scene.blend"),"--threads",str(config.get('blenderThreads', 4)),
                    "--python-use-system-env","--python-exit-code","2","--python",str(exporter),"--",
                    "--state",str(directory/"solve_state.json"),"--room-type",attempt["roomType"],
@@ -102,7 +115,8 @@ def main():
         # A new exporter revision must never accidentally reuse an older capture.
         expected = {"exporterSha256":sha256(exporter),"metadataImporterSha256":sha256(exporter.with_name("infinigen_metadata.py")),
                     "supportSamplerSha256":sha256(exporter.with_name("mesh_support.py")),
-                    "blendSha256":sha256(directory/"scene.blend")}
+                    "blendSha256":sha256(directory/"scene.blend"),
+                    "stateSha256":sha256(directory/"solve_state.json")}
         receipt = directory/"geometry-receipt.json"
         cached = artifact.exists() and receipt.exists() and json.loads(receipt.read_text()) == expected
         if not cached:
@@ -124,6 +138,24 @@ def main():
                 scene['provenance']['controlledObjectCount'] = config['objectCount']
                 scene['provenance']['controlledRoleCounts'] = config['controlledRoleCounts']
                 scene['provenance']['controlImplementation'] = config['controlImplementation']
+            elif config['profile'] == 'controlled-inventory-fast':
+                # Count semantic roots, not the component meshes making up an
+                # asset. Every declared root must survive geometry export once.
+                records = json.loads((directory/'solve_state.json').read_text())['objs']
+                _room, instances = generated_instances(records, attempt['roomType'])
+                expected_ids = {identifier for identifier, _record in instances}
+                objects = scene.get('objects', [])
+                observed_ids = [obj.get('id') for obj in objects if obj.get('kind') == 'furniture']
+                if (len(observed_ids) != config['objectCount'] or len(objects) != len(observed_ids)
+                        or len(set(observed_ids)) != len(observed_ids) or set(observed_ids) != expected_ids):
+                    return None, {'id': attempt['id'], 'reason': 'Exported semantic inventory differs from solver inventory'}
+                scene['provenance'].update({
+                    'inventoryVersion': config['inventoryVersion'],
+                    'controlledObjectCount': config['objectCount'],
+                    'controlledRoleCounts': config['controlledRoleCountsByRoom'][attempt['roomType']],
+                    'inventoryScope': config['inventoryScope'],
+                    'controlImplementation': config['controlImplementation'],
+                })
         scene["provenance"].update(expected,commit=COMMIT)
         try:
             measure(scene)
