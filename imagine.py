@@ -231,15 +231,17 @@ if __name__=="__main__":
                         f"catalog cannot satisfy this terminal selection: {selection_error}"
                     )
 
-            coords = None
-            attempt_count = 1
-            while coords==None or not all(all(abs(c)<5 for c in o['coords']) for o in coords.values()):
-                # Keep generating coordinates until they are reasonable (within 5m from 0,0,0)
-                progbar_suffix = f'Triangulating coordinates for {len(objects)} objects -- Attempt {attempt_count}'
-                text_len = progress_bar.update(20, 100, progbar_prefix, progbar_suffix, length=10,prev_text_len=text_len)
-                coords,text_len = prepare_data.calculateCoords(objects,prev_text_len=text_len,progbar_prefix=progbar_prefix)
-                coords = dict(sorted(coords.items()))
-                attempt_count+=1
+            # The reconstruction origin is the first sampled anchor, not a room
+            # centre. A fixed component limit would therefore resample valid
+            # source geometry based on an arbitrary anchor choice. The geometry
+            # layer already rejects malformed and non-finite triplets, so retain
+            # its first complete result unchanged.
+            progbar_suffix = f'Triangulating coordinates for {len(objects)} objects'
+            text_len = progress_bar.update(20, 100, progbar_prefix, progbar_suffix, length=10,prev_text_len=text_len)
+            coords,text_len = prepare_data.calculateCoords(objects,prev_text_len=text_len,progbar_prefix=progbar_prefix)
+            if not coords:
+                raise prepare_data.TripletGeometryError('Coordinate construction returned no scene')
+            coords = dict(sorted(coords.items()))
 
             comments.append(progress_bar.random_comment())
             progbar_suffix = f'''{", ".join([o.split(".")[0].replace("_"," ").title() for o in coords.keys() if o.lower() not in ["camera","floor","wall"]])}... {comments[-1]}'''

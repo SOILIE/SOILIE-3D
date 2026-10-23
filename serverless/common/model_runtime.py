@@ -112,45 +112,44 @@ def _generate_model_inputs(
     *,
     return_alignment_diagnostics: bool,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Run coordinate construction and retain diagnostics for the accepted try."""
+    """Run one coordinate construction and retain its alignment diagnostics."""
 
     prepare_data, _working_combos, _png2gif = _load_original_modules(runtime_root)
     coverage_error = getattr(prepare_data, "TripletCoverageError", ())
     seed_model(seed)
-    attempt = 1
     with _model_working_directory(runtime_root):
-        while True:
-            try:
-                arguments = {
-                    "prev_text_len": 0,
-                    "progbar_prefix": f"SOILIE-3D coordinate pass {attempt}",
-                }
-                if return_alignment_diagnostics:
-                    arguments["return_alignment_diagnostics"] = True
-                    coordinates, _progress, diagnostics = prepare_data.calculateCoords(
-                        objects, **arguments,
-                    )
-                else:
-                    coordinates, _progress = prepare_data.calculateCoords(objects, **arguments)
-                    diagnostics = []
-            except SystemExit as error:
-                raise ModelGenerationError(
-                    "SOILIE-3D could not find the ordered triplets required for this scene."
-                ) from error
-            except coverage_error as error:
-                raise ModelGenerationError(
-                    "SOILIE-3D could not find the ordered triplets required for this scene."
-                ) from error
-            except prepare_data.TripletGeometryError as error:
-                raise ModelGenerationError(
-                    f"SOILIE-3D rejected invalid triplet geometry: {error}"
-                ) from error
-            if coordinates is not None and all(
-                all(abs(component) < 5 for component in value["coords"])
-                for value in coordinates.values()
-            ):
-                return coordinates, diagnostics
-            attempt += 1
+        try:
+            arguments = {
+                "prev_text_len": 0,
+                "progbar_prefix": "SOILIE-3D coordinate pass 1",
+            }
+            if return_alignment_diagnostics:
+                arguments["return_alignment_diagnostics"] = True
+                coordinates, _progress, diagnostics = prepare_data.calculateCoords(
+                    objects, **arguments,
+                )
+            else:
+                coordinates, _progress = prepare_data.calculateCoords(objects, **arguments)
+                diagnostics = []
+        except SystemExit as error:
+            raise ModelGenerationError(
+                "SOILIE-3D could not find the ordered triplets required for this scene."
+            ) from error
+        except coverage_error as error:
+            raise ModelGenerationError(
+                "SOILIE-3D could not find the ordered triplets required for this scene."
+            ) from error
+        except prepare_data.TripletGeometryError as error:
+            raise ModelGenerationError(
+                f"SOILIE-3D rejected invalid triplet geometry: {error}"
+            ) from error
+
+        # The first object anchor defines the reconstruction origin, so absolute
+        # components are not a room-boundary validity test. Keep the authored
+        # geometry unchanged; calculateCoords rejects impossible/non-finite data.
+        if not coordinates:
+            raise ModelGenerationError("SOILIE-3D coordinate construction returned no scene.")
+        return coordinates, diagnostics
 
 
 def generate_model_inputs(
