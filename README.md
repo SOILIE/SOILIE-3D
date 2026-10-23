@@ -116,7 +116,7 @@ The default processing path writes:
 * `data/{datasetName}/{sceneName}/{frameNumber}.3d`, containing the available 3D world coordinates for each object in the frame.
 * `data/object_colors.csv`, which accumulates sampled object colors from the labeled image regions.
 * `data/{datasetName}/objects.log`, an inventory of the objects encountered across that dataset.
-* `data/relation-inputs.json`, the authoritative manifest for one complete collector run. It binds each relation file to its annotation frame, RGB/depth identity, source profile, and exact camera pose. A failed or empty run leaves this manifest marked incomplete.
+* `data/relation-inputs.json`, listing each relation file with its annotation frame, RGB/depth identity, source profile, and camera pose.
 
 When the optional scene-level centroid block is enabled, it also writes:
 
@@ -124,30 +124,9 @@ When the optional scene-level centroid block is enabled, it also writes:
 * `data/{datasetName}/{sceneName}/{frameNumber}.csv`, containing angles (degrees) and distances (meters) between every permutation of **3 objects + camera** in the frame.
 * `data/{datasetName}/{sceneName}/{frameNumber}.jpg`, an annotated source image with colored object polygons and centroid labels.
 
-Washington preprocessing pins the artifact-derived native-v2 matrix
-`K = [[525, 0, 319], [0, 525, 239], [0, 0, 1]]` on the zero-based 640x480
-PNG grid (equivalent MATLAB one-based centre: `(320, 240)`). UW's
-[v2 documentation](https://rgbd-dataset.cs.washington.edu/dataset/rgbd-scenes-v2/README.txt)
-does not publish an exact `K`; 525 was selected by projecting official native-v2
-PLY points into the aligned RGB/depth frames across all 14 scenes. It fit every
-scene better than the 570.3-pixel
-[UW helper](https://rgbd-dataset.cs.washington.edu/software/depthToCloud.m) and
-the half-pixel-adjusted 540.021232
-[3DMatch conversion](https://github.com/andyzeng/3dmatch-toolbox/blob/72b08694710b5222855d1447a9b489d676b83557/training/match.hpp#L127-L133).
-Extrinsics are frame-specific: preprocessing converts each matching official
-`.pose` quaternion and camera-position row to a camera-to-world matrix and pins
-those sampled matrices in the scene receipt.
-
-Native Washington RGB-D Scenes v2 depth PNGs store unsigned 16-bit values in
-0.1 mm units and must explicitly declare
-`washington_rgbd_scenes_v2_native_uint16_tenth_mm`. Converted depth PNGs that
-really contain millimetres remain a distinct `plain_uint16_mm` source contract;
-the decoder never guesses from pixel magnitude. Historical Washington
-annotations used an estimated 525-pixel matrix but treated `(320, 240)` as a
-zero-based center; they lack the one-pixel principal-point correction, source
-calibration contract, and receipts. They are not reusable or relabeled in place.
-A raw-source rebuild writes the corrected declaration into the annotation and
-the reviewed calibration contract into the schema-v3 receipt.
+Washington RGB-D Scenes v2 uses a dataset-specific camera and depth contract.
+See [Washington RGB-D source geometry](docs/washington-rgbd-scenes-v2.md) for
+the intrinsic matrix, depth units, extrinsics, and source references.
 
 </details>
 
@@ -156,28 +135,16 @@ the reviewed calibration contract into the schema-v3 receipt.
 
 **Input**
 
-* The complete `data/relation-inputs.json` and only the exact per-frame relation files it names. Preparation does not recursively discover CSV files.
+* `data/relation-inputs.json` and the per-frame relation files it names.
 * `data/object_sizes_manual.csv` and `data/object_colors.csv` when constructing a novel scene.
 
 **Outputs**
 
 * `data/triplets.csv` contains angles and distances between permutations of **3 objects + camera**, aggregated from all frames in all scenes. Its canonical columns end in `angleBAC, angleOAB, angleOAC`: BAC is the angle between B-A and C-A, OAB is between O-A and B-A, and OAC is between O-A and C-A.
-* `data/triplets.sources.json` preserves the verified run, frame, annotation, RGB/depth, and pose provenance for the gathered table.
+* `data/triplets.sources.json` records run, frame, annotation, RGB/depth, and pose provenance for the gathered table.
 * `data/object_sizes.csv` contains the object-size estimates produced by the approximation step.
-* The `coords` value passed to `modules/render.py`, containing world-coordinate locations for a novel 3D scene. Incoming triplets are joined by a rigid rotation about their shared A-B axis; this keeps A and B fixed and preserves triplet distances instead of fitting an affine transform.
+* The `coords` value passed to `modules/render.py`, containing world-coordinate locations for a novel 3D scene. Incoming triplets are joined by a rigid rotation about their shared A-B axis, keeping A and B fixed and preserving triplet distances.
 * Optional JSON-safe alignment diagnostics containing the residual camera mismatch that an A-B-axis rotation cannot remove.
-
-The reviewed historical table used the same physical value order but had the
-three angle labels cycled. Readers reject that legacy header rather than guess.
-Create a separately verified canonical candidate with:
-
-```powershell
-New-Item -ItemType Directory -Force .codex/triplet-angle-fix | Out-Null
-python scripts/migrate_triplet_angles.py data/triplets.csv .codex/triplet-angle-fix/triplets.csv --receipt .codex/triplet-angle-fix/receipt.json
-```
-
-The migration changes only the header and will not replace either its input or
-an existing output.
 
 </details>
 
@@ -186,17 +153,14 @@ an existing output.
 
 **Input**
 
-* A newly regenerated canonical `triplets.csv` from the corrected world-coordinate collector.
-* Its explicitly reviewed SHA-256, plus the registered OBJ assets and object-size table.
+* `data/triplets.csv` from the world-coordinate collector.
+* The registered OBJ assets and object-size table.
 
 **Outputs**
 
-`scripts/rebuild_working_combos.py` writes separate, deterministic random and
-room-specific candidate catalogs with the exact `obj0` through `obj7` schema,
-covering supported scene sizes from three through eight objects. It also writes
-a hash-and-count receipt, refuses the two known camera-frame-derived triplet
-tables, and never replaces active data. Candidate catalogs remain inactive
-until their regenerated source and receipt are reviewed and promoted together.
+`scripts/rebuild_working_combos.py` writes deterministic random and room-specific
+candidate catalogs with `obj0` through `obj7` columns, covering supported scene
+sizes from three through eight objects.
 
 </details>
 
