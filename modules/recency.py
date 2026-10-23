@@ -1,22 +1,28 @@
 """Pure recency schedules shared by rendering and non-Blender tests.
 
 The sequence is cyclic because the rendered artifact is a looping GIF.  A
-settled focal state therefore contains the current object and its five most
-recent predecessors (or every object when the scene contains fewer than six).
+settled focal state therefore contains the current object and its four most
+recent predecessors (or every object when the scene contains fewer than five).
 Transitions use a two-phase handoff: the outgoing oldest predecessor reaches
 zero before the incoming focus begins to appear.  That keeps the hard maximum
-of six visible objects without introducing a discontinuity at the loop seam.
+of five visible objects without introducing a discontinuity at the loop seam.
 """
 
 from __future__ import annotations
 
 import math
+import re
 
 
 # Indexes are ages: zero is the current focus, one is its predecessor, etc.
-FOCUS_ALPHA_BY_AGE = (1.0, 0.50, 0.35, 0.20, 0.10, 0.05)
-REMESH_DEPTH_BY_AGE = (None, 7, 6, 5, 4, 3)
+FOCUS_ALPHA_BY_AGE = (1.0, 0.50, 0.35, 0.20, 0.10)
+REMESH_DEPTH_BY_AGE = (None, 7, 6, 5, 4)
 LIGHT_SUFFIX = ".Light"
+_WINDOW_ASSEMBLY_PATTERN = re.compile(
+    r"^(opaque_window|window|blinds|curtain)(?:_\d{4})?(?:\.\d+)?$",
+    re.IGNORECASE,
+)
+_LAMP_PATTERN = re.compile(r"^lamp(?:_\d{4})?(?:\.\d+)?$", re.IGNORECASE)
 
 
 def _validate_position(object_count: int, focus_index: int) -> None:
@@ -29,7 +35,7 @@ def _validate_position(object_count: int, focus_index: int) -> None:
 
 
 def stable_visibility(object_count: int, focus_index: int) -> tuple[float, ...]:
-    """Return cyclic opacity for the current object and five predecessors."""
+    """Return cyclic opacity for the current object and four predecessors."""
 
     _validate_position(object_count, focus_index)
     result = []
@@ -49,7 +55,7 @@ def transition_visibility(
     Retained objects interpolate for the full transition.  When the two focal
     states have different supports, outgoing objects fade during the first
     half and incoming objects rise during the second.  Thus their positive
-    intervals never overlap and the six-object visibility cap is invariant.
+    intervals never overlap and the five-object visibility cap is invariant.
     """
 
     _validate_position(object_count, focus_index)
@@ -114,15 +120,34 @@ def light_energy(maximum_energy: float, alpha: float) -> float:
     return maximum_energy * alpha
 
 
+def shadow_method_for_alpha(alpha: float) -> str:
+    """Return an Eevee shadow mode that cannot leak from a hidden object."""
+
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+        raise ValueError("alpha must be a finite number between 0 and 1")
+    alpha = float(alpha)
+    if not math.isfinite(alpha) or not 0.0 <= alpha <= 1.0:
+        raise ValueError("alpha must be a finite number between 0 and 1")
+    return "NONE" if alpha == 0.0 else "HASHED"
+
+
+def window_assembly_role(object_name: str) -> str | None:
+    """Classify exact window and covering instances, including Blender copies."""
+
+    if not isinstance(object_name, str):
+        return None
+    match = _WINDOW_ASSEMBLY_PATTERN.fullmatch(object_name)
+    return match.group(1).casefold() if match else None
+
+
 def luminous_object_type(object_name: str) -> str | None:
     """Return the supported light role owned by an imported scene object."""
 
     if not isinstance(object_name, str):
         return None
-    normalized = object_name.casefold()
-    if normalized.startswith("lamp"):
+    if _LAMP_PATTERN.fullmatch(object_name):
         return "lamp"
-    if normalized.startswith("window") or normalized.startswith("opaque_window"):
+    if window_assembly_role(object_name) in {"window", "opaque_window"}:
         return "window"
     return None
 

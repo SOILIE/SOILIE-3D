@@ -9,7 +9,6 @@ without introducing a second scene model.
 
 from __future__ import annotations
 
-import itertools
 import json
 import random
 import sqlite3
@@ -93,17 +92,21 @@ def is_supported_combination(connection: sqlite3.Connection, objects: Iterable[s
     """Mirror calculateCoords' exact ordered-triplet feasibility test."""
 
     names = list(objects)
-    if len(names) < 3:
+    if not MIN_OBJECT_COUNT <= len(names) <= MAX_OBJECT_COUNT:
         return False
     triplets = _triplet_keys(connection)
-    for ordering in set(itertools.permutations(names, len(names))):
-        good = [
-            (ordering[0], ordering[1], item)
-            for item in ordering[2:]
-            if (ordering[0], ordering[1], item) in triplets
-        ]
-        if all(name in {value for triple in good for value in triple} for name in names):
-            return True
+    # Positions are distinct instances even when their labels match.  Every
+    # non-anchor position therefore needs a row under the chosen ordered basis.
+    for anchor_a in range(len(names)):
+        for anchor_b in range(len(names)):
+            if anchor_a == anchor_b:
+                continue
+            if all(
+                partner in (anchor_a, anchor_b)
+                or (names[anchor_a], names[anchor_b], names[partner]) in triplets
+                for partner in range(len(names))
+            ):
+                return True
     return False
 
 

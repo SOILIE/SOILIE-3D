@@ -12,25 +12,30 @@ BASELINE = {
     "modules/timer.py": "eae6e389f0859d25a33cd8d04429bcde6310003f9e2a7c4b1d160c2cf3c46f9d",
     "suggested_setup.blend": "46285b7334eb11cbeaae213a7ae37bca890cfd79a23cd5825125051efcc7df0b",
     "assets/asset_rotations.csv": "c83fd551111f853c02a022d5469434d2f2cc0615661f41fa78d3a21538169842",
-    "requirements.txt": "c14202519e1dbbae9b6e44863d16f69b6f6e827b55c16da3cddc6d03955a16aa",
 }
 
 # These files intentionally differ from publication-2025. Pinning their patched
 # bytes keeps the reviewed maintenance surface explicit instead of weakening the
 # original-file parity check whenever a regression repair touches model code.
 REVIEWED_MAINTENANCE = {
+    "requirements.txt": "ee98c11e16e13a7e5672b53c48772c49d94d8bfb6cf8d98a382c3c25c3418dd2",
     "imagine.py": "1907be65a8883276004eb7b776015eee431771b20a0d0cc6dd8cabc536aa6ba9",
-    "modules/collect_data.py": "4718becd9331bb29f58e5db887e492c8d37de15c0c58603cd6fb601ada0f6f85",
-    "modules/import_tools.py": "ee6379943d29d16f144902c13364e460b96021b8f5b72a87802080750c123d17",
+    "modules/collect_data.py": "0c2034f6ce9dc4e736c341d51a4bf63517f19bfa018aa0ee87075960e1eda40a",
+    "modules/import_tools.py": "24941774b68c957f24ae07dad2681b6866c6058285da94bdb372d999a79fdb91",
+    "modules/object_identity.py": "e52161e7aa9466f5eaee019a75a271dd9a38468bc401c0928a8a071ee5520d0f",
     "modules/png2gif.py": "ec1ff753dbe970f303f7c8c5668cd7d9715773b54cc73613a01f17ffdf2ccc32",
-    "modules/prepare_data.py": "d7d24ec2f5b16b9536fea264c9a2bc5c5ec7e24086b5c79943008590804fb0be",
-    "modules/recency.py": "6f82ff6c76c87f88197b5a460284669982466a505970fda5f97ee2d83d82a60a",
-    "modules/render.py": "07fbb228ffed339085a73534c54a384d3a2d1ccfb94568cd27d38dbf2adf1040",
+    "modules/prepare_data.py": "d797b7400df318bca59508437cb90a27dc48d76988136d6bdc4a4a2a1d2b6c3d",
+    "modules/recency.py": "93aa5e7fa3149edd3bb2fd06fec1e9a801f45e61cdaff9dad5bb9540f40c75d9",
+    "modules/relation_manifest.py": "56b3d5ea2d157679056932206ab4fffa32f9216a17bc154b9b8541ff0b4a82d4",
+    "modules/render.py": "c4148085f11afba8d689f5137bb2ce957093c49edfda64f0985e1ee5eeddc3dd",
     "modules/source_geometry.py": "a8915def7ba82ecd72992db43c1f73752c844a45ee556e3d5821aba219cdbbb6",
     # Mounted window assemblies remain fixed, but cannot support furniture.
     "modules/support_settlement.py": "cd14f0573c0dd41592757c8375b16cb21b4e7c074b9e4cfd8d3d22160ad5e65b",
     "modules/working_combo_schema.py": "7af878e0f023c930010d11fa48a441d7e70e8d610a5896f5056682cb837d626b",
-    "modules/working_combos.py": "e37fc3aa97ba39c57bdbb743db056bed899dfa0019b4c824da9eb03ead5a49a3",
+    "modules/utils.py": "225ad84c4ce0b03fdadd0f89d7db49ebae50d373b2ae98d1983272ed713eb590",
+    "modules/working_combos.py": "6262f734677593599f3e2587ac715933e451c7c38454dc435404ba64ea279a0f",
+    "serverless/benchmark/requirements.txt": "97317ba8c4a56ca9b64c7393f3b43d1d3397fc64938ddd9928d85cb5404c1033",
+    "serverless/renderer/Dockerfile": "72a26431d5bd477f0f3ab13e54871655663dd8ccad52c045b9d21e16571f18f0",
 }
 
 

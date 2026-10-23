@@ -3,11 +3,13 @@ from __future__ import annotations
 import csv
 import inspect
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -22,11 +24,18 @@ except ModuleNotFoundError:
     plyfile_stub.PlyElement = object
     sys.modules['plyfile'] = plyfile_stub
 
+from modules import collect_data
 from modules import import_tools as imp
 from modules.collect_data import (
     Frame,
+    SceneObject,
+    _require_unique_relation_frame_ids,
     calculateCentroidsForScene,
     processJSON,
+)
+from modules.object_identity import (
+    decode_collector_object_label,
+    encode_collector_object_label,
 )
 from modules.source_geometry import (
     EXACT_FRAME_ID,
@@ -53,6 +62,54 @@ from modules.source_geometry import (
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_WORK_ROOT = ROOT / '.codex' / 'tests'
+
+
+def _write_collector_source(repository, frames, *, objects=None):
+    """Create a tiny local SUN3D source with one pose per JSON frame."""
+
+    source = repository / 'data' / 'princeton' / 'scene'
+    (source / 'extrinsics').mkdir(parents=True)
+    (source / 'image').mkdir()
+    (source / 'depth').mkdir()
+    (source / 'intrinsics.txt').write_text(
+        '1 0 0\n0 1 0\n0 0 1\n',
+        encoding='utf-8',
+    )
+
+    pose_rows = []
+    image_names = []
+    for index in range(len(frames)):
+        frame_id = index + 1
+        timestamp = (index + 1) * 100
+        image_name = f'{frame_id:07d}-{timestamp:012d}.jpg'
+        depth_name = f'{frame_id:07d}-{timestamp:012d}.png'
+        image_names.append(image_name)
+        Image.new('RGB', (1, 1), (0, 0, 0)).save(source / 'image' / image_name)
+        Image.fromarray(np.zeros((1, 1), dtype=np.uint16)).save(
+            source / 'depth' / depth_name,
+        )
+        pose_rows.extend((
+            f'1 0 0 {index}',
+            f'0 1 0 {index + 10}',
+            f'0 0 1 {index + 20}',
+        ))
+    (source / 'extrinsics' / 'reviewed.txt').write_text(
+        '\n'.join(pose_rows) + '\n',
+        encoding='utf-8',
+    )
+
+    payload = {
+        'name': 'scene',
+        'date': '2026-10-22',
+        'frames': frames,
+        'objects': objects if objects is not None else [{'name': 'chair:1'}],
+        'fileList': image_names,
+        'extrinsics': 'reviewed.txt',
+    }
+    annotation = repository / 'json' / 'princeton' / 'index000.json'
+    annotation.parent.mkdir(parents=True)
+    annotation.write_text(json.dumps(payload) + '\n', encoding='utf-8')
+    return payload, annotation
 
 
 class SourceProfileTests(unittest.TestCase):
@@ -160,6 +217,17 @@ class DepthContractTests(unittest.TestCase):
 
 
 class FrameBindingTests(unittest.TestCase):
+    def test_relation_output_frame_ids_are_unique_before_export(self):
+        duplicate_ids = (
+            FramePair('0000001-10.jpg', '0000010-11.png', 1, 10, 10, 11, 1),
+            FramePair('0000001-20.jpg', '0000011-21.png', 1, 11, 20, 21, 1),
+        )
+        with self.assertRaisesRegex(SourceGeometryError, r'overwrite.*frame IDs \[1\]'):
+            _require_unique_relation_frame_ids(duplicate_ids)
+
+        # An annotation frame that exports no relations cannot alias a file.
+        _require_unique_relation_frame_ids(duplicate_ids, empty_frame_indices=(1,))
+
     def test_sun3d_pairs_nearest_timestamp_in_annotation_order(self):
         pairs = pair_rgb_depth_files(
             ['0000002-000000000200.jpg', '0000001-000000000100.jpg'],
@@ -338,9 +406,9 @@ class WorldCoordinateCollectionTests(unittest.TestCase):
 
         row = next(
             item for item in frame.combos
-            if item['objectA'] == 'a_1'
-            and item['objectB'] == 'b_1'
-            and item['objectC'] == 'c_1'
+            if item['objectA'] == encode_collector_object_label('a', '1')
+            and item['objectB'] == encode_collector_object_label('b', '1')
+            and item['objectC'] == encode_collector_object_label('c', '1')
         )
         self.assertEqual(1.0, float(row['distanceAO']))
         self.assertEqual(90.0, float(row['angleBAC']))
@@ -379,9 +447,9 @@ class WorldCoordinateCollectionTests(unittest.TestCase):
                 frame.getAngleDistCombos(centroid_file)
                 rows.append(next(
                     item for item in frame.combos
-                    if item['objectA'] == 'a_1'
-                    and item['objectB'] == 'b_1'
-                    and item['objectC'] == 'c_1'
+                    if item['objectA'] == encode_collector_object_label('a', '1')
+                    and item['objectB'] == encode_collector_object_label('b', '1')
+                    and item['objectC'] == encode_collector_object_label('c', '1')
                 ))
 
         for field, expected in (
@@ -398,6 +466,158 @@ class WorldCoordinateCollectionTests(unittest.TestCase):
         self.assertAlmostEqual(8.0 ** 0.5, float(rows[1]['distanceAO']))
         self.assertAlmostEqual(135.0, float(rows[1]['angleOAB']))
         self.assertAlmostEqual(135.0, float(rows[1]['angleOAC']))
+
+    def test_relation_export_round_trips_delimiter_rich_instance_identities(self):
+        identities = (
+            ('lounge,chair_with_arms', '0001.001'),
+            ('table_under,top', 'instance_2'),
+            ('lamp', 'part:third'),
+        )
+        keys = [repr(list(identity)) for identity in identities]
+        coordinates = (
+            (1.0, 0.0, 0.0),
+            (2.0, 1.0, 0.0),
+            (1.0, 0.0, 2.0),
+        )
+        frame = Frame('7', 1, 1)
+        frame.centroids = dict(zip(keys, coordinates))
+
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            folder = Path(temporary)
+            centroid_file = folder / 'centroids.csv'
+            with centroid_file.open('w', newline='', encoding='utf-8') as handle:
+                writer = csv.writer(handle)
+                writer.writerow(('object', 'X', 'Y', 'Z'))
+                for key, coordinate in zip(keys, coordinates):
+                    writer.writerow((key, *coordinate))
+
+            frame.getAngleDistCombos(centroid_file).export(folder)
+            with (folder / '7.csv').open(newline='', encoding='utf-8') as handle:
+                row = next(csv.DictReader(handle))
+
+        self.assertEqual(
+            identities,
+            tuple(
+                decode_collector_object_label(row[field])
+                for field in ('objectA', 'objectB', 'objectC')
+            ),
+        )
+
+    def test_unlabeled_source_instance_uses_stable_object_id(self):
+        self.assertEqual(['chair', '17'], SceneObject(17, 'chair').getName())
+        self.assertEqual(
+            ['chair', 'source:subpart'],
+            SceneObject(17, 'chair:source:subpart').getName(),
+        )
+
+    def test_process_json_preserves_repeated_class_only_source_instances(self):
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        frame = {
+            'polygon': [
+                {'object': index, 'x': [0], 'y': [0]}
+                for index in range(3)
+            ],
+        }
+        objects = [
+            {'name': 'chair'},
+            {'name': 'chair'},
+            {'name': 'table'},
+        ]
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            repository = Path(temporary)
+            payload, annotation = _write_collector_source(
+                repository,
+                [frame],
+                objects=objects,
+            )
+            annotation.write_text(json.dumps(payload) + '\n', encoding='utf-8')
+            annotation_digest = collect_data.sha256_file(annotation)
+            observed_polygon_keys = []
+            centroids = {}
+
+            def capture_centroids(current_frame, polygons):
+                observed_polygon_keys.extend(polygons)
+                coordinates = (
+                    np.array((1.0, 0.0, 0.0)),
+                    np.array((0.0, 1.0, 0.0)),
+                    np.array((0.0, 0.0, 1.0)),
+                )
+                current_frame.centroids = dict(zip(polygons, coordinates))
+                centroids.update(current_frame.centroids)
+                return current_frame
+
+            def export_scene_centroids(path, _plot=0, **_kwargs):
+                with (Path(path) / 'centroids.csv').open(
+                    'w', newline='', encoding='utf-8',
+                ) as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(('object', 'X', 'Y', 'Z'))
+                    for key, coordinate in centroids.items():
+                        writer.writerow((key, *coordinate))
+                return centroids
+
+            def export_relation(current_frame, output_path):
+                relation_path = Path(output_path) / f'{current_frame.ID}.csv'
+                with relation_path.open('w', newline='', encoding='utf-8') as handle:
+                    writer = csv.DictWriter(
+                        handle,
+                        fieldnames=(
+                            'objectA', 'objectB', 'objectC',
+                            'distanceAB', 'distanceAC', 'distanceAO',
+                            'angleBAC', 'angleOAB', 'angleOAC',
+                        ),
+                    )
+                    writer.writeheader()
+                    writer.writerows(current_frame.combos)
+                return current_frame
+
+            previous = Path.cwd()
+            try:
+                os.chdir(repository)
+                with (
+                    patch.object(Frame, 'update', lambda value: value),
+                    patch.object(Frame, 'calculateCentroids', capture_centroids),
+                    patch.object(Frame, 'drawPolygons', lambda value, *_args: value),
+                    patch.object(Frame, 'process3dPoints', lambda value, *_args: value),
+                    patch.object(Frame, 'export', export_relation),
+                    patch.object(
+                        collect_data,
+                        'calculateCentroidsForScene',
+                        side_effect=export_scene_centroids,
+                    ),
+                ):
+                    _all_objects, records = processJSON(
+                        payload,
+                        [],
+                        repository,
+                        'princeton',
+                        True,
+                        0,
+                        return_relation_records=True,
+                        annotation_path=annotation,
+                        annotation_sha256=annotation_digest,
+                    )
+            finally:
+                os.chdir(previous)
+
+            self.assertEqual(
+                {"['chair', '0']", "['chair', '1']", "['table', '2']"},
+                set(observed_polygon_keys),
+            )
+            self.assertEqual(1, len(records))
+            self.assertEqual(6, records[0]['relation']['rowCount'])
+            relation_path = repository / 'data' / 'princeton' / 'scene' / '1.csv'
+            with relation_path.open(newline='', encoding='utf-8') as handle:
+                decoded = {
+                    decode_collector_object_label(row[column])
+                    for row in csv.DictReader(handle)
+                    for column in ('objectA', 'objectB', 'objectC')
+                }
+            self.assertEqual(
+                {('chair', '0'), ('chair', '1'), ('table', '2')},
+                decoded,
+            )
 
     def test_world_jsonl_aggregation_rejects_legacy_and_respects_zero_plots(self):
         TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
@@ -501,12 +721,229 @@ class WorldCoordinateCollectionTests(unittest.TestCase):
     def test_scene_relation_export_is_named_and_enabled_by_default(self):
         parameter = inspect.signature(processJSON).parameters['export_scene_relations']
         self.assertIs(True, parameter.default)
+        result_parameter = inspect.signature(processJSON).parameters[
+            'return_relation_records'
+        ]
+        self.assertIs(False, result_parameter.default)
+
+        with self.assertRaisesRegex(SourceGeometryError, 'run manifest'):
+            processJSON({}, [], '.', 'princeton', True, 0)
 
         with self.assertRaisesRegex(TypeError, 'must be a boolean'):
             processJSON(
                 {}, [], '.', 'princeton', True, 0,
                 export_scene_relations='yes',
             )
+
+        with self.assertRaisesRegex(TypeError, 'return_relation_records'):
+            processJSON(
+                {}, [], '.', 'princeton', True, 0,
+                export_scene_relations=False,
+                return_relation_records='yes',
+            )
+
+    def test_process_json_opt_out_retains_historical_all_objects_result(self):
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            repository = Path(temporary)
+            payload, _annotation = _write_collector_source(
+                repository,
+                [{'polygon': []}],
+            )
+            all_objects = []
+            previous = Path.cwd()
+            try:
+                os.chdir(repository)
+                result = processJSON(
+                    payload,
+                    all_objects,
+                    repository,
+                    'princeton',
+                    True,
+                    0,
+                    export_scene_relations=False,
+                )
+            finally:
+                os.chdir(previous)
+
+            self.assertIs(all_objects, result)
+
+    def test_interspersed_empty_frames_keep_original_source_context(self):
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        frames = [
+            {'polygon': [{'object': 0, 'x': [0], 'y': [0]}]},
+            {'polygon': []},
+            {'polygon': [{'object': 0, 'x': [0], 'y': [0]}]},
+        ]
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            repository = Path(temporary)
+            payload, annotation = _write_collector_source(repository, frames)
+            annotation_digest = collect_data.sha256_file(annotation)
+
+            def export_relation(frame, output_path):
+                relation_path = Path(output_path) / f'{frame.ID}.csv'
+                with relation_path.open('w', newline='', encoding='utf-8') as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow((
+                        'objectA', 'objectB', 'objectC',
+                        'distanceAB', 'distanceAC', 'distanceAO',
+                        'angleBAC', 'angleOAB', 'angleOAC',
+                    ))
+                    writer.writerow((
+                        encode_collector_object_label('a', '1'),
+                        encode_collector_object_label('b', '1'),
+                        encode_collector_object_label('c', '1'),
+                        1, 1, 1, 90, 90, 90,
+                    ))
+                return frame
+
+            previous = Path.cwd()
+            try:
+                os.chdir(repository)
+                with (
+                    patch.object(Frame, 'update', lambda frame: frame),
+                    patch.object(Frame, 'calculateCentroids', lambda frame, _polygons: frame),
+                    patch.object(Frame, 'drawPolygons', lambda frame, _polygons, _dataset: frame),
+                    patch.object(Frame, 'process3dPoints', lambda frame, _path, _plot: frame),
+                    patch.object(Frame, 'getAngleDistCombos', lambda frame, _path: frame),
+                    patch.object(Frame, 'export', export_relation),
+                    patch.object(collect_data, 'calculateCentroidsForScene', return_value={}),
+                ):
+                    _all_objects, records = processJSON(
+                        payload,
+                        [],
+                        repository,
+                        'princeton',
+                        True,
+                        0,
+                        return_relation_records=True,
+                        annotation_path=annotation,
+                        annotation_sha256=annotation_digest,
+                    )
+            finally:
+                os.chdir(previous)
+
+            self.assertEqual([0, 2], [record['jsonFrameIndex'] for record in records])
+            self.assertEqual([1, 3], [record['image']['frameId'] for record in records])
+            self.assertEqual([1, 3], [record['depth']['frameId'] for record in records])
+            self.assertEqual([0, 2], [record['pose']['index'] for record in records])
+            self.assertEqual(
+                [[0.0, 10.0, 20.0], [2.0, 12.0, 22.0]],
+                [[row[3] for row in record['pose']['cameraToWorld']] for record in records],
+            )
+
+    def test_all_empty_scene_returns_no_relation_records(self):
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            repository = Path(temporary)
+            payload, annotation = _write_collector_source(
+                repository,
+                [{'polygon': []}, {}, {'polygon': []}],
+            )
+            annotation_digest = collect_data.sha256_file(annotation)
+            all_objects = []
+            previous = Path.cwd()
+            try:
+                os.chdir(repository)
+                result_objects, records = processJSON(
+                    payload,
+                    all_objects,
+                    repository,
+                    'princeton',
+                    True,
+                    0,
+                    return_relation_records=True,
+                    annotation_path=annotation,
+                    annotation_sha256=annotation_digest,
+                )
+            finally:
+                os.chdir(previous)
+
+            self.assertIs(all_objects, result_objects)
+            self.assertEqual([], records)
+
+    def test_collector_main_publishes_one_manifest_after_all_scene_records(self):
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            repository = Path(temporary)
+            annotations = repository / 'json' / 'princeton'
+            annotations.mkdir(parents=True)
+            (annotations / 'index000.json').write_text('{}\n', encoding='utf-8')
+            events = []
+            frame_record = {'sealed': 'frame'}
+
+            def begin(path):
+                events.append(('begin', Path(path).as_posix()))
+                return '00000000-0000-4000-8000-000000000001'
+
+            def process(*args, **kwargs):
+                events.append(('process', kwargs['annotation_sha256']))
+                self.assertIs(True, kwargs['return_relation_records'])
+                self.assertEqual(
+                    (annotations / 'index000.json').resolve(),
+                    kwargs['annotation_path'].resolve(),
+                )
+                return [], [frame_record]
+
+            def complete(path, **kwargs):
+                events.append(('complete', tuple(kwargs['frames'])))
+                self.assertEqual(
+                    '00000000-0000-4000-8000-000000000001',
+                    kwargs['collection_id'],
+                )
+
+            previous = Path.cwd()
+            try:
+                os.chdir(repository)
+                with (
+                    patch.object(collect_data.menu, 'optionMenu', return_value={
+                        'princeton': [str(repository), True, 0, None],
+                    }),
+                    patch.object(collect_data, 'begin_relation_run', side_effect=begin),
+                    patch.object(collect_data, 'processJSON', side_effect=process),
+                    patch.object(collect_data, 'complete_relation_run', side_effect=complete),
+                ):
+                    collect_data.main()
+            finally:
+                os.chdir(previous)
+
+            self.assertEqual('begin', events[0][0])
+            self.assertEqual('process', events[1][0])
+            self.assertEqual(('complete', (frame_record,)), events[2])
+
+    def test_collector_main_leaves_incomplete_manifest_when_no_records_exist(self):
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
+            repository = Path(temporary)
+            annotations = repository / 'json' / 'princeton'
+            annotations.mkdir(parents=True)
+            (annotations / 'index000.json').write_text('{}\n', encoding='utf-8')
+
+            previous = Path.cwd()
+            try:
+                os.chdir(repository)
+                with (
+                    patch.object(collect_data.menu, 'optionMenu', return_value={
+                        'princeton': [str(repository), True, 0, None],
+                    }),
+                    patch.object(collect_data, 'processJSON', return_value=([], [])) as process,
+                    patch.object(collect_data, 'complete_relation_run') as complete,
+                ):
+                    with self.assertRaisesRegex(
+                        collect_data.RelationManifestError,
+                        'no relation frame records.*INCOMPLETE',
+                    ):
+                        collect_data.main()
+            finally:
+                os.chdir(previous)
+
+            self.assertIs(True, process.call_args.kwargs['return_relation_records'])
+            complete.assert_not_called()
+            manifest = json.loads(
+                (repository / 'data' / 'relation-inputs.json').read_text(encoding='utf-8'),
+            )
+            self.assertEqual('incomplete', manifest['status'])
+            self.assertEqual([], manifest['frames'])
 
 
 if __name__ == '__main__':

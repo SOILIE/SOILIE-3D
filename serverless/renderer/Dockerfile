@@ -14,7 +14,8 @@ RUN dnf install -y \
     && tar -xJf /tmp/blender.tar.xz --strip-components=1 -C /opt/blender \
     && rm /tmp/blender.tar.xz
 
-RUN pip install --no-cache-dir numpy==1.26.4 pandas==2.1.4 Pillow==10.4.0
+# Pillow 13.0.0 is the first release patched for GHSA-8g5g-8vmr-9782.
+RUN pip install --no-cache-dir numpy==1.26.4 pandas==2.1.4 Pillow==13.0.0
 
 COPY serverless /var/task/serverless
 COPY package.json /var/task/package.json

@@ -3,5 +3,6 @@ numpy==1.26.4
 scipy==1.14.1
 shapely==2.0.6
 pandas==2.1.4
-Pillow==10.4.0
+# Pillow 13.0.0 is the first release patched for GHSA-8g5g-8vmr-9782.
+Pillow==13.0.0
 tiktoken==0.11.0

@@ -20,16 +20,20 @@ try:
         light_belongs_to_object,
         light_energy,
         luminous_object_type,
+        shadow_method_for_alpha,
         transition_remesh_depths,
         transition_visibility,
+        window_assembly_role,
     )
 except ImportError:  # Package imports outside Blender resolve through modules.
     from .recency import (
         light_belongs_to_object,
         light_energy,
         luminous_object_type,
+        shadow_method_for_alpha,
         transition_remesh_depths,
         transition_visibility,
+        window_assembly_role,
     )
 
 SIZE_MAP = {'xsmall': 0, 'small': 1, 'medium': 2, 'large': 3, 'xlarge': 4}
@@ -390,6 +394,19 @@ def load_variables(inputs):
     return og_inputs, inputs, params
 
 
+def make_materials_single_user(obj):
+    """Detach mesh and material datablocks before per-instance animation."""
+
+    # Linked duplicates share their material-slot container through the mesh.
+    # Detach that container first or replacing a slot for one object also
+    # replaces it for every linked instance.
+    if obj.data.users > 1:
+        obj.data = obj.data.copy()
+    for slot_index, material in enumerate(tuple(obj.data.materials)):
+        if material is not None:
+            obj.data.materials[slot_index] = material.copy()
+
+
 def load_assets(inputs,params):
     rotations = load_rotations()
     valid_assets = [v2 for v1 in rotations.values() for v2 in v1.keys()]
@@ -413,6 +430,10 @@ def load_assets(inputs,params):
         if len(matching_objects)>1:
             asset_name = max(matching_objects, key=blender_copy_index)
         obj = bpy.data.objects.get(asset_name)
+        # OBJ imports may reuse material datablocks.  Focus animation mutates
+        # material nodes, so every Blender instance must own independent copies
+        # or a duplicate chair can silently inherit another chair's opacity.
+        make_materials_single_user(obj)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -468,14 +489,17 @@ def transform_objects(inputs):
         bpy.context.view_layer.update()
         reset_object_rotation(obj)
         current_rotations[asset_name] = 0
-    # Resize blinds and curtains to window
+    # Resize every covering instance to its corresponding window.  Instance
+    # suffixes are input IDs here (``curtain.1``), not filename extensions.
     for obj_name,properties in inputs.items():
         obj = properties['blender_obj']
-        if obj_name=='blinds':
-            obj.dimensions = inputs['window']['blender_obj'].dimensions
-        if obj_name=='curtain':
+        base_name, separator, suffix = obj_name.partition('.')
+        window_name = f'window.{suffix}' if separator and f'window.{suffix}' in inputs else 'window'
+        if base_name=='blinds' and window_name in inputs:
+            obj.dimensions = inputs[window_name]['blender_obj'].dimensions
+        if base_name=='curtain' and window_name in inputs:
             # make curtains 5% larger than window
-            obj.dimensions = inputs['window']['blender_obj'].dimensions*1.05
+            obj.dimensions = inputs[window_name]['blender_obj'].dimensions*1.05
         bpy.context.view_layer.update()
     return current_rotations
 
@@ -1082,7 +1106,7 @@ def _fixed_collision_objects(sorted_objects):
     '''Windows and their coverings share architecture space intentionally.'''
     return frozenset(
         name for name in sorted_objects
-        if name.split('.')[0].lower() in {'window','blinds','curtain'}
+        if window_assembly_role(name) is not None
     )
 
 
@@ -1188,7 +1212,7 @@ def adjust_windows_to_walls(chisel_walls=True):
     scene_objects = bpy.context.scene.objects
     walls = [obj for obj in scene_objects if "Wall" in obj.name]
     target_objects = [obj for obj in scene_objects
-        if obj.name.lower().split('_')[0] in ['window','blinds','curtain']]
+        if window_assembly_role(obj.name) is not None]
 
     for obj in target_objects:
 
@@ -1199,8 +1223,8 @@ def adjust_windows_to_walls(chisel_walls=True):
         bpy.ops.object.select_all(action='DESELECT')
 
         # Make sure windows, curtains, and blinds are attached to the wall
-        obj_name = obj.name.lower().split('_')[0]
-        slight_shift = 0.1 if obj_name=='window' else 0.17
+        obj_name = window_assembly_role(obj.name)
+        slight_shift = 0.1 if obj_name in {'window', 'opaque_window'} else 0.17
         if 'front' in nearest_wall.name.lower():
             obj.location.x = nearest_wall.location.x-slight_shift
         elif 'back' in nearest_wall.name.lower():
@@ -1215,7 +1239,7 @@ def adjust_windows_to_walls(chisel_walls=True):
         # The window defines the opening. Curtains and blinds intentionally
         # share that opening, so subtracting each overlapping covering from the
         # wall can make Blender's Boolean result extend beyond the source wall.
-        if chisel_walls and obj_name == 'window':
+        if chisel_walls and obj_name in {'window', 'opaque_window'}:
             cut_window_opening(obj, nearest_wall)
             bpy.context.view_layer.update()
 
@@ -1388,11 +1412,13 @@ def change_imagination_focus(
     remesh_depths = transition_remesh_depths(
         len(assets_in_order), curr_index, t)
     # Get the current focus object
-    focus_obj = bpy.data.objects[os.path.splitext(current)[0]]
+    # ``asset_name`` is already an extension-free Blender object ID.  A suffix
+    # such as ``.001`` distinguishes a real duplicate and must never be stripped.
+    focus_obj = bpy.data.objects[current]
     focus_obj_loc = get_centroid(focus_obj)
     # Get the next focus object
     next_obj_name = assets_in_order[(curr_index+1)%len(assets_in_order)]
-    next_obj = bpy.data.objects[os.path.splitext(next_obj_name)[0]]
+    next_obj = bpy.data.objects[next_obj_name]
     next_obj_loc = get_centroid(next_obj)
     # Calculate focus point location
     ## Curr_frame/total_frames (t) = the fraction of the way between
@@ -1407,36 +1433,40 @@ def change_imagination_focus(
     apply_colors_to_objects(colors)
     for i, obj_name in enumerate(assets_in_order):
         # Ensure your object is selected and active
-        obj = bpy.data.objects[os.path.splitext(obj_name)[0]]
-        # Check if the object has a material, if not, create one
-        mat = obj.data.materials[0] if obj.data.materials else bpy.data.materials.new(name=f"{obj.name}_material")
-        obj.data.materials.append(mat) if not obj.data.materials else None
-        # Use nodes to set up transparency
-        mat.use_nodes = True
-        nodes = mat.node_tree.nodes
-        links = mat.node_tree.links
-        # Clear existing nodes
-        nodes.clear()
-        # Create a principled BSDF shader node
-        shader_node = nodes.new(type='ShaderNodeBsdfPrincipled')
-        shader_node.location = (0,0)
-        # Create an output node
-        output_node = nodes.new(type='ShaderNodeOutputMaterial')
-        output_node.location = (400,0)
-        # Connect the shader to the output
-        links.new(shader_node.outputs['BSDF'], output_node.inputs['Surface'])
+        obj = bpy.data.objects[obj_name]
+        # A multi-material imported mesh must fade as one object.  Updating
+        # only slot zero leaves panes, trim, or upholstery fully visible.
+        if not obj.data.materials:
+            obj.data.materials.append(bpy.data.materials.new(name=f"{obj.name}_material"))
         # Assign color
         color = colors[obj_name]
         # Adjust the alpha value to change opacity, where 0 is fully transparent and 1 is fully
         ## Stable recency mapping from octree depth to opacity:
-        ## 3: 0.05, 4: 0.10, 5: 0.20, 6: 0.35, 7: 0.50.
+        ## 4: 0.10, 5: 0.20, 6: 0.35, 7: 0.50.
         ## The current object is fully opaque and has no recency remesh.
-        shader_node.inputs['Alpha'].default_value = alphas[i] # Set to desired transparency level
-        shader_node.inputs['Base Color'].default_value = Vector(list(color) + [alphas[i]]) # RGBA
+        for mat in obj.data.materials:
+            if mat is None:
+                continue
+            mat.use_nodes = True
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+            nodes.clear()
+            shader_node = nodes.new(type='ShaderNodeBsdfPrincipled')
+            shader_node.location = (0,0)
+            output_node = nodes.new(type='ShaderNodeOutputMaterial')
+            output_node.location = (400,0)
+            links.new(shader_node.outputs['BSDF'], output_node.inputs['Surface'])
+            shader_node.inputs['Alpha'].default_value = alphas[i]
+            shader_node.inputs['Base Color'].default_value = Vector(list(color) + [alphas[i]])
+            mat.blend_method = 'BLEND'
+            mat.shadow_method = shadow_method_for_alpha(alphas[i])
+            mat.node_tree.nodes.update()
         obj.color = Vector(list(color) + [alphas[i]]) # RGBA
-        # Set blend mode for transparency in Eevee
-        mat.blend_method = 'BLEND'
-        mat.shadow_method = 'HASHED'
+        # Fully hidden items must neither render nor cast a residual opaque
+        # shadow.  Both properties are restored on their next visible frame.
+        obj.hide_render = alphas[i] == 0.0
+        if hasattr(obj, 'visible_shadow'):
+            obj.visible_shadow = alphas[i] > 0.0
         # Adjust lamp lighting and window
         light_type = luminous_object_type(obj_name)
         if light_type is not None:
@@ -1477,7 +1507,57 @@ def change_imagination_focus(
             # Remove the blocky features to ensure object is full resolution
             if remesh_mod:
                 obj.modifiers.remove(remesh_mod)
-        mat.node_tree.nodes.update()
+
+
+def set_imagination_objects_opaque(
+        assets_in_order, colors, lights, max_lum_lamp, max_lum_window):
+    """Restore all model objects for an all-object evidence capture."""
+
+    for obj_name in assets_in_order:
+        obj = bpy.data.objects[obj_name]
+        if not obj.data.materials:
+            obj.data.materials.append(bpy.data.materials.new(name=f"{obj.name}_material"))
+        color = colors[obj_name]
+        for mat in obj.data.materials:
+            if mat is None:
+                continue
+            mat.use_nodes = True
+            shader = mat.node_tree.nodes.get('Principled BSDF')
+            if shader is None:
+                shader = mat.node_tree.nodes.new('ShaderNodeBsdfPrincipled')
+            shader.inputs['Alpha'].default_value = 1.0
+            shader.inputs['Base Color'].default_value = Vector((*color, 1.0))
+            mat.blend_method = 'OPAQUE'
+            mat.shadow_method = 'OPAQUE'
+            mat.node_tree.nodes.update()
+        obj.color = Vector((*color, 1.0))
+        obj.hide_render = False
+        if hasattr(obj, 'visible_shadow'):
+            obj.visible_shadow = True
+        for modifier in list(obj.modifiers):
+            if (modifier.name == RECENCY_REMESH_MODIFIER
+                    or modifier.name.startswith(f'{RECENCY_REMESH_MODIFIER}.')):
+                obj.modifiers.remove(modifier)
+
+        light_type = luminous_object_type(obj_name)
+        if light_type is not None:
+            maximum = max_lum_lamp if light_type == 'lamp' else max_lum_window
+            for light in lights:
+                if light_belongs_to_object(obj_name, light.name):
+                    light.data.energy = maximum
+
+
+def take_opaque_snapshot_from_above(
+        filepath, assets_in_order, colors, lights,
+        max_lum_lamp, max_lum_window):
+    """Capture an evidence still only after restoring the complete scene."""
+
+    # Keep the restoration immediately adjacent to the render.  The animation
+    # deliberately hides older objects, so relying on a caller's earlier state
+    # can silently turn a birds-eye evidence image into a five-object view.
+    set_imagination_objects_opaque(
+        assets_in_order, colors, lights, max_lum_lamp, max_lum_window)
+    take_snapshot_from_above(filepath)
 
 
 def apply_colors_to_objects(colors):
@@ -1492,18 +1572,18 @@ def apply_colors_to_objects(colors):
             continue
         color = colors[obj.name]
         if not obj.data.materials:
-            mat = bpy.data.materials.new(name=obj.name + "_Material")
-            obj.data.materials.append(mat)
-        else:
-            mat = obj.data.materials[0]
-        mat.use_nodes = True
-        nodes = mat.node_tree.nodes
-        shader = nodes.get('Principled BSDF')
-        if shader is None:
-            shader = nodes.new('ShaderNodeBsdfPrincipled')
-        shader.inputs['Base Color'].default_value = Vector((color[0], color[1], color[2], 1))
+            obj.data.materials.append(bpy.data.materials.new(name=obj.name + "_Material"))
+        for mat in obj.data.materials:
+            if mat is None:
+                continue
+            mat.use_nodes = True
+            nodes = mat.node_tree.nodes
+            shader = nodes.get('Principled BSDF')
+            if shader is None:
+                shader = nodes.new('ShaderNodeBsdfPrincipled')
+            shader.inputs['Base Color'].default_value = Vector((color[0], color[1], color[2], 1))
+            mat.node_tree.nodes.update()
         obj.color = Vector((color[0], color[1], color[2], 1))
-        mat.node_tree.nodes.update()
         bpy.context.view_layer.update()
 
 
@@ -1531,6 +1611,32 @@ def finalize_room_placement(inputs):
     if support_moves:
         print('---| Final mesh support settlement:', json.dumps(support_moves))
     return support_moves
+
+
+def imagination_object_output_record(obj_name, asset_name, inputs):
+    """Serialize one exact Blender instance after recency effects are removed."""
+
+    # ``asset_name`` is a Blender object ID, not a filename.  In particular,
+    # ``chair_0001.001`` must remain distinct from ``chair_0001`` here just as
+    # it does while focus and recency materials are applied.
+    obj = bpy.data.objects[asset_name]
+    lx, ly, lz = obj.location
+    rx, ry, rz = (degrees(value) for value in obj.rotation_euler)
+    sx, sy, sz = obj.dimensions
+    return {
+        'obj_name': obj_name,
+        'asset_name': asset_name,
+        'color_r': inputs[obj_name]['color'][0],
+        'color_g': inputs[obj_name]['color'][1],
+        'color_b': inputs[obj_name]['color'][2],
+        'og_x': inputs[obj_name]['coords'][0],
+        'og_y': inputs[obj_name]['coords'][1],
+        'og_z': inputs[obj_name]['coords'][2],
+        'loc_x': lx, 'loc_y': ly, 'loc_z': lz,
+        'rot_x': rx, 'rot_y': ry, 'rot_z': rz,
+        'dim_x': sx, 'dim_y': sy, 'dim_z': sz,
+        'sizecat': inputs[obj_name]['size']['category'],
+    }
 
 
 def visualize(inputs):
@@ -1611,8 +1717,15 @@ def visualize(inputs):
     # Determine output folder
     curr_out_folder = generate_next_output_folder()
 
-    # Render a bird's eye view before transparency and 8-bit effects applied
-    take_snapshot_from_above(f'output/{curr_out_folder}/01_birds_eye_view.png')
+    objects_in_order = [obj_name for obj_name in inputs.keys()]
+    random.shuffle(objects_in_order)
+    assets_in_order = [inputs[obj_name]['asset_name'] for obj_name in objects_in_order]
+
+    # Evidence captures are intentionally all-object views, independent of the
+    # five-item imagination animation that follows.
+    take_opaque_snapshot_from_above(
+        f'output/{curr_out_folder}/01_birds_eye_view.png',
+        assets_in_order, colors, lights, max_lum_lamp, max_lum_window)
 
     # Save original inputs as JSON
     json.dump(og_inputs,open(f'output/{curr_out_folder}/00_blender_inputs.json','w'))
@@ -1660,51 +1773,40 @@ def visualize(inputs):
     ## Delete walls closest to the camera for better visibility inside the room
     delete_closest_walls_to_camera(walls)
 
-    ## Randomly shuffle objects to simulate different order of "imagining" items
-    objects_in_order = [obj_name for obj_name in inputs.keys()]
-    random.shuffle(objects_in_order)
-    assets_in_order = [inputs[obj_name]['asset_name'] for obj_name in objects_in_order]
-
     filename = '-'.join([o.split('.')[0] for o in objects_in_order])
 
     fpo = 4 # frames per object
-    for obj_i,asset_name in enumerate(assets_in_order):
-        obj_name = objects_in_order[obj_i]
+    for obj_i in range(len(assets_in_order)):
         for i in range(fpo):
             # Change focus by i/fpo of the way to the next object
             change_imagination_focus(
                 obj_i, assets_in_order, i, fpo, colors, lights,
                 max_lum_lamp, max_lum_window)
-            # If it's the first frame of final object
-            if obj_i==len(assets_in_order)-1 and i==0:
-                # Render a final bird's eye view of the imagined scene
-                take_snapshot_from_above(f'output/{curr_out_folder}/02_birds_eye_view.png')
             # Render/save snapshots for gif animation
             filepath = generateFileName(f'output/{curr_out_folder}/{filename}_0001.png')
             bpy.data.scenes['Scene'].render.filepath = filepath
             bpy.ops.render.render(write_still=True)
-        # Update final object locations, rotations, and sizes for output
-        obj = bpy.data.objects[os.path.splitext(asset_name)[0]]
-        lx,ly,lz,rx,ry,rz,sx,sy,sz=[
-            obj.location.x,obj.location.y,obj.location.z,
-            degrees(obj.rotation_euler.x),
-            degrees(obj.rotation_euler.y),
-            degrees(obj.rotation_euler.z),
-            obj.dimensions.x,obj.dimensions.y,obj.dimensions.z]
-        sizecat = inputs[obj_name]['size']['category']
-        output.append({
-            'obj_name':obj_name,
-            'asset_name':asset_name,
-            'color_r':inputs[obj_name]['color'][0],
-            'color_g':inputs[obj_name]['color'][1],
-            'color_b':inputs[obj_name]['color'][2],
-            'og_x':inputs[obj_name]['coords'][0],
-            'og_y':inputs[obj_name]['coords'][1],
-            'og_z':inputs[obj_name]['coords'][2],
-            'loc_x':lx,'loc_y':ly,'loc_z':lz,
-            'rot_x':rx,'rot_y':ry,'rot_z':rz,
-            'dim_x':sx,'dim_y':sy,'dim_z':sz,
-            'sizecat':sizecat})
+
+    # The render loop ends three quarters through the last-to-first handoff.
+    # Reapply a settled state so the imagination-effect still has exactly the
+    # current item plus four predecessors, never a transition-dependent view.
+    change_imagination_focus(
+        len(assets_in_order) - 1, assets_in_order, 0, fpo, colors, lights,
+        max_lum_lamp, max_lum_window)
+    take_snapshot_from_above(
+        f'output/{curr_out_folder}/02_birds_eye_view.png')
+
+    # Recency remesh modifiers intentionally alter displayed geometry. Remove
+    # them before recording scientific output dimensions, then serialize every
+    # exact Blender instance (including suffix-numbered duplicates).
+    set_imagination_objects_opaque(
+        assets_in_order, colors, lights, max_lum_lamp, max_lum_window)
+    for obj_name, asset_name in zip(objects_in_order, assets_in_order):
+        output.append(imagination_object_output_record(
+            obj_name,
+            asset_name,
+            inputs,
+        ))
 
     ## Prepare output before cleaning the in-memory scene
     result_dict = {

@@ -37,7 +37,7 @@ Science of Imagination Lab: Imagination Engine 3D ("SOILIE-3D") is an innovative
 To get started, you will need to install some open-source software:
 
 * [Blender](https://www.blender.org/download/)
-* [Python](https://www.python.org/downloads/)
+* [Python 3.11 or newer](https://www.python.org/downloads/) (Python 3.12 is the tested CI and serverless version.)
 
 ### Installation Instructions
 
@@ -116,12 +116,18 @@ The default processing path writes:
 * `data/{datasetName}/{sceneName}/{frameNumber}.3d`, containing the available 3D world coordinates for each object in the frame.
 * `data/object_colors.csv`, which accumulates sampled object colors from the labeled image regions.
 * `data/{datasetName}/objects.log`, an inventory of the objects encountered across that dataset.
+* `data/relation-inputs.json`, the authoritative manifest for one complete collector run. It binds each relation file to its annotation frame, RGB/depth identity, source profile, and exact camera pose. A failed or empty run leaves this manifest marked incomplete.
 
 When the optional scene-level centroid block is enabled, it also writes:
 
 * `data/{datasetName}/{sceneName}/centroids.csv`, containing the world-coordinate centroid of each object calculated from all available 3D points.
 * `data/{datasetName}/{sceneName}/{frameNumber}.csv`, containing angles (degrees) and distances (meters) between every permutation of **3 objects + camera** in the frame.
 * `data/{datasetName}/{sceneName}/{frameNumber}.jpg`, an annotated source image with colored object polygons and centroid labels.
+
+Washington preprocessing never infers camera intrinsics or treats a JSON file
+as proof of a complete source bundle. Reuse requires a verified per-scene
+`preprocess-receipt.json`; rebuilding requires explicit reviewed 3x3 intrinsics
+and a calibration provenance citation.
 
 </details>
 
@@ -130,12 +136,13 @@ When the optional scene-level centroid block is enabled, it also writes:
 
 **Input**
 
-* The per-frame geometry and optional relation files produced by `modules/collect_data.py`.
+* The complete `data/relation-inputs.json` and only the exact per-frame relation files it names. Preparation does not recursively discover CSV files.
 * `data/object_sizes_manual.csv` and `data/object_colors.csv` when constructing a novel scene.
 
 **Outputs**
 
 * `data/triplets.csv` contains angles and distances between permutations of **3 objects + camera**, aggregated from all frames in all scenes. Its canonical columns end in `angleBAC, angleOAB, angleOAC`: BAC is the angle between B-A and C-A, OAB is between O-A and B-A, and OAC is between O-A and C-A.
+* `data/triplets.sources.json` preserves the verified run, frame, annotation, RGB/depth, and pose provenance for the gathered table.
 * `data/object_sizes.csv` contains the object-size estimates produced by the approximation step.
 * The `coords` value passed to `modules/render.py`, containing world-coordinate locations for a novel 3D scene. Incoming triplets are joined by a rigid rotation about their shared A-B axis; this keeps A and B fixed and preserves triplet distances instead of fitting an affine transform.
 * Optional JSON-safe alignment diagnostics containing the residual camera mismatch that an A-B-axis rotation cannot remove.

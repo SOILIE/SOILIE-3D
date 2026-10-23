@@ -115,6 +115,7 @@ def _generate_model_inputs(
     """Run coordinate construction and retain diagnostics for the accepted try."""
 
     prepare_data, _working_combos, _png2gif = _load_original_modules(runtime_root)
+    coverage_error = getattr(prepare_data, "TripletCoverageError", ())
     seed_model(seed)
     attempt = 1
     with _model_working_directory(runtime_root):
@@ -133,6 +134,10 @@ def _generate_model_inputs(
                     coordinates, _progress = prepare_data.calculateCoords(objects, **arguments)
                     diagnostics = []
             except SystemExit as error:
+                raise ModelGenerationError(
+                    "SOILIE-3D could not find the ordered triplets required for this scene."
+                ) from error
+            except coverage_error as error:
                 raise ModelGenerationError(
                     "SOILIE-3D could not find the ordered triplets required for this scene."
                 ) from error

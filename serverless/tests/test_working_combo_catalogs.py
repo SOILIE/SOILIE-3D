@@ -375,7 +375,7 @@ class CompilerCatalogValidationTests(WorkingComboFixture):
             "missing-basis.csv",
             [("chair", "table", "bed", "lamp", "", "", "", "")],
         )
-        with self.assertRaisesRegex(RuntimeError, "lacks its ordered A/B triplet basis"):
+        with self.assertRaisesRegex(RuntimeError, "lacks a complete ordered instance"):
             validated_working_rows(missing_basis, allowed=allowed, triplets=triplets)
 
         duplicate = self.write_catalog(
@@ -399,6 +399,23 @@ class CompilerCatalogValidationTests(WorkingComboFixture):
                 catalog,
                 allowed={"chair", "table", "bed"},
                 triplets={("chair", "table", "bed")},
+            ),
+        )
+
+    def test_compiler_accepts_a_complete_alternate_instance_basis(self):
+        catalog = self.write_catalog(
+            "alternate-basis.csv",
+            [("chair", "lamp", "desk", "bed", "", "", "", "")],
+        )
+        self.assertEqual(
+            [("chair", "lamp", "desk", "bed")],
+            validated_working_rows(
+                catalog,
+                allowed={"chair", "lamp", "desk", "bed"},
+                triplets={
+                    ("desk", "bed", "chair"),
+                    ("desk", "bed", "lamp"),
+                },
             ),
         )
 

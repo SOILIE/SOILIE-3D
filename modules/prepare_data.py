@@ -14,22 +14,39 @@
 
 import fnmatch
 import copy
+from contextlib import contextmanager
+import csv
+import hashlib
+import io
 import os
 from os.path import join
+import shutil
 import sys
 import ast
 import pickle
 import json
 import random
+import re
 import math
 from math import sqrt
+from pathlib import Path
+import uuid
+import unicodedata
 import numpy as np
 import pandas as pd
-from collections import Counter
-from itertools import permutations
 
 from modules.timer import *
 from modules import progress_bar
+from modules.object_identity import (
+    ObjectIdentityError,
+    decode_collector_object_label,
+)
+from modules.relation_manifest import (
+    load_verified_relation_manifest,
+    sha256_file,
+)
+from modules.working_combos import ordered_anchor_witnesses
+from modules.working_combo_schema import MAX_OBJECT_COUNT, MIN_OBJECT_COUNT
 from modules.triplet_schema import (
     TRIPLET_COLUMNS,
     validate_triplet_columns as _validate_triplet_columns,
@@ -37,10 +54,287 @@ from modules.triplet_schema import (
 
 
 ALIGNMENT_EPSILON = 1e-12
+_WINDOWS_DEVICE_RE = re.compile(
+    r'^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$',
+    re.IGNORECASE,
+)
+_WINDOWS_ILLEGAL_FILENAME_CHARACTERS = frozenset('<>:"/\\|?*')
 
 
 class TripletGeometryError(ValueError):
     '''Stored relationship geometry cannot produce a valid rigid scene.'''
+
+
+class TripletCoverageError(TripletGeometryError):
+    '''The corpus lacks a complete ordered basis for the requested instances.'''
+
+
+def _path_key(path):
+    '''Return a platform-independent collision key for a resolved path.'''
+
+    return Path(path).resolve(strict=False).as_posix().casefold()
+
+
+def _require_portable_segment(value, *, field):
+    '''Reject names whose filesystem identity differs across Windows/POSIX.'''
+
+    if not value or value in {'.', '..'}:
+        raise TripletGeometryError(f'{field} must be a non-empty path segment')
+    if any(unicodedata.category(character).startswith('C') for character in value):
+        raise TripletGeometryError(f'{field} cannot contain control characters')
+    if value.endswith(('.', ' ')):
+        raise TripletGeometryError(f'{field} cannot end in a dot or space')
+    if any(character in _WINDOWS_ILLEGAL_FILENAME_CHARACTERS for character in value):
+        raise TripletGeometryError(
+            f'{field} contains a Windows-illegal filename character'
+        )
+    if _WINDOWS_DEVICE_RE.fullmatch(value):
+        raise TripletGeometryError(f'{field} uses a reserved Windows device name')
+    return value
+
+
+def _paths_alias(first, second):
+    '''Detect case aliases, symlink aliases, and existing hard-link aliases.'''
+
+    first = Path(first)
+    second = Path(second)
+    if _path_key(first) == _path_key(second):
+        return True
+    if first.exists() and second.exists():
+        try:
+            return os.path.samefile(first, second)
+        except OSError:
+            pass
+    return False
+
+
+def _inside_root(path, root, *, field, must_exist=False):
+    '''Resolve a path and require a portable location below one trusted root.'''
+
+    root = Path(root).resolve(strict=True)
+    path = Path(path).absolute()
+    # Check lexical segments before asking Windows to resolve device aliases
+    # such as NUL.csv, which may fail or acquire special semantics first.
+    for offset, part in enumerate(path.parts):
+        if offset == 0 and part == path.anchor:
+            continue
+        _require_portable_segment(part, field=f'{field} segment {offset}')
+    try:
+        resolved = path.resolve(strict=must_exist)
+    except FileNotFoundError as exc:
+        raise TripletGeometryError(f'{field} does not exist: {path}') from exc
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise TripletGeometryError(f'{field} must remain inside {root}') from exc
+    if not relative.parts:
+        raise TripletGeometryError(f'{field} must name a file below {root}')
+    for offset, part in enumerate(relative.parts):
+        _require_portable_segment(part, field=f'{field} segment {offset}')
+    return path, resolved
+
+
+def _project_relative_posix(path, project_root):
+    '''Return one canonical project-relative POSIX provenance path.'''
+
+    resolved = Path(path).resolve(strict=False)
+    try:
+        relative = resolved.relative_to(Path(project_root).resolve(strict=True))
+    except ValueError as exc:
+        raise TripletGeometryError(f'Path is outside the project: {resolved}') from exc
+    for offset, part in enumerate(relative.parts):
+        _require_portable_segment(part, field=f'Project path segment {offset}')
+    return relative.as_posix()
+
+
+def _safe_destinations(destinations, *, data_root, protected_paths):
+    '''Validate destinations before creating directories or moving any file.'''
+
+    checked = []
+    for field, value in destinations:
+        path, resolved = _inside_root(value, data_root, field=field)
+        if path.is_symlink():
+            raise TripletGeometryError(f'{field} must not be a symbolic link')
+        if path.exists() and not path.is_file():
+            raise TripletGeometryError(f'{field} must name a regular file')
+        checked.append((field, path, resolved))
+
+    for index, (field, path, _resolved) in enumerate(checked):
+        for other_field, other_path, _other_resolved in checked[index + 1:]:
+            if _paths_alias(path, other_path):
+                raise TripletGeometryError(f'{field} and {other_field} must be separate files')
+        for protected_field, protected_path in protected_paths:
+            if _paths_alias(path, protected_path):
+                raise TripletGeometryError(
+                    f'{field} must not overwrite {protected_field}: {protected_path}',
+                )
+    return tuple(path for _field, path, _resolved in checked)
+
+
+def _destination_lock_paths(destinations, *, project_root):
+    '''Map a destination set to sorted per-path locks without deadlock cycles.'''
+
+    lock_root = Path(project_root).resolve(strict=True) / '.codex' / 'triplet-output-locks'
+    keys = sorted({_path_key(destination) for destination in destinations})
+    return tuple(
+        lock_root / f'{hashlib.sha256(key.encode("utf-8")).hexdigest()}.lock'
+        for key in keys
+    )
+
+
+@contextmanager
+def _destination_set_lock(destinations, *, project_root):
+    '''Serialize writers whose related output sets share any destination.'''
+
+    lock_paths = _destination_lock_paths(destinations, project_root=project_root)
+    handles = []
+    windows = os.name == 'nt'
+    try:
+        for lock_path in lock_paths:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            handle = os.fdopen(descriptor, 'r+b', buffering=0)
+            try:
+                if os.fstat(handle.fileno()).st_size == 0:
+                    handle.write(b'\0')
+                handle.seek(0)
+                if windows:
+                    import msvcrt
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            except BaseException:
+                handle.close()
+                raise
+            handles.append(handle)
+        yield
+    finally:
+        for handle in reversed(handles):
+            try:
+                handle.seek(0)
+                if windows:
+                    import msvcrt
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
+
+def _validate_triplet_row(row, *, source, line_number, decode_collector_labels):
+    '''Validate one canonical row and return normalized model-ready values.'''
+
+    if len(row) != len(TRIPLET_COLUMNS):
+        raise TripletGeometryError(
+            f'{source}:{line_number} has {len(row)} fields; '
+            f'expected {len(TRIPLET_COLUMNS)}',
+        )
+    labels = []
+    for offset, raw in enumerate(row[:3]):
+        column = TRIPLET_COLUMNS[offset]
+        if not isinstance(raw, str) or not raw or raw.strip() != raw:
+            raise TripletGeometryError(
+                f'{source}:{line_number} {column} must be a non-empty canonical name',
+            )
+        if decode_collector_labels:
+            try:
+                raw, _instance_id = decode_collector_object_label(raw)
+            except ObjectIdentityError as exc:
+                raise TripletGeometryError(
+                    f'{source}:{line_number} {column} has an invalid collector identity: {exc}',
+                ) from exc
+        labels.append(raw)
+
+    numbers = []
+    for offset, raw in enumerate(row[3:], start=3):
+        column = TRIPLET_COLUMNS[offset]
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise TripletGeometryError(
+                f'{source}:{line_number} {column} must be numeric',
+            ) from exc
+        if not math.isfinite(value):
+            raise TripletGeometryError(
+                f'{source}:{line_number} {column} must be finite',
+            )
+        if column.startswith('distance') and value <= 0.0:
+            raise TripletGeometryError(
+                f'{source}:{line_number} {column} must be greater than zero',
+            )
+        if column.startswith('angle') and not 0.0 <= value <= 180.0:
+            raise TripletGeometryError(
+                f'{source}:{line_number} {column} must be between 0 and 180 degrees',
+            )
+        numbers.append(value)
+    return labels + numbers
+
+
+def _read_triplet_bytes(payload, *, source, expected_rows=None,
+                        decode_collector_labels=False):
+    '''Parse and fully validate the exact byte snapshot used by a consumer.'''
+
+    try:
+        text = payload.decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise TripletGeometryError(f'{source} must be UTF-8 CSV') from exc
+    reader = csv.reader(io.StringIO(text, newline=''))
+    header = next(reader, ())
+    require_canonical_triplet_columns(header, source=source)
+    rows = [
+        _validate_triplet_row(
+            row,
+            source=source,
+            line_number=line_number,
+            decode_collector_labels=decode_collector_labels,
+        )
+        for line_number, row in enumerate(reader, start=2)
+    ]
+    if expected_rows is not None and len(rows) != expected_rows:
+        raise TripletGeometryError(
+            f'{source} row count {len(rows)} does not match expected {expected_rows}',
+        )
+    return pd.DataFrame.from_records(rows, columns=TRIPLET_COLUMNS)
+
+
+def _promote_candidates(pairs, *, staging_root):
+    '''Promote a related file set and restore every prior byte on failure.'''
+
+    backups = {}
+    promoted = []
+    try:
+        for _candidate, destination in pairs:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                backup = staging_root / f'backup.{uuid.uuid4()}'
+                shutil.copyfile(destination, backup)
+                backups[destination] = backup
+        try:
+            for candidate, destination in pairs:
+                os.replace(candidate, destination)
+                promoted.append(destination)
+        except BaseException as promotion_error:
+            rollback_errors = []
+            for destination in reversed(promoted):
+                try:
+                    backup = backups.get(destination)
+                    if backup is None:
+                        destination.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, destination)
+                except OSError as exc:
+                    rollback_errors.append(f'{destination}: {exc}')
+            if rollback_errors:
+                raise TripletGeometryError(
+                    'Triplet output promotion failed and rollback was incomplete: '
+                    + '; '.join(rollback_errors),
+                ) from promotion_error
+            raise
+    finally:
+        for backup in backups.values():
+            backup.unlink(missing_ok=True)
 
 
 def require_canonical_triplet_columns(columns, *, source):
@@ -236,81 +530,314 @@ def reconstruct_triplet_coordinates(
     )
 
 
-def gatherTriplets():
-    # gather all triplet values into a single file =======================###
+def gatherTriplets(
+        manifest_path='./data/relation-inputs.json',
+        output_path='./data/triplets.csv',
+        receipt_path='./data/triplets.sources.json',
+        *, data_root=None):
+    '''Gather only the exact, provenance-sealed relations from one collector run.'''
+
     print("Gathering all triplets into single file...")
     timer = startTimer()
-    files = []
-    for root, dirnames, filenames in os.walk('data'):
-        for filename in fnmatch.filter(filenames, '*.csv'):
-            files.append(os.path.join(root, filename))
+    manifest_argument = Path(manifest_path)
+    data_root = Path(data_root) if data_root is not None else manifest_argument.parent
+    data_root = data_root.resolve(strict=True)
+    manifest_path, manifest_resolved = _inside_root(
+        manifest_argument,
+        data_root,
+        field='Relation manifest',
+        must_exist=True,
+    )
+    manifest_snapshot = manifest_path.read_bytes()
+    manifest, verified_files = load_verified_relation_manifest(
+        manifest_path,
+        data_root=data_root,
+    )
+    if manifest_path.read_bytes() != manifest_snapshot:
+        raise TripletGeometryError('Relation manifest changed while it was being verified')
 
-    files = sorted(f for f in files if not ('data/object_' in f or
-                   'data/triplets' in f or f=='data/working-combos.csv' or
-                   'centroids.csv' in f))
-    files.sort(key=len)
+    repository_root = data_root.parent
+    protected_paths = [('relation manifest', manifest_resolved)]
+    annotation_paths = []
+    for index, record in enumerate(manifest['frames']):
+        annotation = repository_root.joinpath(*record['annotation']['path'].split('/'))
+        _argument, annotation_resolved = _inside_root(
+            annotation,
+            repository_root,
+            field=f'frames[{index}].annotation.path',
+            must_exist=True,
+        )
+        annotation_paths.append((annotation_resolved, record['annotation']['sha256']))
+        protected_paths.append((f'annotation input {index}', annotation_resolved))
+    for index, verified in enumerate(verified_files):
+        protected_paths.append((f'relation input {index}', verified.path))
 
-    master_df = pd.DataFrame()
-    for i, filename in enumerate(files):
-        print(filename)
-        df = pd.read_csv(filename)
-        require_canonical_triplet_columns(df.columns, source=filename)
-        df['objectA'] = df['objectA'].apply(lambda x: x.rsplit('_',1)[0])
-        df['objectB'] = df['objectB'].apply(lambda x: x.rsplit('_',1)[0])
-        df['objectC'] = df['objectC'].apply(lambda x: x.rsplit('_',1)[0])
-        master_df = pd.concat([master_df,df])
-        progress_bar.update(i+1,len(files),suffix=filename+'                       ')
+    output_path, receipt_path = _safe_destinations(
+        (
+            ('Triplet output', output_path),
+            ('Triplet provenance receipt', receipt_path),
+        ),
+        data_root=data_root,
+        protected_paths=protected_paths,
+    )
 
-    master_df = master_df.loc[:, list(TRIPLET_COLUMNS)]
-    master_df.sort_values(by=list(TRIPLET_COLUMNS)).to_csv('./data/triplets.csv', index=False)
+    frames = []
+    relation_snapshots = []
+    for verified in verified_files:
+        payload = verified.path.read_bytes()
+        observed_digest = hashlib.sha256(payload).hexdigest()
+        expected_digest = verified.record['relation']['sha256']
+        if observed_digest != expected_digest:
+            raise TripletGeometryError(
+                f'Relation input changed after verification: {verified.path}',
+            )
+        frame = _read_triplet_bytes(
+            payload,
+            source=str(verified.path),
+            expected_rows=verified.record['relation']['rowCount'],
+            decode_collector_labels=True,
+        )
+        relation_snapshots.append((verified.path, payload))
+        frames.append(frame)
+
+    master_df = pd.concat(frames, ignore_index=True)
+    if master_df.empty:
+        raise TripletGeometryError(
+            'The complete relation manifest contains no triplet data rows'
+        )
+    master_df = master_df.sort_values(
+        by=list(TRIPLET_COLUMNS),
+        kind='mergesort',
+        ignore_index=True,
+    )
+    source_rows = int(sum(
+        item.record['relation']['rowCount'] for item in verified_files
+    ))
+    if source_rows != len(master_df):
+        raise TripletGeometryError(
+            f'Manifest source row count {source_rows} does not match gathered '
+            f'row count {len(master_df)}',
+        )
+
+    project_root = data_root.parent
+    staging_root = project_root / '.codex' / 'relation-gather'
+    staging_root.mkdir(parents=True, exist_ok=True)
+    identifier = str(uuid.uuid4())
+    candidate_output = staging_root / f'triplets.{identifier}.csv'
+    candidate_receipt = staging_root / f'triplets.{identifier}.sources.json'
+    try:
+        master_df.to_csv(candidate_output, index=False, lineterminator='\n')
+        candidate_payload = candidate_output.read_bytes()
+        candidate_frame = _read_triplet_bytes(
+            candidate_payload,
+            source=str(candidate_output),
+            expected_rows=len(master_df),
+        )
+        if not candidate_frame.equals(master_df):
+            raise TripletGeometryError(
+                'Gathered candidate rows do not match the verified source snapshots',
+            )
+        if len(candidate_frame) != source_rows:
+            raise TripletGeometryError(
+                'Gathered candidate row count does not match sealed sourceRows',
+            )
+        output_digest = hashlib.sha256(candidate_payload).hexdigest()
+        receipt = {
+            'schemaVersion': 1,
+            'kind': 'soilie-triplet-source-receipt',
+            'collectionId': manifest['collectionId'],
+            'sourceManifest': {
+                'path': _project_relative_posix(manifest_path, project_root),
+                'sha256': hashlib.sha256(manifest_snapshot).hexdigest(),
+            },
+            'frameCount': len(verified_files),
+            'sourceRows': source_rows,
+            'output': {
+                'path': _project_relative_posix(output_path, project_root),
+                'rowCount': int(len(master_df)),
+                'sha256': output_digest,
+            },
+            # Copy the sealed records so a later collector run cannot erase the
+            # scene/frame/image/depth/pose identity of this gathered corpus.
+            'frames': manifest['frames'],
+        }
+        candidate_receipt.write_text(
+            json.dumps(receipt, indent=2, allow_nan=False) + '\n',
+            encoding='utf-8',
+            newline='\n',
+        )
+        try:
+            observed_receipt = json.loads(candidate_receipt.read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise TripletGeometryError('Cannot validate triplet provenance candidate') from exc
+        if observed_receipt != receipt:
+            raise TripletGeometryError('Triplet provenance candidate failed read-back validation')
+        receipt_snapshot = candidate_receipt.read_bytes()
+
+        # Serialize the full final check and both replacements. Per-destination
+        # locks are acquired in stable order, so overlapping output sets cannot
+        # interleave or deadlock across collector processes.
+        with _destination_set_lock(
+                (output_path, receipt_path),
+                project_root=project_root):
+            # The output is built from immutable byte snapshots. Rechecking
+            # every seal under the writer lock prevents a receipt from being
+            # published after its named inputs have changed.
+            if manifest_path.read_bytes() != manifest_snapshot:
+                raise TripletGeometryError('Relation manifest changed before promotion')
+            for relation_path, payload in relation_snapshots:
+                if relation_path.read_bytes() != payload:
+                    raise TripletGeometryError(
+                        f'Relation input changed before promotion: {relation_path}',
+                    )
+            for annotation_path, expected_digest in annotation_paths:
+                if sha256_file(annotation_path) != expected_digest:
+                    raise TripletGeometryError(
+                        f'Annotation input changed before promotion: {annotation_path}',
+                    )
+            promoted_candidate_payload = candidate_output.read_bytes()
+            if (
+                    promoted_candidate_payload != candidate_payload
+                    or hashlib.sha256(promoted_candidate_payload).hexdigest() != output_digest):
+                raise TripletGeometryError('Gathered CSV candidate changed before promotion')
+            if candidate_receipt.read_bytes() != receipt_snapshot:
+                raise TripletGeometryError(
+                    'Triplet provenance candidate changed before promotion',
+                )
+            _promote_candidates(
+                (
+                    (candidate_output, output_path),
+                    (candidate_receipt, receipt_path),
+                ),
+                staging_root=staging_root,
+            )
+    finally:
+        for candidate in (candidate_output, candidate_receipt):
+            if candidate.exists():
+                candidate.unlink()
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
+
     sys.stdout.write("Done! (%s)\n"%str(endTimerPretty(timer))); sys.stdout.flush()
+    return receipt
 
 
-def averageTriplets():
+def _read_averaged_candidate(payload, *, source, expected_rows):
+    '''Validate the complete averaged CSV, including its positive count.'''
+
+    try:
+        text = payload.decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise TripletGeometryError(f'{source} must be UTF-8 CSV') from exc
+    reader = csv.reader(io.StringIO(text, newline=''))
+    header = next(reader, ())
+    expected_header = tuple(TRIPLET_COLUMNS) + ('count',)
+    if tuple(header) != expected_header:
+        raise TripletGeometryError(
+            f'{source} has an invalid averaged triplet header: {header!r}',
+        )
+    rows = []
+    for line_number, row in enumerate(reader, start=2):
+        if len(row) != len(expected_header):
+            raise TripletGeometryError(
+                f'{source}:{line_number} has {len(row)} fields; '
+                f'expected {len(expected_header)}',
+            )
+        validated = _validate_triplet_row(
+            row[:-1],
+            source=source,
+            line_number=line_number,
+            decode_collector_labels=False,
+        )
+        try:
+            count = int(row[-1])
+        except (TypeError, ValueError) as exc:
+            raise TripletGeometryError(
+                f'{source}:{line_number} count must be a positive integer',
+            ) from exc
+        if count <= 0 or str(count) != row[-1]:
+            raise TripletGeometryError(
+                f'{source}:{line_number} count must be a positive integer',
+            )
+        rows.append(validated + [count])
+    if len(rows) != expected_rows:
+        raise TripletGeometryError(
+            f'{source} row count {len(rows)} does not match expected {expected_rows}',
+        )
+    return pd.DataFrame.from_records(rows, columns=expected_header)
+
+
+def averageTriplets(
+        source_path='./data/triplets.csv',
+        output_csv='./data/triplets_avg.csv',
+        output_pickle='./data/triplets_avg.pickle'):
+    '''Average the already gathered canonical corpus without rediscovering CSVs.'''
 
     # average triplet values =======================###
     sys.stdout.write("Averaging triplets..."); sys.stdout.flush()
     timer = startTimer()
-    files = []
-    for root, dirnames, filenames in os.walk('data'):
-        for filename in fnmatch.filter(filenames, '*.csv'):
-            files.append(os.path.join(root, filename))
-    files = sorted(files)
-
+    source_argument = Path(source_path)
+    lexical_parents = (source_argument.absolute().parent,) + tuple(
+        source_argument.absolute().parents
+    )
+    data_root = next(
+        (parent for parent in lexical_parents if parent.name.casefold() == 'data'),
+        None,
+    )
+    if data_root is None:
+        raise TripletGeometryError('Gathered triplet source must be below a project data directory')
+    data_root = data_root.resolve(strict=True)
+    source_path, source_resolved = _inside_root(
+        source_argument,
+        data_root,
+        field='Gathered triplet source',
+        must_exist=True,
+    )
+    output_csv, output_pickle = _safe_destinations(
+        (
+            ('Averaged triplet CSV', output_csv),
+            ('Averaged triplet pickle', output_pickle),
+        ),
+        data_root=data_root,
+        protected_paths=(('gathered triplet source', source_resolved),),
+    )
+    source_snapshot = source_path.read_bytes()
+    df_trip = _read_triplet_bytes(
+        source_snapshot,
+        source=str(source_path),
+    )
+    if df_trip.empty:
+        raise TripletGeometryError('Cannot average an empty gathered triplet corpus')
     averages = {}
-    for filename in files:
-        if 'data/object_' in filename or 'data/triplets' in filename or filename=='data/working-combos.csv' or 'centroids.csv' in filename:
-            continue # skip these because they are the output of the current script
-        df_trip = pd.read_csv(filename)
-        require_canonical_triplet_columns(df_trip.columns, source=filename)
-
-        for i, row in df_trip.iterrows():
-            objA = row['objectA'].rsplit('_',1)[0]
-            objB = row['objectB'].rsplit('_',1)[0]
-            objC = row['objectC'].rsplit('_',1)[0]
-            triplet = ','.join([objA,objB,objC])
-            distAB = float(row['distanceAB'])
-            distAC = float(row['distanceAC'])
-            distAO = float(row['distanceAO'])
-            angBAC = float(row['angleBAC'])
-            angOAB = float(row['angleOAB'])
-            angOAC = float(row['angleOAC'])
-            if triplet not in averages:
-                averages[triplet] = [[distAB],[distAC],[distAO],[angBAC],[angOAB],[angOAC],1]
-                continue
-            averages[triplet][0].append(distAB)
-            averages[triplet][1].append(distAC)
-            averages[triplet][2].append(distAO)
-            averages[triplet][3].append(angBAC)
-            averages[triplet][4].append(angOAB)
-            averages[triplet][5].append(angOAC)
-            averages[triplet][6]+=1
+    for _index, row in df_trip.iterrows():
+        objA = row['objectA']
+        objB = row['objectB']
+        objC = row['objectC']
+        triplet = (objA, objB, objC)
+        distAB = float(row['distanceAB'])
+        distAC = float(row['distanceAC'])
+        distAO = float(row['distanceAO'])
+        angBAC = float(row['angleBAC'])
+        angOAB = float(row['angleOAB'])
+        angOAC = float(row['angleOAC'])
+        if triplet not in averages:
+            averages[triplet] = [[distAB],[distAC],[distAO],[angBAC],[angOAB],[angOAC],1]
+            continue
+        averages[triplet][0].append(distAB)
+        averages[triplet][1].append(distAC)
+        averages[triplet][2].append(distAO)
+        averages[triplet][3].append(angBAC)
+        averages[triplet][4].append(angOAB)
+        averages[triplet][5].append(angOAC)
+        averages[triplet][6]+=1
 
     triplets = {'objectA':[],'objectB':[],'objectC':[],'distanceAB':[],'distanceAC':[],
                 'distanceAO':[],'angleBAC':[],'angleOAB':[],'angleOAC':[],'count':[]}
 
     for triplet, values in averages.items():
-        objA, objB, objC = triplet.split(',')
+        objA, objB, objC = triplet
         triplets['objectA'].append(objA)
         triplets['objectB'].append(objB)
         triplets['objectC'].append(objC)
@@ -323,11 +850,56 @@ def averageTriplets():
         triplets['count'].append(values[6])
 
     df_triplets = pd.DataFrame(triplets)
-    df_triplets.to_csv('./data/triplets_avg.csv', index=False)
-
-    with open ('data/triplets_avg.pickle','wb') as handle:
-        pickle.dump(triplets,handle,protocol=pickle.HIGHEST_PROTOCOL)
-    handle.close()
+    project_root = data_root.parent
+    staging_root = project_root / '.codex' / 'triplet-average'
+    staging_root.mkdir(parents=True, exist_ok=True)
+    identifier = str(uuid.uuid4())
+    candidate_csv = staging_root / f'triplets-avg.{identifier}.csv'
+    candidate_pickle = staging_root / f'triplets-avg.{identifier}.pickle'
+    try:
+        df_triplets.to_csv(candidate_csv, index=False, lineterminator='\n')
+        with candidate_pickle.open('wb') as handle:
+            pickle.dump(triplets, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        candidate_csv_snapshot = candidate_csv.read_bytes()
+        candidate_frame = _read_averaged_candidate(
+            candidate_csv_snapshot,
+            source=str(candidate_csv),
+            expected_rows=len(df_triplets),
+        )
+        if not candidate_frame.equals(df_triplets):
+            raise TripletGeometryError(
+                'Averaged triplet CSV rows do not match the computed averages',
+            )
+        try:
+            candidate_pickle_snapshot = candidate_pickle.read_bytes()
+            observed_pickle = pickle.loads(candidate_pickle_snapshot)
+        except (OSError, pickle.PickleError, EOFError) as exc:
+            raise TripletGeometryError('Cannot validate averaged triplet pickle') from exc
+        if observed_pickle != triplets:
+            raise TripletGeometryError('Averaged triplet pickle failed read-back validation')
+        with _destination_set_lock(
+                (output_csv, output_pickle),
+                project_root=project_root):
+            if source_path.read_bytes() != source_snapshot:
+                raise TripletGeometryError('Gathered triplet source changed before promotion')
+            if candidate_csv.read_bytes() != candidate_csv_snapshot:
+                raise TripletGeometryError('Averaged triplet CSV changed before promotion')
+            if candidate_pickle.read_bytes() != candidate_pickle_snapshot:
+                raise TripletGeometryError('Averaged triplet pickle changed before promotion')
+            _promote_candidates(
+                (
+                    (candidate_csv, output_csv),
+                    (candidate_pickle, output_pickle),
+                ),
+                staging_root=staging_root,
+            )
+    finally:
+        for candidate in (candidate_csv, candidate_pickle):
+            candidate.unlink(missing_ok=True)
+        try:
+            staging_root.rmdir()
+        except OSError:
+            pass
 
     sys.stdout.write("Done! (%s)\n"%str(endTimerPretty(timer))); sys.stdout.flush()
 
@@ -440,37 +1012,49 @@ def approximateObjectSizes():
     sys.stdout.write("Processed in %s\n"%str(endTimerPretty(timer)));
     sys.stdout.flush()
 
-def suffix_duplicates(items,nested=False):
+def suffix_duplicates(items):
+    '''Return stable instance IDs while preserving the first label verbatim.'''
+
     result = []
-    if not nested:
-        item_count = {}
-        for item in items:
-            if item not in item_count:
-                item_count[item] = 0
-                result.append(item)
-            else:
-                item_count[item] += 1
-                result.append(f"{item}.{item_count[item]}")
-    else:
-        item_list = items.copy()
-        first_list = item_list.pop(0)
-        result.append(suffix_duplicates(first_list))
-        third_item_count = Counter(first_list)
-
-        for sublist in item_list:
-            # Process the third item
-            item_3 = sublist[2]
-            if item_3 not in third_item_count:
-                third_item_count[item_3] = 1
-                modified_item_3 = item_3
-            else:
-                modified_item_3 = f"{item_3}.{third_item_count[item_3]}"
-                third_item_count[item_3] += 1
-
-            # Append the modified sublist to the result
-            result.append(result[0][:2] + [modified_item_3])
+    item_count = {}
+    for item in items:
+        if item not in item_count:
+            item_count[item] = 0
+            result.append(item)
+        else:
+            item_count[item] += 1
+            result.append(f"{item}.{item_count[item]}")
 
     return result
+
+
+def ensure_window_assemblies(coordinates, sizes):
+    '''Retain requested coverings and add only the window mesh they require.
+
+    A blind or curtain is rendered as a covering over a window.  The historical
+    implementation randomly deleted requested instances and sometimes replaced
+    one label with another.  Instance suffixes now identify deterministic
+    assemblies: ``curtain.1`` pairs with ``window.1`` while an unsuffixed
+    covering pairs with ``window``.  Companion windows are additive; no
+    requested instance is removed or renamed.
+    '''
+
+    covering_names = [
+        name for name in tuple(coordinates)
+        if name.split('.', 1)[0] in {'blinds', 'curtain'}
+    ]
+    for covering_name in covering_names:
+        _base, separator, suffix = covering_name.partition('.')
+        window_name = f'window.{suffix}' if separator else 'window'
+        if window_name not in coordinates:
+            coordinates[window_name] = copy.deepcopy(coordinates[covering_name])
+            sizes[window_name] = copy.deepcopy(sizes[covering_name])
+        else:
+            # Coverings in one assembly share the window's geometric anchor and
+            # sampled size but retain their own identity and colour.
+            coordinates[covering_name] = copy.deepcopy(coordinates[window_name])
+            sizes[covering_name] = copy.deepcopy(sizes[window_name])
+    return coordinates, sizes
 
 
 def loadObjectSizes(objects):
@@ -518,7 +1102,14 @@ def calculateCoords(
     dictionary: a dictionary of all object triplet data
     output: a dictionary of final object locations'''
 
-    obj_names = suffix_duplicates(objects)
+    object_count = len(objects)
+    if not MIN_OBJECT_COUNT <= object_count <= MAX_OBJECT_COUNT:
+        raise TripletCoverageError(
+            f'Coordinate construction requires {MIN_OBJECT_COUNT} to '
+            f'{MAX_OBJECT_COUNT} object instances; received {object_count}'
+        )
+
+    instance_names = suffix_duplicates(objects)
 
     if method == 'averaging':
         ## NOT RECOMMENDED: CODE OUTDATED AND UNTESTED
@@ -530,7 +1121,7 @@ def calculateCoords(
             comboData = [pickleData['distanceAB'][i],pickleData['distanceAC'][i],
                 pickleData['distanceAO'][i],pickleData['angleBAC'][i],
                 pickleData['angleOAB'][i],pickleData['angleOAC'][i],pickleData['count'][i]]
-            dictionary[f'{objA},{objB},{objC}'] = comboData
+            dictionary[(objA, objB, objC)] = comboData
         print_debug and print("INFO: Loaded triplet data.")
 
     elif method == 'sampling':
@@ -548,63 +1139,50 @@ def calculateCoords(
 
             comboData = [row['distanceAB'],row['distanceAC'],row['distanceAO'],
                          row['angleBAC'],row['angleOAB'],row['angleOAC'],1]
-            dictionary[f'{objA},{objB},{objC}'] = comboData
+            dictionary[(objA, objB, objC)] = comboData
 
     else:
         print_debug and print(f'ERROR: Wrong method selected for calculateCoords: {method}.')
         return {}
 
-    # generate every permutation of the given objects and try to find a set
-    # of triplets that will contain enough data to calculate all object locations
-    objMix = list(permutations(objects,len(objects)))
-    random.shuffle(objMix)
-
-    enoughData = True
-    for i,objs in enumerate(objMix):
-        print_debug and print("INFO: Attempt "+str(i+1)+"...")
-        enoughData = True # set to false if any object isn't in final list
-        # create list of necessary triplets based on input objects
-        combos = [[objs[0],objs[1],x] for x in objs[2:]]
-        good = []
-        for combo in combos: # for each combo
-            comboStr = ','.join(combo)
-            if comboStr not in dictionary:
-                print_debug and print("WARNING: Triplet not found in dictionary: " + comboStr)
-                continue
-            good.append(combo)
-
-        for obj in objects: # if any of the objects aren't in the final list
-            if obj not in [x for sublist in good for x in sublist]:
-                print_debug and print("ERROR: Not enough data for "+obj+". Retrying...")
-                enoughData = False
-                break
-        if enoughData:
-            break
-
-    if not enoughData:
-        print_debug and print("ERROR: All tries failed. Exiting...")
-        sys.exit(1)
-
-    combos = good
-    print_debug and print("INFO: Found good combo.")
+    # Search ordered anchor *instances*, not n! label permutations.  A complete
+    # witness must have one A/B/C row for every non-anchor position, including
+    # another occurrence of either anchor label.  Sampling uniformly from this
+    # finite witness set retains the model's random basis choice without letting
+    # repeated labels masquerade as complete instance coverage.
+    triplet_keys = frozenset(dictionary)
+    witnesses = ordered_anchor_witnesses(objects, triplet_keys)
+    if not witnesses:
+        raise TripletCoverageError(
+            'No ordered instance anchor pair has triplet data for every '
+            'requested partner instance'
+        )
+    anchor_a, anchor_b, partner_indices = random.choice(witnesses)
+    combos = [
+        [objects[anchor_a], objects[anchor_b], objects[partner]]
+        for partner in partner_indices
+    ]
+    combo_instance_names = [
+        [instance_names[anchor_a], instance_names[anchor_b], instance_names[partner]]
+        for partner in partner_indices
+    ]
+    print_debug and print("INFO: Found complete ordered instance-anchor witness.")
 
     sizes = loadObjectSizes(objects)
-
-    combos_n = suffix_duplicates(combos,nested=True)
 
     # ensure distance AB is the same for all triplets, so make it equal to mean distance AB of all triplets
     all_ab_dists = []
     for combo in combos:
-        all_ab_dists.append(float(dictionary[','.join(combo)][0]))
+        all_ab_dists.append(float(dictionary[tuple(combo)][0]))
     d_ab = np.mean(all_ab_dists) # universal distance AB for all triplets
 
     triplets = []
     for i, combo in enumerate(combos): # for each combo
-        comboStr = ','.join(combo)
-        data = dictionary[comboStr] # find triplet data
+        combo_key = tuple(combo)
+        data = dictionary[combo_key] # find triplet data
         print_debug and print("INFO: Setting up combo: "+ repr(combo))
         # set up variables
-        objA,objB,objC = combos_n[i]
+        objA,objB,objC = combo_instance_names[i]
 
         #d_ab = float(data[0])   # distance between objA and objB
         d_ac = float(data[1])   # distance between objA and objC
@@ -641,6 +1219,8 @@ def calculateCoords(
         finalCoords[triplet[2]] = aligned_c
         alignment_diagnostics.append(diagnostic)
 
+    finalCoords, sizes = ensure_window_assemblies(finalCoords, sizes)
+
     # Add these to pass color to blender - locations will be determined in blender
     finalCoords['WALL'] = tuple()
     finalCoords['FLOOR'] = tuple()
@@ -659,37 +1239,9 @@ def calculateCoords(
         'coords':coords
         } for obj,coords in finalCoords.items()}
 
-    # If any window-related items are present,
-    # Make sure there is always a window and then randomly select blinds, curtain, or nothing
-    window_objs = ['window','blinds','curtain']
-    curr_window_objs = [o for o in finalCoords.keys() if o.split('.')[0] in window_objs]
-    if len(curr_window_objs)>0:
-        progbar_suffix = f'Windows, blinds, or curtain present: Randomizing a combination of these objects...'
-        text_len = progress_bar.update(40, 100, progbar_prefix, progbar_suffix, length=10, prev_text_len=prev_text_len)
-        if any('window' in o for o in curr_window_objs):
-            for i in range(5):
-                suff = f'.{i}' if i>0 else ''
-                finalCoords.pop('blinds'+suff,None)
-                finalCoords.pop('curtain'+suff,None)
-        else:
-            obj_to_rename = random.choice(curr_window_objs)
-            objs_to_remove = [o for o in curr_window_objs if o!=obj_to_rename]
-            finalCoords['window'] = finalCoords.pop(obj_to_rename)
-            for obj in objs_to_remove:
-                finalCoords.pop(obj)
-
-        # At this point, we've ensured that the calculated coordinates for one of the window
-        # objects are now the coordinates of the window itself. Now, we will add blinds or
-        # curtain or neither and make them the same location and same size as the window.
-        # We will also recalculate the color for each of the items so they are all different.
-        finalCoords['window']['color'] = obj_colors['window'] if 'window' in obj_colors else (255,255,255)
-        blinds_or_curtain = random.sample(['blinds','curtain'], random.randint(0,2))
-        for item in blinds_or_curtain:
-            finalCoords[item] = copy.deepcopy(finalCoords['window'])
-            #finalCoords[item]['size']['diameter'] +=  finalCoords[item]['size']['diameter']*0.05
-            finalCoords[item]['color'] = obj_colors[item] if item in obj_colors else (255,255,255)
-    else:
-        text_len = prev_text_len
+    # Assembly normalization is deterministic and does not represent another
+    # sampling pass, so it should not mutate the caller's progress-line state.
+    text_len = prev_text_len
 
     if return_alignment_diagnostics:
         return finalCoords, text_len, alignment_diagnostics

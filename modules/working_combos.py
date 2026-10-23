@@ -10,7 +10,6 @@ from __future__ import annotations
 import csv
 import random
 from functools import lru_cache
-from itertools import permutations
 from pathlib import Path
 
 from modules.triplet_schema import validate_triplet_columns
@@ -91,23 +90,46 @@ def _coordinate_triplets(filepath: str | Path) -> frozenset[tuple[str, str, str]
     )
 
 
+def ordered_anchor_witnesses(
+    objects: list[str] | tuple[str, ...],
+    triplets: set[tuple[str, str, str]] | frozenset[tuple[str, str, str]],
+) -> tuple[tuple[int, int, tuple[int, ...]], ...]:
+    """Return every ordered *instance* pair that can place all other instances.
+
+    Positions, rather than distinct labels, are the unit of construction.  This
+    matters when a request contains two objects from the same class: one copy
+    may be an anchor while the other still needs its own A/B/C observation.
+    """
+
+    labels = tuple(objects)
+    witnesses = []
+    for anchor_a in range(len(labels)):
+        for anchor_b in range(len(labels)):
+            if anchor_a == anchor_b:
+                continue
+            partners = tuple(
+                index
+                for index in range(len(labels))
+                if index not in (anchor_a, anchor_b)
+            )
+            if partners and all(
+                (labels[anchor_a], labels[anchor_b], labels[partner]) in triplets
+                for partner in partners
+            ):
+                witnesses.append((anchor_a, anchor_b, partners))
+    return tuple(witnesses)
+
+
 def supports_coordinate_construction(
     objects: list[str] | tuple[str, ...],
     filepath: str | Path = "./data/triplets.csv",
 ) -> bool:
-    """Return whether distinct objects share one complete ordered A/B basis."""
+    """Return whether all requested instances share a complete ordered A/B basis."""
 
-    distinct_objects = list(dict.fromkeys(objects))
-    if len(distinct_objects) < MIN_OBJECT_COUNT:
+    if not MIN_OBJECT_COUNT <= len(objects) <= MAX_OBJECT_COUNT:
         return False
     triplets = _coordinate_triplets(filepath)
-    return any(
-        all(
-            obj in (obj_a, obj_b) or (obj_a, obj_b, obj) in triplets
-            for obj in distinct_objects
-        )
-        for obj_a, obj_b in permutations(distinct_objects, 2)
-    )
+    return bool(ordered_anchor_witnesses(objects, triplets))
 
 
 def select_exact(
@@ -129,7 +151,7 @@ def select_exact(
     eligible = tuple(
         row
         for row in candidates
-        if all((row[0], row[1], object_c) in triplets for object_c in row[2:])
+        if ordered_anchor_witnesses(row, triplets)
     )
     if eligible:
         # The legacy "weighted" calculation cancelled to a uniform row draw.

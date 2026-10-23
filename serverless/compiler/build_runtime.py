@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 from modules.triplet_schema import validate_triplet_columns
+from modules.working_combos import ordered_anchor_witnesses
 from modules.working_combo_schema import (
     CATALOG_FILENAMES,
     MAX_OBJECT_COUNT,
@@ -167,15 +168,10 @@ def validated_working_rows(
                     f"{path} row {row_index} contains non-renderable objects: "
                     f"{', '.join(unavailable)}"
                 )
-            missing = [
-                (values[0], values[1], object_c)
-                for object_c in values[2:]
-                if (values[0], values[1], object_c) not in triplets
-            ]
-            if missing:
-                encoded = ", ".join("/".join(item) for item in missing)
+            if not ordered_anchor_witnesses(values, triplets):
                 raise RuntimeError(
-                    f"{path} row {row_index} lacks its ordered A/B triplet basis: {encoded}"
+                    f"{path} row {row_index} lacks a complete ordered instance "
+                    "A/B triplet basis"
                 )
             if values in seen:
                 raise RuntimeError(

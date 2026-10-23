@@ -71,17 +71,6 @@ def get_extrinsic_matrix(camera_poses):
 
     return mx
 
-def get_estimated_intrinsic_matrix(w, h):
-    fx = 525.0  # Focal length in pixels (typically around 525 for 640x480 images)
-    fy = 525.0  # Focal length in pixels (typically around 525 for 640x480 images)
-
-    cx = float(w/2)  # Principal point (image center) in pixels (half of 640)
-    cy = float(h/2)  # Principal point (image center) in pixels (half of 480)
-    K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-
-    return K
-
-
 from scipy.spatial import ConvexHull
 def convex_hull(coordinates):
     # Convert the list of coordinates to a NumPy array

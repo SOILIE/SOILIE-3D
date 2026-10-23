@@ -3,5 +3,6 @@ pandas>=2.1.4
 scipy>=1.11.4
 scikit-image>=0.22.0
 matplotlib>=3.8.0
-pillow>=10.4.0
+# Pillow 13.0.0 is the first release patched for GHSA-8g5g-8vmr-9782.
+pillow>=13.0.0
 plyfile>=1.1.0

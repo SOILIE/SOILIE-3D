@@ -10,7 +10,10 @@
 	angles and distances between object triplets in each frame.
 	Requires JSON label files in the json folder.'''
 
+import ast
 import os, json, random, sys, urllib.request, re, gc
+from collections import Counter
+from pathlib import Path
 from urllib.parse import urljoin
 
 from io import BytesIO
@@ -34,6 +37,22 @@ from modules import menu
 from modules import import_tools as imp
 from modules.timer import *
 from modules import progress_bar
+from modules.object_identity import (
+    ObjectIdentityError,
+    encode_collector_object_label,
+    normalize_instance_id,
+    normalize_object_class,
+)
+from modules.relation_manifest import (
+    RELATION_MANIFEST_FILENAME,
+    RelationManifestError,
+    begin_relation_run,
+    build_relation_frame_record,
+    complete_relation_run,
+    relation_row_count,
+    sha256_file,
+    validate_relation_location,
+)
 from modules.source_geometry import (
     EXACT_FRAME_ID,
     SourceGeometryError,
@@ -41,6 +60,7 @@ from modules.source_geometry import (
     camera_origin_world,
     pair_rgb_depth_files,
     pinned_extrinsics_filename,
+    pose_index,
     reshape_c2w_rows,
     reshape_intrinsics,
     resolve_source_profile,
@@ -84,6 +104,44 @@ def _progress_update(progress, total, suffix=''):
         safe_suffix = suffix.encode(encoding, errors='replace').decode(encoding)
         sys.stdout.write(f'{progress}/{total} {safe_suffix}\r')
         sys.stdout.flush()
+
+
+def _relation_label_from_scene_key(value):
+    '''Encode one internal ``[class, instance]`` key without delimiter loss.'''
+
+    if not isinstance(value, str):
+        raise ValueError('Scene object keys must be strings')
+    try:
+        identity = ast.literal_eval(value)
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f'Malformed scene object key {value!r}') from exc
+    if (
+        not isinstance(identity, (list, tuple))
+        or len(identity) != 2
+        or not all(isinstance(component, str) for component in identity)
+    ):
+        raise ValueError(
+            f'Scene object key {value!r} must contain string class and instance IDs',
+        )
+    return encode_collector_object_label(identity[0], identity[1])
+
+
+def _source_object_identity(source_id, source_name):
+    '''Return the canonical class/instance pair for one annotation object.'''
+
+    if type(source_id) is not int or source_id < 0:
+        raise ObjectIdentityError('Source object ID must be a non-negative integer')
+    if not isinstance(source_name, str):
+        raise ObjectIdentityError('Source object name must be a string')
+    object_class, separator, instance_id = source_name.partition(':')
+    if not separator:
+        # The annotation object-list position is the only stable identity when
+        # the source supplies a class without an explicit instance component.
+        instance_id = str(source_id)
+    return [
+        normalize_object_class(object_class),
+        normalize_instance_id(instance_id),
+    ]
 
 
 ## declare objects ---------------------------------------------- ##
@@ -147,7 +205,7 @@ class Frame:
         color_counts = {col:c for col,c in color_counts.items() if c>25}
         data = {'object_name': [], 'R': [], 'G': [], 'B': [], 'count': []}
         for color, count in color_counts.items():
-            data['object_name'].append('_'.join(eval(name)[0].split()))
+            data['object_name'].append('_'.join(ast.literal_eval(name)[0].split()))
             data['R'].append(color[0])
             data['G'].append(color[1])
             data['B'].append(color[2])
@@ -368,12 +426,8 @@ class Frame:
                     raise ValueError(f'Non-finite scene centroid for {obj!r}')
                 self.centroids[obj] = centroid
 
-        names = []
-        for name, _ in self.centroids.items():
-            names.append(name)
-        combos = []
-        for combo in permutations(names,3):
-            combos.append('---'.join(combo).split('---'))
+        names = list(self.centroids)
+        combos = permutations(names, 3)
         camera_world = camera_origin_world(self.extrinsics)
         self.combos = []
         for combo in combos:
@@ -396,13 +450,11 @@ class Frame:
             angleOAB = _angle_degrees(OA, BA, angle_name='angleOAB')
             # angle OAC
             angleOAC = _angle_degrees(OA, CA, angle_name='angleOAC')
-            # add to self.combos and format label names
-            nameA = combo[0].lstrip("[").rstrip("]").replace("'","").split(",")
-            nameA = "_".join([nameA[0].replace(" ","_"),nameA[1].replace(" ","")])
-            nameB = combo[1].lstrip("[").rstrip("]").replace("'","").split(",")
-            nameB = "_".join([nameB[0].replace(" ","_"),nameB[1].replace(" ","")])
-            nameC = combo[2].lstrip("[").rstrip("]").replace("'","").split(",")
-            nameC = "_".join([nameC[0].replace(" ","_"),nameC[1].replace(" ","")])
+            # Encode the two identity components as data.  Splitting their
+            # repr on punctuation loses real commas and underscores.
+            nameA = _relation_label_from_scene_key(combo[0])
+            nameB = _relation_label_from_scene_key(combo[1])
+            nameC = _relation_label_from_scene_key(combo[2])
             self.combos.append({
                 'objectA': nameA,
                 'objectB': nameB,
@@ -479,14 +531,7 @@ class SceneObject:
 
     # get object name in format: [object,identifier]
     def getName(self):
-        splitName = self.name.split(':')
-        n = 0
-        while n < len(splitName):
-            splitName[n] = str(splitName[n].strip())
-            n+=1
-        if len(splitName) == 1:
-            splitName.append(None)
-        return splitName
+        return _source_object_identity(self.ID, self.name)
 
     # add Frame to frames dictionary
     def addFrame(self,location,f):
@@ -747,6 +792,27 @@ def _remote_directory_files(directory_url, suffix):
     return sorted(set(names))
 
 
+def _require_unique_relation_frame_ids(frame_pairs, empty_frame_indices=()):
+    '''Reject frame IDs that would alias the collector's ``<ID>.csv`` path.'''
+
+    empty_frame_indices = set(empty_frame_indices)
+    emitted_frame_ids = [
+        pair.image_frame_id
+        for json_index, pair in enumerate(frame_pairs)
+        if json_index not in empty_frame_indices
+    ]
+    duplicate_frame_ids = sorted(
+        frame_id
+        for frame_id, count in Counter(emitted_frame_ids).items()
+        if count > 1
+    )
+    if duplicate_frame_ids:
+        raise SourceGeometryError(
+            'Multiple annotated frames would overwrite the same relation file: '
+            f'image frame IDs {duplicate_frame_ids}',
+        )
+
+
 def processJSON(
     data,
     allObjects,
@@ -756,6 +822,9 @@ def processJSON(
     plot,
     *,
     export_scene_relations=True,
+    return_relation_records=False,
+    annotation_path=None,
+    annotation_sha256=None,
 ):
     '''process each json file
     data:           the data contained in the json file
@@ -763,10 +832,34 @@ def processJSON(
     datasetName:    the name of the database, which should correspond with the
                     name of the subfolder within the data and json folders
     local:          True if database is located locally, False if on web
-    plot:           number of different views plotted per frame'''
+    plot:           number of different views plotted per frame
+
+    By default this retains the historical ``allObjects`` return value used by
+    manual callers.  The top-level collector opts into the two-value result so
+    it can publish provenance records only after the entire run succeeds.'''
 
     if type(export_scene_relations) is not bool:
         raise TypeError('export_scene_relations must be a boolean')
+    if type(return_relation_records) is not bool:
+        raise TypeError('return_relation_records must be a boolean')
+    if annotation_path is not None:
+        annotation_path = Path(annotation_path)
+    if annotation_sha256 is not None and (
+        not isinstance(annotation_sha256, str)
+        or re.fullmatch(r'[0-9a-f]{64}', annotation_sha256) is None
+    ):
+        raise TypeError('annotation_sha256 must be a lowercase SHA-256 digest')
+    if export_scene_relations and (annotation_path is None or annotation_sha256 is None):
+        raise SourceGeometryError(
+            'Relation export requires the exact annotation_path and '
+            'annotation_sha256 for the run manifest',
+        )
+    if annotation_path is not None:
+        observed_annotation_sha256 = sha256_file(annotation_path)
+        if observed_annotation_sha256 != annotation_sha256:
+            raise SourceGeometryError(
+                'annotation_sha256 does not match the exact annotation file bytes',
+            )
 
     # start json timer
     jsonTimer = startTimer()
@@ -775,13 +868,44 @@ def processJSON(
     # Known datasets cannot silently override their scientific conventions;
     # a new dataset must declare a complete sourceGeometry object.
     profile = resolve_source_profile(datasetName, data.get('sourceGeometry'))
-    name = join(datasetName,data['name']) if local else data['name']
+    try:
+        dataset_identity, scene_identity = validate_relation_location(
+            datasetName,
+            data['name'],
+        )
+    except RelationManifestError as exc:
+        raise SourceGeometryError(str(exc)) from exc
+    name = join(dataset_identity,scene_identity) if local else scene_identity
     date = data['date']
     frames = data['frames']
     objects = data['objects']
 
+    # Build source identities before processing any pixels.  Class-only labels
+    # use their annotation object index, so two distinct ``chair`` entries stay
+    # distinct; duplicate explicit class/instance identities are ambiguous and
+    # must be repaired in the source annotation instead of silently collapsing.
+    source_object_identities = {}
+    identity_owners = {}
+    for source_id, source_object in enumerate(objects):
+        if not source_object:
+            continue
+        try:
+            source_name = source_object['name']
+            identity = tuple(_source_object_identity(source_id, source_name))
+        except (KeyError, ObjectIdentityError) as exc:
+            raise SourceGeometryError(
+                f'Object {source_id} has an invalid source identity: {exc}',
+            ) from exc
+        if identity in identity_owners:
+            raise SourceGeometryError(
+                f'Objects {identity_owners[identity]} and {source_id} declare '
+                f'the same source identity {identity!r}',
+            )
+        identity_owners[identity] = source_id
+        source_object_identities[source_id] = identity
+
     # Collector output is local even when source images are fetched remotely.
-    outputScenePath = join('data', datasetName, data['name'])
+    outputScenePath = join('data', dataset_identity, scene_identity)
     makedirs(outputScenePath, exist_ok=True)
 
     # store indices of the empty frames & objects
@@ -872,8 +996,17 @@ def processJSON(
         )
         for json_index, pair in enumerate(framePairs)
     )
+    framePoseIndices = tuple(
+        pose_index(pair, json_index, profile.pose_index_strategy)
+        for json_index, pair in enumerate(framePairs)
+    )
+
+    # Relation filenames use the image frame ID.  Reject aliases before any
+    # per-frame export so a repeated ID cannot silently overwrite evidence.
+    _require_unique_relation_frame_ids(framePairs, emptyFrames)
 
     allFrames = []
+    allFrameContexts = []
     current_point_cloud_files = []
     #for i, f in enumerate(frames[:14]):
     for i, f in enumerate(frames):
@@ -926,7 +1059,7 @@ def processJSON(
                 )
             exists = False
             for o in allObjects:
-                if objects[ID]['name'] == o.name:
+                if tuple(o.getName()) == source_object_identities[ID]:
                     currentObject = o
                     currentObject.updateID(ID)
                     exists = True
@@ -963,6 +1096,7 @@ def processJSON(
                                .process3dPoints(outputScenePath,plot))
 
         allFrames.append(currentFrame)
+        allFrameContexts.append((i, pair, framePoseIndices[i], framePoses[i]))
         current_point_cloud_files.append(f'{currentFrame.ID}.3d')
         # uncomment to save exceptions and conflicts to files
         #np.savetxt(join(filePath,str(i)+'.ex'),exceptions,fmt="%s")
@@ -970,6 +1104,7 @@ def processJSON(
         sys.stdout.write("\ttotal time for frame %s:"%str(currentFrame.ID))
         sys.stdout.write(" \t%s"%str(endTimerPretty(frameTimer))); sys.stdout.flush()
 
+    relation_records = []
     if export_scene_relations and allFrames:
         calculateCentroidsForScene(
             outputScenePath,
@@ -978,12 +1113,59 @@ def processJSON(
         )
 
         print('Calculating angle and distance combinations...')
-        for i, currentFrame in enumerate(allFrames):
+        for i, (currentFrame, context) in enumerate(zip(allFrames, allFrameContexts)):
             _progress_update(i+1,len(allFrames))
             centroidFile = join(outputScenePath,'centroids.csv')
             currentFrame = currentFrame.getAngleDistCombos(centroidFile).export(outputScenePath)
+            json_index, pair, selected_pose_index, selected_pose = context
+            relation_file = Path(outputScenePath, f'{currentFrame.ID}.csv')
+            repository_root = Path.cwd().resolve()
+            data_root = (repository_root / 'data').resolve()
+            try:
+                annotation_relative = annotation_path.resolve().relative_to(
+                    repository_root,
+                ).as_posix()
+                relation_relative = relation_file.resolve().relative_to(
+                    data_root,
+                ).as_posix()
+            except ValueError as exc:
+                raise SourceGeometryError(
+                    'Collector annotations and relation outputs must remain inside '
+                    'the current repository',
+                ) from exc
+            relation_records.append(build_relation_frame_record(
+                dataset=dataset_identity,
+                scene=scene_identity,
+                annotation_path=annotation_relative,
+                annotation_sha256=annotation_sha256,
+                source_geometry={
+                    'depthEncoding': profile.depth_encoding,
+                    'pairingStrategy': profile.pairing_strategy,
+                    'poseIndexStrategy': profile.pose_index_strategy,
+                    'pixelOrigin': profile.pixel_origin,
+                },
+                json_frame_index=json_index,
+                image={
+                    'name': pair.image_name,
+                    'frameId': pair.image_frame_id,
+                    'timestamp': pair.image_timestamp,
+                },
+                depth={
+                    'name': pair.depth_name,
+                    'frameId': pair.depth_frame_id,
+                    'timestamp': pair.depth_timestamp,
+                },
+                extrinsics_file=exFile,
+                pose_index=selected_pose_index,
+                camera_to_world=selected_pose,
+                relation_path=relation_relative,
+                relation_sha256=sha256_file(relation_file),
+                relation_row_count_value=relation_row_count(relation_file),
+            ))
             currentFrame = None
 
+    if return_relation_records:
+        return allObjects, relation_records
     return allObjects
 
 
@@ -992,6 +1174,10 @@ def main():
     options = menu.optionMenu()
     if options == 'menu' or options == 'back':
         return # back to main menu
+
+    manifest_path = Path('data') / RELATION_MANIFEST_FILENAME
+    collection_id = begin_relation_run(manifest_path)
+    relation_records = []
 
     for datasetName,o in options.items():
         currentPath = o[0]
@@ -1012,9 +1198,22 @@ def main():
         #for jNum,jFile in enumerate(jsonFiles):
         for jNum,jFile in enumerate(jsonFiles):#[0:1]):
             startB = startTimer()
-            with open(join(jsonDir,jFile)) as jData:
+            annotation_path = Path(jsonDir, jFile)
+            annotation_digest = sha256_file(annotation_path)
+            with annotation_path.open(encoding='utf-8') as jData:
                 data = json.load(jData)
-                allObjects = processJSON(data,allObjects,currentPath,datasetName,local,plot) # process each json file
+                allObjects, scene_relation_records = processJSON(
+                    data,
+                    allObjects,
+                    currentPath,
+                    datasetName,
+                    local,
+                    plot,
+                    return_relation_records=True,
+                    annotation_path=annotation_path,
+                    annotation_sha256=annotation_digest,
+                )
+                relation_records.extend(scene_relation_records)
             print("\n** File processed in %s."% str(endTimerPretty(startB)))
             print("** Total: "+str(jNum+1)+ " files processed in %s." % str(endTimerPretty(startA)))
             print("**",len(allObjects),"total objects in %s JSON files.\n" % str(jNum+1))
@@ -1030,3 +1229,16 @@ def main():
                    str(o.colour[:3])+" - "+str(len(o.frames))+" - "+oldIDs+"\n"
             logFile.write(line)
         logFile.close()
+
+    if not relation_records:
+        raise RelationManifestError(
+            'Collector produced no relation frame records; the run manifest '
+            'remains INCOMPLETE and cannot be gathered',
+        )
+
+    complete_relation_run(
+        manifest_path,
+        collection_id=collection_id,
+        frames=relation_records,
+        data_root=Path('data'),
+    )
