@@ -103,6 +103,13 @@ def _surface_intersections(first, second):
 
 def _boolean_intersection_volume(first, second):
     """Intersect two world-space mesh copies without changing model objects."""
+    # Boolean operators need an active selected object. Preserve that context as
+    # well as geometry: later renderer steps must see the same scene state.
+    previous_active = bpy.context.view_layer.objects.active
+    previous_selected = tuple(bpy.context.selected_objects)
+    previous_mode = previous_active.mode if previous_active is not None else "OBJECT"
+    if previous_mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
     collection = bpy.context.scene.collection
     result_obj = bpy.data.objects.new("__benchmark_intersection", first.copy())
     other_obj = bpy.data.objects.new("__benchmark_operand", second.copy())
@@ -132,6 +139,13 @@ def _boolean_intersection_volume(first, second):
         for mesh in (result_mesh, other_mesh):
             if mesh.users == 0:
                 bpy.data.meshes.remove(mesh)
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in previous_selected:
+            if bpy.context.view_layer.objects.get(obj.name) is obj:
+                obj.select_set(True)
+        bpy.context.view_layer.objects.active = previous_active
+        if previous_mode != "OBJECT":
+            bpy.ops.object.mode_set(mode=previous_mode)
 
 
 def measure(objects, *, unchanged_source_bounds=None):

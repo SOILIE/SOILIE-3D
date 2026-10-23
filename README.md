@@ -17,7 +17,7 @@
   </tr>
 </table>
 
-**Current model version: 4.0.3**<br>
+**Current model version: 4.0.4**<br>
 Original source snapshot: 24.07.05
 
 🌐 [Our Website](https://soilie3d.com/)

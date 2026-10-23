@@ -1,3 +1,247 @@
+# Fresh SOILIE benchmark campaigns
+
+The current campaign controller is `serverless.cloud_benchmark.authoritative`.
+It generates every SOILIE room from the corrected model; it does not import,
+repair or reuse earlier SOILIE rooms. Development pilots and the final campaign
+remain separate, while their paid Lambda attempts share one US$25 ceiling.
+No command in this guide starts AI review or publishes results.
+
+## Source and validation gates
+
+The model author must finish and validate the source repairs before generation.
+Prepare a source-audit JSON receipt with `passed: true`, the exact
+`runtimeProvenanceSha256`, and a `checks` object containing these explicit
+boolean passes:
+
+- `coordinateFrames`, `cameraDepthPairing`, `angleSemantics`, `anchorRotation`.
+- `workingCombinations`, `exactRequestedCounts`, `gifVisibility`, `observerParity`.
+
+Attach the audit evidence to that receipt. A column-name remap does not certify
+coordinate frames, depth decoding or camera geometry. Missing Princeton raw
+inputs prevent certification of that corpus. A false, incomplete or mismatched
+receipt blocks both pilot and final preparation.
+
+The final freeze additionally requires a completed pilot without failed or
+uncertain attempts, local/Lambda parity for every requested count and both room
+types, and a fixture receipt. That receipt uses the same provenance hash and
+explicit `geometryFixtures`, `animationFixtures` and `observerParity` passes.
+It covers extraction through reconstruction, anchor preservation, invalid inputs,
+seven/eight-instance scenes, normalized window assemblies, opaque geometry, and
+the five-visible-object GIF limit including its loop transition.
+
+## Frozen requests and execution
+
+The default supported range is 3–8, after validation. Each of four final groups
+contains exactly 2,500 newly generated requests: local bedroom, local living
+room, Lambda bedroom, and Lambda living room. Each group contains 417 requests
+at each count 3–6 and 416 at each count 7–8. If eight is fundamentally unsupported,
+validate and freeze 3–7 instead: 500 at every count in each group. Never change
+that choice after the final manifest is frozen.
+
+The placement pilot requests ten scenes per count in each group: 240 for 3–8,
+or 200 for 3–7. Pilot and final seed ranges are disjoint. Counts and room/platform
+groups are interleaved before generation, independently of observed quality.
+Duplicate classes are allowed. The selection receipt must contain exactly the
+requested number of instances; window normalization may add object meshes, so
+mesh count is not substituted for requested instance count.
+
+Local execution uses six worker processes with one Blender thread each.
+Lambda execution uses 16 concurrent x86-64 workers, 4 GB memory, a 900-second
+watchdog and 1 GB temporary storage. Provision the private benchmark stack using
+`deploy.ps1` with the corrected, digest-pinned renderer image. The controller
+checks the live function configuration before dispatch and never deploys it.
+Publish a numeric Lambda version after deployment and pass the qualified name,
+such as `private-function:42`. The controller verifies that immutable version;
+mutable aliases and `$LATEST` are rejected.
+
+Pin the repository runtime and its compiled provenance, Blender executable,
+Python version, measurement/dispatch scripts, Lambda image and regional rate
+card. CPU model, logical/available CPUs, RAM, OS and generation/measurement
+dependency versions are frozen as well. The runtime's provenance must be the file actually loaded by the worker:
+`model-provenance.json` or `.codex/runtime/model-provenance.json`. Every listed
+asset, model module and data file is checked against that provenance. Resume
+rejects changed code, data, assets, runtime configuration or frozen requests.
+A model repair requires a new pilot and a new final campaign.
+
+All campaign inputs, receipts, result artifacts, logs and rate snapshots belong
+under the repository's `.codex/` directory. Keep the same `--budget-root` for
+every pilot and the authoritative campaign.
+
+## Commands
+
+Run generation in the configured Linux/WSL environment from the repository.
+Replace the placeholder paths and private resource values with the validated
+campaign configuration.
+
+```bash
+python -m serverless.cloud_benchmark.authoritative prepare \
+  --root .codex/benchmark/replacement-pilot --phase pilot --max-count 8 \
+  --runtime . --provenance .codex/runtime/model-provenance.json \
+  --blender /path/to/blender --source-audit .codex/benchmark/source-audit.json \
+  --rates .codex/benchmark/rates.json --budget-root .codex/benchmark/replacement-budget \
+  --function PRIVATE_FUNCTION:VERSION --image 'IMAGE_URI@sha256:DIGEST' --bucket PRIVATE_BUCKET
+
+python -m serverless.cloud_benchmark.authoritative run --root .codex/benchmark/replacement-pilot --platform local
+python -m serverless.cloud_benchmark.authoritative run --root .codex/benchmark/replacement-pilot --platform lambda
+```
+
+Local and Lambda controllers may run in separate terminals. `--max-new-calls 1`
+allows a finite first wave. Stop files and Ctrl+C stop further dispatch and let
+owned work settle. Completed scenes remain immutable. A restarted controller
+does not invoke a completed request again.
+
+Generate parity evidence through the same cumulative budget boundary:
+
+```bash
+python -m serverless.cloud_benchmark.authoritative parity --root .codex/benchmark/replacement-pilot
+```
+
+This reruns the first scheduled local scene in every room/count combination
+remotely, comparing selection and all geometry stages within 0.00001 m; timings
+are allowed to differ. All paid probes reserve and settle in the shared ledger,
+including failures. The resulting `parity.json` is pinned to the pilot manifest.
+Do not use the old standalone parity CLI for this campaign.
+
+After the pilot, parity and source/animation fixtures pass, freeze the final
+campaign with the same configuration and these three additional arguments:
+
+```bash
+python -m serverless.cloud_benchmark.authoritative prepare \
+  --root .codex/benchmark/replacement-final --phase authoritative --max-count 8 \
+  --runtime . --provenance .codex/runtime/model-provenance.json \
+  --blender /path/to/blender --source-audit .codex/benchmark/source-audit.json \
+  --rates .codex/benchmark/rates.json --budget-root .codex/benchmark/replacement-budget \
+  --function PRIVATE_FUNCTION:VERSION --image 'IMAGE_URI@sha256:DIGEST' --bucket PRIVATE_BUCKET \
+  --pilot .codex/benchmark/replacement-pilot --parity .codex/benchmark/replacement-pilot/parity.json \
+  --fixtures .codex/benchmark/fixtures.json
+
+python -m serverless.cloud_benchmark.authoritative run --root .codex/benchmark/replacement-final --platform local
+python -m serverless.cloud_benchmark.authoritative run --root .codex/benchmark/replacement-final --platform lambda
+```
+
+### Progress bars
+
+This read-only monitor displays one terminal bar for each of the four groups,
+attempt/failure counts, and the cumulative Lambda cost plus current reservations:
+
+```powershell
+wsl -- .codex/linux-env/bin/python -m serverless.cloud_benchmark.progress --root .codex/benchmark/replacement-final
+```
+
+For a one-off snapshot, append `--once`. Use the pilot directory to monitor the
+pilot instead. Ctrl+C closes only the monitor. A native Python environment can
+use the same `python -m serverless.cloud_benchmark.progress` command; when its
+Windows/WSL mount path differs, supply `--budget-root <same-budget-directory>`.
+
+### Failures, recovery and budget
+
+Every attempt gets a new directory, retained artifact/logs, seed, status and
+timing. Failures stop new dispatch; active work is drained. Explicitly retry
+a reconciled failure with `--retry-request <request-id>`, preserving its seed
+and all earlier attempts. Never select an easier replacement seed.
+
+The Lambda ledger persists dispatch intent before contacting AWS and disables
+automatic SDK invocation retries. An interrupted or ambiguous call remains
+reserved and blocks further cloud dispatch across all pilots and campaigns.
+Response headers and the Lambda execution identity from its service log tail
+are saved before reading the streaming response body. The Invoke API request ID
+is retained separately and is never assumed to be the execution request ID.
+Recover its original S3 response and CloudWatch billing evidence without another
+Lambda call. Identify the exact original AWS request UUID from the retained
+service evidence, then run:
+
+```bash
+python -m serverless.cloud_benchmark.authoritative recover --root CAMPAIGN_ROOT \
+  --request lambda-bedroom-0000 --attempt 1 --aws-request-id ORIGINAL_AWS_UUID
+```
+
+The command checks the unique billing report, dispatch timestamps, original
+S3 metadata checksum, request, model identity and retained log before writing
+missing evidence into that attempt's existing directory and settling its charge.
+The recovery UUID must match the saved execution identity, or the same
+invocation's handler marker must bind its UUID, exact scene request and frozen
+function version. A billing report and plausible timestamp alone are insufficient.
+It never invokes Lambda. If a watchdog/runtime failure prevented any S3 scene,
+add `--service-failure`; this requires an explicit `Status: error` or
+`Status: timeout` in the exact billing report. Missing/ambiguous reports remain
+blocked. For evidence that already downloaded before the interruption, reconcile:
+
+```bash
+python -m serverless.cloud_benchmark.authoritative reconcile --root CAMPAIGN_ROOT --platform lambda
+python -m serverless.cloud_benchmark.authoritative reconcile --root CAMPAIGN_ROOT --platform local
+```
+
+Local reconciliation establishes worker exit before reading terminal evidence.
+Missing cloud responses remain blocked until recovered. Function failures retain
+their recorded billed duration and charge even if no scene was saved.
+
+Supply a dated regional rate card captured from official AWS pricing, with
+`schemaVersion: 1`, `currency: USD`, `region`, `architecture: x86_64`,
+`sourceUrl`, `retrievedAt`, `computeGBSecondUSD`, `requestUSD` and
+`ephemeralGBSecondUSD`. There is no assumed free tier. Extra storage is charged
+only above the included 512 MB; the run uses 1 GB, not the old 10 GB setting.
+
+A single shared ledger retains every pilot, failed call, retry and final call.
+Each active invocation reserves 915 seconds at the frozen rate. The US$25
+Lambda-generation ceiling cannot be reset by changing output directories.
+Builds, S3 storage/transfers and archival charges are separately tracked.
+Pause rather than exceed the ceiling. Reservations are not incurred spending.
+
+Keep generation time through final placement/support settlement separate from
+measurement overhead, billed invocation duration, active concurrent-session time
+and calendar pauses. Local parallel scene latency is not an isolated serial
+timing. Join stages by scene identity before computing total times/percentiles.
+
+## Complete evidence and the review checkpoint
+
+Export only after all 10,000 frozen requests have a verified successful artifact:
+
+```bash
+python -m serverless.cloud_benchmark.authoritative export \
+  --root .codex/benchmark/replacement-final --output .codex/benchmark/replacement-final/evidence/cohort.json
+```
+
+The private export checks every source hash and requested instance count, retains
+exact compressed worker logs, all attempt/budget accounting and local/cloud
+session timing receipts, and sets `reviewApproved: false`. It does not
+filter quality, start reviewers, or publish private fields to the website.
+
+Reuse valid LayoutGPT and Infinigen geometry, native archives and original
+provenance; remeasure applicable metrics and construct new SOILIE pairs.
+Report cross-model comparisons only over supported shared object counts;
+the controlled Infinigen baseline currently supports 3–6. Report SOILIE's larger
+counts separately, and report actual available baseline sample sizes.
+
+Before collecting judgments, present the matching rules, frozen rubric,
+six-view stimuli, reviewer configuration, response schema, controls and
+aggregation protocol for author review. The starting proposal is 480 matched
+pairs and 4,800 independent judgments, without quality-score-based sampling.
+Do not silently loosen matching or reuse previous AI responses to fill a quota.
+Use three isolated reviewer workers from the existing subscription only after
+the protocol is approved and its pilot passes.
+
+Publish a single dated `files/outputs/YYYY-MM-DD/` directory, using the Toronto
+date when authoritative SOILIE generation begins, after all coverage, timing,
+cost, metric and review gates pass. The existing 2024-06-27 demonstration remains
+independent of this campaign.
+
+## Retired evidence tools
+
+The older `design`, `local`, `campaign`, correction, publication and review
+modules describe previous runs. Some remain dependencies of historical evidence
+verification/export tools. They do not control the replacement cohort and must
+not be used to import earlier SOILIE rooms, timings or judgments into it.
+Their existing frozen rubric identifiers remain independently meaningful.
+
+
+<details>
+<summary>Retired campaign documentation and reusable baseline methods</summary>
+
+The following records earlier campaigns. Their scene allocations, support
+repairs, review collections and publication commands do not apply to the new
+cohort. Baseline acquisition and measurement descriptions remain available for
+recovering and checking the retained LayoutGPT/Infinigen evidence.
+
 # Temporary platform benchmark
 
 Private, finite Lambda execution of the tracked SOILIE placement pipeline.
@@ -551,3 +795,5 @@ and loopback server in all cases.
 For a deliberately incomplete preview, omit `--reviews` and use
 `scripts/check-balanced-comparison.mjs` with `COMPARISON_PREVIEW_DIR`.
 The website must not fetch or display AI results when the preview gate is closed.
+
+</details>

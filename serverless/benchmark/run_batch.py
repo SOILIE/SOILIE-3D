@@ -6,8 +6,10 @@ reporting, while successful-layout timing excludes arbitrary watchdog waits.
 from __future__ import annotations
 
 import argparse
+import base64
 from contextlib import contextmanager
 from datetime import datetime, UTC
+import gzip
 import hashlib
 import json
 import os
@@ -18,6 +20,7 @@ import signal
 import subprocess
 import sys
 import time
+import zlib
 
 from serverless.benchmark.supervise import command as supervised
 
@@ -61,6 +64,28 @@ def write_json(path, data):
     temporary = path.with_suffix(path.suffix+".tmp")
     temporary.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     temporary.replace(path)
+
+
+def retain_execution_log(path):
+    """Keep exact worker output inside its artifact before temporary work is removed."""
+    raw = path.read_bytes()
+    return {"encoding": "gzip+base64", "bytes": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "data": base64.b64encode(gzip.compress(raw, mtime=0)).decode("ascii")}
+
+
+def verify_execution_log(record):
+    """Decode and verify a retained log without assuming its bytes are valid UTF-8."""
+    if (not isinstance(record, dict) or record.get("encoding") != "gzip+base64"
+            or type(record.get("bytes")) is not int or record["bytes"] < 0):
+        raise ValueError("Invalid retained execution log")
+    try:
+        raw = gzip.decompress(base64.b64decode(record["data"], validate=True))
+    except (KeyError, TypeError, ValueError, OSError, EOFError, zlib.error) as error:
+        raise ValueError("Invalid retained execution log encoding") from error
+    if len(raw) != record["bytes"] or hashlib.sha256(raw).hexdigest() != record.get("sha256"):
+        raise ValueError("Retained execution log checksum differs")
+    return raw
 
 
 def runtime_implementation(runtime):
@@ -132,12 +157,15 @@ def terminate_tree(process):
 
 
 def worker(args):
-    from serverless.common.model_runtime import generate_model_inputs, select_model_objects
+    from serverless.common.model_runtime import generate_model_inputs_with_diagnostics, select_model_objects
     request = json.loads((args.work/"request.json").read_text())
     started = time.perf_counter()
     objects = select_model_objects(args.runtime, request, 0)
+    requested_count = len(request['objects']) if request['mode'] == 'objects' else request['objectCount']
+    if len(objects) != requested_count or any(not isinstance(label, str) or not label for label in objects):
+        raise RuntimeError('The selected instance count differs from the frozen request')
     write_json(args.work/"selection.json", {"objects": objects, "request": request})
-    inputs = generate_model_inputs(args.runtime, objects, request["seed"])
+    inputs, alignment_diagnostics = generate_model_inputs_with_diagnostics(args.runtime, objects, request["seed"])
     write_json(args.work/"input.json", inputs)
     selection_seconds = time.perf_counter()-started
     for name in ("assets", "modules", "data", "suggested_setup.blend"):
@@ -157,7 +185,12 @@ def worker(args):
         raise RuntimeError(f"Blender exited {result.returncode}")
     if not (args.work/"capture.json").exists():
         raise RuntimeError("No final-placement capture; output is not successful")
-    write_json(args.work/"worker.json", {"selectionSeconds": selection_seconds})
+    write_json(args.work/"worker.json", {
+        "selectionSeconds": selection_seconds,
+        "requestedObjectCount": requested_count,
+        "selectedObjectCount": len(objects),
+        "alignmentDiagnostics": alignment_diagnostics,
+    })
 
 
 def batch(args):
@@ -251,7 +284,7 @@ def batch(args):
                     for stage in row["stages"].values():
                         stage.update({"id": row["id"], "model": "soilie", "roomType": room_type})
                         if plan:
-                            stage['cohort'] = 'diversity'
+                            stage['cohort'] = config['cohort']
                     completed += 1
             except subprocess.TimeoutExpired:
                 terminate_tree(process)
@@ -262,6 +295,7 @@ def batch(args):
                 raise
         row["wallSeconds"] = time.perf_counter()-started
         row["generationSeconds"] = row["wallSeconds"]-row.get("observationSeconds", 0)
+        row["executionLog"] = retain_execution_log(work/"process.log")
         log_text = (work/"process.log").read_text(errors="replace")
         row["collisionRecoveryActivated"] = "Object-aware collision recovery activated" in log_text
         row["collisionRecoveryMoves"] = log_text.count("---| Object-aware move")
@@ -286,7 +320,7 @@ def load_request_plan(path):
     document = json.loads(path.read_text())
     rows = document.get('requests')
     cohort = document.get('cohort')
-    if document.get('schemaVersion') != 1 or cohort not in {'diversity', 'paired_comparison'} or not rows:
+    if document.get('schemaVersion') != 1 or cohort not in {'diversity', 'paired_comparison', 'authoritative'} or not rows:
         raise ValueError('Expected a nonempty frozen evaluation request plan')
     if cohort == 'paired_comparison':
         if document.get('roomType') not in {'bedroom', 'living_room'} or document.get('baseline') != 'layoutgpt':
@@ -300,12 +334,12 @@ def load_request_plan(path):
             raise ValueError('Invalid exploration request fields or seed')
         if row.get('mode') == 'objects':
             objects = row.get('objects', [])
-            if not 3 <= len(objects) <= 6 or not all(isinstance(v,str) and v.strip() for v in objects):
-                raise ValueError('Explicit exploration inputs require three to six labels')
+            if not 3 <= len(objects) <= 8 or not all(isinstance(v,str) and v.strip() for v in objects):
+                raise ValueError('Explicit exploration inputs require three to eight labels')
             if 'roomType' in row or 'objectCount' in row:
                 raise ValueError('Explicit scenes cannot be assigned an inferred room preset')
         elif row.get('mode') in {'random','room_type'}:
-            if row.get('objectCount') not in (3,4,5,6) or 'objects' in row:
+            if type(row.get('objectCount')) is not int or row['objectCount'] not in range(3, 9) or 'objects' in row:
                 raise ValueError('Invalid random/preset count')
             if row['mode'] == 'room_type' and row.get('roomType') not in {'bedroom','living_room','kitchen','bathroom'}:
                 raise ValueError('Unknown preset')
@@ -317,6 +351,13 @@ def load_request_plan(path):
             raise ValueError('Unknown generation mode')
     if cohort == 'paired_comparison' and any(row.get('mode') != 'objects' for row in rows):
         raise ValueError('Paired comparisons use explicit object inventories only')
+    if cohort == 'authoritative':
+        if any(row.get('mode') != 'room_type' or row.get('roomType') not in ('bedroom', 'living_room')
+               or row.get('allowDuplicates') is not True for row in rows):
+            raise ValueError('Authoritative requests require the frozen bedroom/living-room duplicate policy')
+        seeds = [row['seed'] for row in rows]
+        if len(seeds) != len(set(seeds)):
+            raise ValueError('Authoritative request plans cannot repeat a seed')
     return document
 
 
@@ -334,7 +375,7 @@ def main():
     parser.add_argument('--parallel-workers', type=int, default=1)
     parser.add_argument("--room-type", choices=["bedroom","living_room","kitchen","bathroom"], default="bedroom")
     parser.add_argument('--request-plan', type=Path)
-    parser.add_argument("--object-count", type=int, choices=[3,4,5,6])
+    parser.add_argument("--object-count", type=int, choices=range(3, 9))
     parser.add_argument("--no-duplicates", action="store_true")
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--support", action="store_true")

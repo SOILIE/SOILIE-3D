@@ -6,7 +6,7 @@ param(
     [ValidatePattern('@sha256:[0-9a-f]{64}$')]
     [string]$BaseImage,
     [int]$MemoryMB = 4096,
-    [int]$Concurrency = 4
+    [int]$Concurrency = 16
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path

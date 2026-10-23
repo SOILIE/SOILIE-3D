@@ -155,9 +155,10 @@ class CloudBenchmarkTests(unittest.TestCase):
                 validate_downloads(output)
     def test_only_bounded_bedroom_and_living_requests_can_run(self):
         for room in ('bedroom','living_room'):
-            self.assertTrue(request_document({'seed': 4, 'objectCount': 6, 'roomType':room})['allowDuplicates'])
+            for count in range(3, 9):
+                self.assertTrue(request_document({'seed': 4, 'objectCount': count, 'roomType':room})['allowDuplicates'])
         for row in ({'seed': True, 'objectCount': 3}, {'seed': -1, 'objectCount': 4},
-                    {'seed': 1, 'objectCount': 7}, {'seed': 1, 'objectCount': 3, 'mode': 'objects'}):
+                    {'seed': 1, 'objectCount': 9}, {'seed': 1, 'objectCount': 3, 'mode': 'objects'}):
             with self.assertRaises(ValueError):
                 request_document({**row, 'roomType':'living_room'})
         with self.assertRaises(ValueError):

@@ -24,7 +24,7 @@ def request_document(event):
         raise ValueError('Only bedroom and living_room are in this campaign')
     if type(event['seed']) is not int or not 0 <= event['seed'] < 2**32:
         raise ValueError('Invalid seed')
-    if type(event['objectCount']) is not int or not 3 <= event['objectCount'] <= 6:
+    if type(event['objectCount']) is not int or not 3 <= event['objectCount'] <= 8:
         raise ValueError('Invalid requested object count')
     return {'mode': 'room_type', 'roomType': event['roomType'], 'seed': event['seed'],
             'objectCount': event['objectCount'], 'allowDuplicates': True,
@@ -64,7 +64,13 @@ def lambda_handler(event, context):
     provenance = verified_provenance()
     runtime = Path(os.environ['SOILIE_RUNTIME_DIR'])
     identity = 'soilie-'+request['roomType']+'-'+str(request['seed'])
-    print(json.dumps({'scene': identity, 'stage': 'placing'}), flush=True)
+    # Bind even a watchdog failure to its exact request before creating scene
+    # files; recovery must not guess which concurrent invocation a REPORT names.
+    print(json.dumps({'scene': identity, 'stage': 'placing',
+                      'awsRequestId': context.aws_request_id,
+                      'functionVersion': context.function_version,
+                      'request': {key: event[key] for key in ('seed', 'roomType', 'objectCount')}}),
+          flush=True)
     row = {'id': identity, 'request': request, 'status': 'failed',
            'startedAt': datetime.now(UTC).isoformat(),
            'implementation': {'modelVersion': provenance['version'],
@@ -116,6 +122,8 @@ def lambda_handler(event, context):
                     terminate_tree(process)
         row['wallSeconds'] = time.perf_counter()-started
         row['generationSeconds'] = row['wallSeconds']-row.get('observationSeconds', 0)
+        from serverless.benchmark.run_batch import retain_execution_log
+        row['executionLog'] = retain_execution_log(work/'process.log')
         logs = (work/'process.log').read_text(errors='replace')
         row['collisionRecoveryActivated'] = 'Object-aware collision recovery activated' in logs
         row['collisionRecoveryMoves'] = logs.count('---| Object-aware move')

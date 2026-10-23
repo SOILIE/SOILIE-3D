@@ -8,7 +8,7 @@ Parameters:
     Default: 4096
   Concurrency:
     Type: Number
-    Default: 4
+    Default: 16
     MinValue: 1
     MaxValue: 500
 Resources:

@@ -1,5 +1,6 @@
 """Run with Blender in the background; observes fixtures without scene output."""
 from pathlib import Path
+import random
 import sys
 import unittest
 
@@ -36,6 +37,53 @@ class SolidOverlapFixtures(unittest.TestCase):
         self.assertTrue(result["complete"])
         self.assertAlmostEqual(50, result["meanWorstOverlapPct"], places=5)
         self.assertAlmostEqual(4, result["overlapPairs"][0]["intersectionM3"], places=5)
+
+    def test_boolean_observation_preserves_geometry_context_and_randomness(self):
+        first = cube("first", (0, 0, 0))
+        second = cube("second", (1, 0, 0))
+        bpy.ops.object.select_all(action="DESELECT")
+        first.select_set(True)
+        bpy.context.view_layer.objects.active = first
+
+        def state():
+            return {
+                "objects": [(obj.name, tuple(tuple(row) for row in obj.matrix_world),
+                             tuple(tuple(v.co) for v in obj.data.vertices),
+                             tuple(tuple(face.vertices) for face in obj.data.polygons),
+                             obj.hide_render, obj.hide_viewport)
+                            for obj in (first, second)],
+                "active": bpy.context.view_layer.objects.active.name,
+                "selection": sorted(obj.name for obj in bpy.context.selected_objects),
+                "mode": bpy.context.mode,
+                "random": random.getstate(),
+                "objectCount": len(bpy.data.objects),
+                "meshCount": len(bpy.data.meshes),
+            }
+
+        before = state()
+        result = measure([("first", first), ("second", second)])
+        self.assertEqual(1, result["booleanPairs"])
+        self.assertEqual(before, state())
+
+    def test_boolean_helper_restores_edit_mode_on_an_unrelated_object(self):
+        from serverless.benchmark.solid_overlap import _boolean_intersection_volume
+
+        first = cube("first", (0, 0, 0))
+        second = cube("second", (1, 0, 0))
+        editor = cube("editor", (10, 0, 0))
+        bpy.ops.object.select_all(action="DESELECT")
+        editor.select_set(True)
+        bpy.context.view_layer.objects.active = editor
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            volume, reason = _boolean_intersection_volume(first.data, second.data)
+            self.assertIsNone(reason)
+            self.assertGreater(volume, 0)
+            self.assertIs(editor, bpy.context.view_layer.objects.active)
+            self.assertEqual("EDIT_MESH", bpy.context.mode)
+            self.assertEqual([editor], list(bpy.context.selected_objects))
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
 
     def test_open_mesh_with_disjoint_rendered_surfaces_is_zero(self):
         first, second = cube("open", (0, 0, 0)), cube("closed", (1, 0, 0))

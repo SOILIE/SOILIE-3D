@@ -12,6 +12,8 @@ import time
 import boto3
 from botocore.config import Config
 
+from serverless.cloud_benchmark.checkpoint import write_json
+
 
 def compare_placements(local, remote, tolerance=1e-5):
     """Cloud timing is different; random choices and geometry must agree."""
@@ -52,20 +54,39 @@ def invoke_and_download(session, function, bucket, request, output, require_succ
     # against S3 before another paid call, not automatic duplicate compute.
     client = clients['lambda'] if clients else session.client('lambda', config=Config(read_timeout=920, connect_timeout=15,
                                                    retries={'total_max_attempts': 1}))
+    output.mkdir(parents=True, exist_ok=True)
+    identity_path = output/(str(request['seed'])+'-invocation.json')
+    if identity_path.exists():
+        raise ValueError('Invocation identity already exists; reconcile instead of replaying paid work')
     started = time.monotonic()
     response = client.invoke(FunctionName=function, InvocationType='RequestResponse',
                              LogType='Tail', Payload=json.dumps(request).encode())
-    body = json.loads(response['Payload'].read())
     logs = base64.b64decode(response.get('LogResult', '')).decode(errors='replace')
-    billed = re.search(r'Billed Duration:\s*([\d.]+) ms', logs)
-    memory = re.search(r'Max Memory Used:\s*(\d+) MB', logs)
+    report_lines = [line for line in logs.splitlines() if re.match(r'^REPORT RequestId:\s*[\da-fA-F-]{36}\b', line)]
+    request_ids = set(re.findall(r'(?:START|END|REPORT) RequestId:\s*([\da-fA-F-]{36})\b', logs))
+    identity = {'schemaVersion': 1, 'request': request, 'function': function, 'bucket': bucket,
+                'executedVersion': response.get('ExecutedVersion'),
+                # The Invoke API request ID and execution request ID are distinct
+                # fields. Only Lambda's own execution marker binds its REPORT.
+                'invokeApiRequestId': response.get('ResponseMetadata', {}).get('RequestId'),
+                'awsRequestId': next(iter(request_ids)) if len(request_ids) == 1 else None,
+                'logTail': logs}
+    # Headers and the service log tail arrive before the streaming body is
+    # consumed. Persist them first so an interrupted read does not lose the
+    # original invocation identity or provoke another paid invocation.
+    write_json(identity_path, identity)
+    body = json.loads(response['Payload'].read())
+    report = report_lines[0] if len(report_lines) == 1 else ''
+    billed = re.search(r'Billed Duration:\s*([\d.]+) ms', report)
+    memory = re.search(r'Max Memory Used:\s*(\d+) MB', report)
     record = {'request': request, 'wallSeconds': time.monotonic()-started,
               'billedSeconds': float(billed[1])/1000 if billed else None,
               'maxMemoryMB': int(memory[1]) if memory else None, 'response': body,
-              'functionError': response.get('FunctionError'), 'logTail': logs}
-    output.mkdir(parents=True, exist_ok=True)
+              'functionError': response.get('FunctionError'), 'logTail': logs,
+              'awsRequestId': identity['awsRequestId'],
+              'invocationIdentitySha256': hashlib.sha256(identity_path.read_bytes()).hexdigest()}
     receipt = output/(str(request['seed'])+'-receipt.json')
-    receipt.write_text(json.dumps(record, indent=2))
+    write_json(receipt, record)
     if response.get('FunctionError'):
         raise RuntimeError('Lambda failed; see '+str(receipt))
     storage = clients['s3'] if clients else session.client('s3')
