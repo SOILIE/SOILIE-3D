@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 
 from serverless.benchmark.retire_comparisons import (
     PRIVATE_ROOT, PRESERVED, PUBLIC_ROOT, ROOT, archive_local, baseline_recovery, copy_one, inventory,
-    local_inventory, packed, private_policy, rebuild_index, require_private,
+    local_inventory, packed, private_policy, put_verified, rebuild_index, require_private,
     retire, save, upload_local, verify)
 
 SCRATCH = Path(__file__).resolve().parents[2] / '.codex' / 'test-retire-comparisons'
@@ -191,8 +191,46 @@ class RetirementTests(unittest.TestCase):
         self.assertEqual(1, result['deleted'])
         client.delete_object.assert_called_once_with(Bucket='fixture', Key=key, IfMatch='"source"')
         self.assertIn(self.context['prefix'] + 'manifests/deleted.jsonl', objects)
+        parts = [key for key in objects if '/manifests/deleted-parts/' in key]
+        self.assertEqual(1, len(parts))
+        self.assertEqual(objects[self.context['prefix'] + 'manifests/deleted.jsonl'], objects[parts[0]])
+        part_put = next(call.kwargs for call in client.put_object.call_args_list
+                        if '/manifests/deleted-parts/' in call.kwargs['Key'])
+        self.assertEqual('*', part_put['IfNoneMatch'])
         retire(client, self.context, self.state, workers=2)
         self.assertEqual(1, client.delete_object.call_count)
+
+    def test_deletion_uploads_only_new_batch_bytes_until_single_final_journal(self):
+        client, objects = self.storage()
+        rows = []
+        for index in range(10):
+            key = PUBLIC_ROOT + f'old/{index}.json'
+            objects[key] = bytes([index])
+            rows.append(copy_one(client, self.context, {'key': key, 'etag': '"source"', 'bytes': 1}))
+        save(self.state / 'inventory.json', {'objects': rows})
+        receipt_key = self.context['prefix'] + 'manifests/copy-00000.json'
+        body = packed({'rows': rows})
+        objects[receipt_key] = body
+        save(self.state / 'copy-receipts/00000.json', {'rows': rows, 'remote': {
+            'key': receipt_key, 'bytes': len(body), 'sha256': hashlib.sha256(body).hexdigest()}})
+        result = retire(client, self.context, self.state, workers=1)
+        self.assertEqual(10, result['deleted'])
+        parts = [key for key in objects if '/manifests/deleted-parts/' in key]
+        self.assertEqual(2, len(parts))
+        final_key = self.context['prefix'] + 'manifests/deleted.jsonl'
+        self.assertEqual(len(objects[final_key]), sum(len(objects[key]) for key in parts))
+        self.assertEqual(1, sum(call.kwargs['Key'] == final_key for call in client.put_object.call_args_list))
+
+    def test_immutable_batch_retry_verifies_existing_bytes_without_overwrite(self):
+        client, objects = self.storage()
+        objects['part'] = b'old'
+        client.put_object.side_effect = ClientError(
+            {'Error': {'Code': 'PreconditionFailed'},
+             'ResponseMetadata': {'HTTPStatusCode': 412}}, 'PutObject')
+        put_verified(client, 'fixture', 'part', b'old', immutable=True)
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            put_verified(client, 'fixture', 'part', b'new', immutable=True)
+        self.assertEqual(b'old', objects['part'])
 
     def test_changed_recovery_content_blocks_deletion(self):
         client, objects = self.storage()

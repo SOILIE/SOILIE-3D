@@ -79,7 +79,8 @@ python -m serverless.benchmark.retire_comparisons index --state $state
 Deletion rechecks each private SHA-256 and uses the original source ETag as a
 precondition. A changed source is not overwritten or removed. The recovery
 manifest exists remotely before deletion; a separate resumable deletion journal
-is also backed up by batch. The historic prefix and the root folder marker are
+is also backed up in immutable, checksum-verified batch objects before each next
+batch, with the complete journal uploaded once at the end. The historic prefix and the root folder marker are
 excluded by both inventory and deletion guards. The catalog write requires its
 original ETag and refuses concurrent catalog changes or unexpected new output
 keys. Invalidate CloudFront's output paths and catalog after successful removal,

@@ -98,12 +98,19 @@ def verify(client, bucket, key, checksum, size):
     return {'key': key, 'bytes': size, 'sha256': checksum, 'etag': head['ETag']}
 
 
-def put_verified(client, bucket, key, body, content_type='application/json'):
+def put_verified(client, bucket, key, body, content_type='application/json', *, immutable=False):
     checksum = hashlib.sha256(body).hexdigest()
-    client.put_object(Bucket=bucket, Key=key, Body=body,
-                      ContentType=content_type, CacheControl='private,no-store',
-                      ServerSideEncryption='AES256',
-                      ChecksumSHA256=base64.b64encode(bytes.fromhex(checksum)).decode())
+    try:
+        client.put_object(Bucket=bucket, Key=key, Body=body,
+                          ContentType=content_type, CacheControl='private,no-store',
+                          ServerSideEncryption='AES256',
+                          ChecksumSHA256=base64.b64encode(bytes.fromhex(checksum)).decode(),
+                          **({'IfNoneMatch': '*'} if immutable else {}))
+    except ClientError as error:
+        if not immutable or error.response['Error']['Code'] not in ('PreconditionFailed', '412'):
+            raise
+        # A content-addressed checkpoint may already exist after interruption;
+        # verify its bytes rather than overwriting that immutable receipt.
     return verify(client, bucket, key, checksum, len(body))
 
 
@@ -598,19 +605,26 @@ def retire(client, context, state, workers=24):
         return {'key': key, 'sha256': recovery['sha256']}
 
     pending = [row for key, row in sorted(verified.items()) if key not in deleted]
-    with journal.open('a', encoding='utf-8') as output, ThreadPoolExecutor(max_workers=workers) as executor:
+    with journal.open('a', encoding='utf-8', newline='\n') as output, ThreadPoolExecutor(max_workers=workers) as executor:
         for offset in range(0, len(pending), workers * 8):
             futures = [executor.submit(delete_one, row)
                        for row in pending[offset:offset + workers * 8]]
+            batch = []
             for future in as_completed(futures):
                 result = future.result()
-                output.write(json.dumps(result) + '\n')
+                line = json.dumps(result) + '\n'
+                output.write(line)
                 output.flush()
+                batch.append(line)
                 deleted.add(result['key'])
             # Recovery receipts already exist remotely for every deletion. The
-            # separate deletion journal also advances remotely after each batch.
-            put_verified(client, context['bucket'], context['prefix'] + 'manifests/deleted.jsonl',
-                         journal.read_bytes(), 'application/x-ndjson')
+            # journal advances via immutable, content-addressed batch receipts.
+            # Re-uploading its entire growing prefix here costs quadratic bytes.
+            body = ''.join(batch).encode()
+            part = hashlib.sha256(body).hexdigest()
+            put_verified(client, context['bucket'], context['prefix'] +
+                         f'manifests/deleted-parts/{part}.jsonl', body,
+                         'application/x-ndjson', immutable=True)
             print(json.dumps({'phase': 'delete', 'completed': len(deleted),
                               'total': len(expected)}), flush=True)
     put_verified(client, context['bucket'], context['prefix'] + 'manifests/deleted.jsonl',
