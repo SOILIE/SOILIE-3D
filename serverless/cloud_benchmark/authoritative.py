@@ -495,7 +495,12 @@ def local_run(args, plan):
                 stopping |= attempt['status'] != 'complete'
                 write_json(path, ledger)
             if not active:
-                break
+                # Archival can outlast every child in a wave. An empty pool is
+                # not completion when undispatched frozen requests still exist.
+                if (not tasks or stopping or (args.root / 'STOP').exists()
+                        or (args.max_new_calls and dispatched >= args.max_new_calls)):
+                    break
+                continue
             time.sleep(.5)
     finally:
         for child, handle, attempt in active.values():
