@@ -52,6 +52,9 @@ Copy-Item -LiteralPath (Join-Path $repo 'modules'),(Join-Path $repo 'serverless'
 Copy-Item -LiteralPath (Join-Path $repo 'package.json') -Destination $context
 Copy-Item -LiteralPath (Join-Path $repo '.codex/runtime/model-provenance.json') -Destination (Join-Path $context 'provenance.json')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Dockerfile') -Destination $context
+# A live Windows/WSL checkout can contain interpreter-specific bytecode. Build
+# from the verified source files, never stale local caches copied with folders.
+Copy-Item -LiteralPath (Join-Path $repo '.dockerignore') -Destination $context
 $linuxContext = (wsl -- wslpath -u $context.Replace('\','/')).Trim()
 $tag = 'pilot-' + (Get-Date -Format 'yyyyMMddHHmmss')
 $image = "$registry/${repository}:$tag"

@@ -8,6 +8,9 @@ COPY serverless /var/task/serverless
 COPY package.json /var/task/package.json
 COPY provenance.json /var/task/soilie-runtime/model-provenance.json
 ENV SOILIE_RUNTIME_DIR=/var/task/soilie-runtime
+# Build verification imports the model's schema modules as well as serverless
+# tooling. Keep both package roots visible in the host Python and its children.
+ENV PYTHONPATH=/var/task:/var/task/soilie-runtime
 RUN python -c "from serverless.cloud_benchmark.handler import verify_build_inputs; verify_build_inputs(); import hashlib,pathlib; pathlib.Path('/var/task/benchmark-inputs.sha256').write_text(hashlib.sha256(pathlib.Path('/var/task/soilie-runtime/model-provenance.json').read_bytes()).hexdigest())"
 # Exercise Blender's actual interpreter and both distinct package roots before
 # any paid Lambda invocation; checkout-only imports do not prove image parity.
