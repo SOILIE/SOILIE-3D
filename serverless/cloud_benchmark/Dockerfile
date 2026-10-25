@@ -1,9 +1,11 @@
 # The required digest-pinned renderer base supplies Blender and the immutable
-# assets/data from the same model checkout. Code and provenance are recopied so
-# the build check below proves that the complete runtime agrees byte-for-byte.
+# meshes and source observations. Code, counted-object catalogs and provenance
+# are recopied so the build check proves the complete current runtime agrees
+# byte-for-byte, even when a human-authored selection policy changes catalogs.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 COPY modules /var/task/soilie-runtime/modules
+COPY data /var/task/soilie-runtime/data
 COPY serverless /var/task/serverless
 COPY package.json /var/task/package.json
 COPY provenance.json /var/task/soilie-runtime/model-provenance.json

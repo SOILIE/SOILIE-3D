@@ -24,6 +24,11 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOTS = (
+    ROOT/'.codex/benchmark/replacement-baselines-20261023',
+    ROOT/'.codex/benchmark/replacement-baselines-20261025',
+    ROOT/'.codex/baseline-extension-20261023/infinigen',
+)
 POLICY = {
     'schemaVersion': 1, 'network': 'none', 'readOnlyRootfs': True,
     'user': '1000:1000', 'capDrop': ['ALL'], 'noNewPrivileges': True,
@@ -111,9 +116,7 @@ def workspace_path(value):
     if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
         raise ValueError('Native workspace contains a symbolic link')
     path = path.resolve()
-    allowed = (ROOT/'.codex/benchmark/replacement-baselines-20261023',
-               ROOT/'.codex/baseline-extension-20261023/infinigen')
-    if not any(path.is_relative_to(base) and path != base for base in allowed):
+    if not any(path.is_relative_to(base) and path != base for base in WORKSPACE_ROOTS):
         raise ValueError('Native workspace must be a task-owned extension child')
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -256,9 +259,7 @@ def receipt_path(value, workspace):
     if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
         raise ValueError('Isolation receipt contains a symbolic link')
     path = path.resolve()
-    allowed = (ROOT/'.codex/benchmark/replacement-baselines-20261023',
-               ROOT/'.codex/baseline-extension-20261023/infinigen')
-    if not any(path.is_relative_to(base) for base in allowed) or path.is_relative_to(workspace):
+    if not any(path.is_relative_to(base) for base in WORKSPACE_ROOTS) or path.is_relative_to(workspace):
         raise ValueError('Keep host isolation receipts task-owned but outside the native writable mount')
     path.parent.mkdir(parents=True, exist_ok=True)
     return path

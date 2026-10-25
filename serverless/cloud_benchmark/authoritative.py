@@ -32,6 +32,9 @@ from serverless.cloud_benchmark.checkpoint import write_json
 from serverless.cloud_benchmark.evidence_store import (
     archive_attempt, archive_configuration, load_artifact, recover_artifact_identity,
 )
+from serverless.common.object_counts import (
+    OBJECT_COUNT_DEFINITION, OBJECT_COUNT_POLICY, validate_selection, window_extra_count,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -222,6 +225,9 @@ def load_plan(root, verify_runtime=True):
     if plan['requests'] != allocation(plan['maxObjectCount'], plan['phase']):
         raise ValueError('Frozen requests differ from the fixed allocation')
     config = plan['configuration']
+    if verify_runtime and (config.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
+                           or config.get('objectCountPolicy') != OBJECT_COUNT_POLICY):
+        raise ValueError('Object-count semantics changed; qualify and freeze a new campaign')
     if verify_runtime and runtime_snapshot(Path(config['runtime']), Path(config['provenance']),
                                           Path(config['blender'])) != config['runtimeSnapshot']:
         raise ValueError('Execution code, data, assets, Python or Blender changed; start a new campaign')
@@ -241,7 +247,9 @@ def prepare(args):
                      'region': args.region, 'profile': args.profile,
                      'localWorkers': 6, 'blenderThreads': 1, 'lambdaConcurrency': 16,
                      'memoryMB': 4096, 'timeoutSeconds': 900, 'ephemeralMB': 1024,
-                     'budgetUSD': 25.0, 'sourceAuditSha256': source_audit}
+                     'budgetUSD': 25.0, 'sourceAuditSha256': source_audit,
+                     'objectCountDefinition': OBJECT_COUNT_DEFINITION,
+                     'objectCountPolicy': OBJECT_COUNT_POLICY}
     if getattr(args, 'archive_date', None):
         configuration['outputArchive'] = archive_configuration(args.archive_date)
     gates = {}
@@ -311,6 +319,10 @@ def attempt_rows(root, plan, platform_name):
 
 
 def validate_artifact(row, task, plan):
+    config = plan['configuration']
+    if (config.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
+            or config.get('objectCountPolicy') != OBJECT_COUNT_POLICY):
+        raise ValueError('Artifact validation requires the frozen non-window count protocol')
     if any(row.get('request', {}).get(key) != value for key, value in task['request'].items()):
         raise ValueError('Artifact differs from its frozen request')
     if row.get('status') not in ('complete', 'failed'):
@@ -323,8 +335,22 @@ def validate_artifact(row, task, plan):
             or implementation.get('renderSha256') != expected['files']['modules/render.py']):
         raise ValueError('Artifact implementation differs from the frozen runtime')
     if row['status'] == 'complete':
-        if len(row.get('selection', [])) != task['request']['objectCount']:
-            raise ValueError('Selected instance count differs from the exact requested count')
+        counts = validate_selection(task['request'], row.get('selection', []))
+        if any(type(row.get(key)) is not type(value) or row.get(key) != value for key, value in counts.items()):
+            raise ValueError('Declared requested, counted, or selected-window inventory differs')
+        if row.get('selectedObjectCount') != counts['selectedTotalCount']:
+            raise ValueError('Complete selected-instance inventory differs from its declared total')
+        # Final geometry retains both selected windows and additive companions.
+        # This is an inventory observation, not a furniture/quality threshold.
+        final_windows = window_extra_count(
+            item['label'].lower().replace(' ', '_').split('.', 1)[0]
+            for item in row['stages']['final']['objects'])
+        companions = final_windows - counts['selectedWindowCount']
+        if (companions < 0 or type(row.get('companionWindowCount')) is not int
+                or type(row.get('renderedWindowCount')) is not int
+                or row.get('companionWindowCount') != companions
+                or row.get('renderedWindowCount') != final_windows):
+            raise ValueError('Selected and companion window observations do not reconcile')
         for key in ('generationSeconds', 'wallSeconds', 'observationSeconds'):
             value = row.get(key)
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:

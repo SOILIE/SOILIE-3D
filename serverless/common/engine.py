@@ -17,13 +17,15 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from serverless.common.model_version import model_document
+from serverless.common.object_counts import (
+    MAX_OBJECT_COUNT, MAX_TOTAL_OBJECT_COUNT, MIN_OBJECT_COUNT,
+    OBJECT_COUNT_POLICY, RUNTIME_INDEX_VERSION,
+)
 
 
 # Keep the API package self-contained: its production image intentionally does
-# not copy the renderer's ``modules`` package. These values mirror the strict
-# working-catalog contract that the compiler validates before deployment.
-MIN_OBJECT_COUNT = 3
-MAX_OBJECT_COUNT = 8
+# not copy the renderer's ``modules`` package. The API-only counting constants
+# are checked against the authored core by the runtime compiler.
 
 
 ROOM_TYPES = ("bedroom", "living_room", "kitchen", "bathroom")
@@ -88,11 +90,32 @@ def _triplet_keys(connection: sqlite3.Connection) -> set[tuple[str, str, str]]:
     }
 
 
+def _require_count_contract(connection: sqlite3.Connection) -> None:
+    """Never interpret an old total-count index as the new non-window schema."""
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        row = connection.execute(
+            "SELECT value_json FROM runtime_metadata WHERE name = 'objectCountPolicy'"
+        ).fetchone()
+        # Canonical JSON preserves scalar types (Python otherwise treats
+        # ``True == 1``), so a malformed policy cannot masquerade as the pin.
+        matches = (row is not None
+                   and json.dumps(json.loads(row[0]), sort_keys=True) == json.dumps(OBJECT_COUNT_POLICY, sort_keys=True))
+    except (sqlite3.DatabaseError, json.JSONDecodeError):
+        matches = False
+        version = None
+    if version != RUNTIME_INDEX_VERSION or not matches:
+        raise RequestError(
+            "RUNTIME_COUNT_CONTRACT_MISMATCH",
+            "The runtime index must be rebuilt for non-window object counts and optional window extras.",
+        )
+
+
 def is_supported_combination(connection: sqlite3.Connection, objects: Iterable[str]) -> bool:
     """Mirror calculateCoords' exact ordered-triplet feasibility test."""
 
     names = list(objects)
-    if not MIN_OBJECT_COUNT <= len(names) <= MAX_OBJECT_COUNT:
+    if not MIN_OBJECT_COUNT <= len(names) <= MAX_TOTAL_OBJECT_COUNT:
         return False
     triplets = _triplet_keys(connection)
     # Positions are distinct instances even when their labels match.  Every
@@ -117,7 +140,7 @@ def compatible_suggestions(connection: sqlite3.Connection, objects: list[str], l
     candidates: list[tuple[int, tuple[str, ...]]] = []
     for (encoded,) in connection.execute(
         "SELECT objects_json FROM working_combinations "
-        "WHERE object_count = ? ORDER BY preset, row_index",
+        "WHERE total_object_count = ? ORDER BY preset, row_index",
         (len(objects),),
     ):
         candidate = tuple(json.loads(encoded))
@@ -157,6 +180,7 @@ def _validate_room(payload: Any) -> dict[str, Any]:
 def validate_request(connection: sqlite3.Connection, payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise RequestError("INVALID_REQUEST", "The request body must be a JSON object.")
+    _require_count_contract(connection)
 
     try:
         client_request_id = str(uuid.UUID(str(payload.get("clientRequestId", ""))))
@@ -240,13 +264,13 @@ def validate_request(connection: sqlite3.Connection, payload: Any) -> dict[str, 
             if mode == "room_type":
                 message = (
                     f"The SOILIE-3D {preset.replace('_', ' ')} preset has no "
-                    f"canonical {object_count}-object combinations."
+                    f"canonical combinations with {object_count} non-window objects."
                 )
                 code = "UNSUPPORTED_ROOM_PRESET"
             else:
                 message = (
-                    f"SOILIE-3D has no canonical random {object_count}-object "
-                    "combinations."
+                    f"SOILIE-3D has no canonical random combinations with "
+                    f"{object_count} non-window objects."
                 )
                 code = "UNSUPPORTED_OBJECT_COUNT"
             raise RequestError(code, message)
@@ -261,6 +285,7 @@ def open_runtime(path: str | Path) -> sqlite3.Connection:
 
 
 def public_catalog_document(connection: sqlite3.Connection) -> dict[str, Any]:
+    _require_count_contract(connection)
     presets = {
         room: [
             row[0]
@@ -298,11 +323,13 @@ def public_catalog_document(connection: sqlite3.Connection) -> dict[str, Any]:
         "roomTypes": list(ROOM_TYPES),
         "presets": presets,
         "presetObjectCounts": preset_object_counts,
+        "objectCountPolicy": json.loads(json.dumps(OBJECT_COUNT_POLICY)),
         "limits": {
             "sceneCount": {"minimum": 1, "maximum": 3},
             "objectCount": {
                 "minimum": MIN_OBJECT_COUNT,
                 "maximum": MAX_OBJECT_COUNT,
+                "definition": OBJECT_COUNT_POLICY["definition"],
             },
             "roomDimensionM": {"minimum": 1.0, "maximum": 20.0, "step": 0.1},
         },

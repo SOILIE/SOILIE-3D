@@ -21,11 +21,17 @@ from modules.working_combos import ordered_anchor_witnesses
 from modules.working_combo_schema import (
     CATALOG_FILENAMES,
     MAX_OBJECT_COUNT,
+    MAX_TOTAL_OBJECT_COUNT,
+    MAX_WINDOW_EXTRA_COUNT,
     MIN_OBJECT_COUNT,
+    WINDOW_FAMILY,
     WorkingCombinationError,
+    counted_object_count,
     iter_working_combinations,
+    window_extra_count,
 )
 from serverless.common.engine import ARCHITECTURE, ROOM_TYPES, normalize_label, public_catalog_document
+from serverless.common import object_counts as public_counts
 
 
 ASSET_PATTERN = re.compile(r"_\d{4}(?:_\d+)?$")
@@ -40,6 +46,19 @@ MODEL_DATA_FILES = (
     "working-combos-bathroom.csv",
 )
 PRESET_FILES = CATALOG_FILENAMES
+
+
+def validate_count_contract() -> None:
+    """An API-only image must not silently diverge from the authored model."""
+    for name in ("MIN_OBJECT_COUNT", "MAX_OBJECT_COUNT", "MAX_TOTAL_OBJECT_COUNT",
+                 "MAX_WINDOW_EXTRA_COUNT", "WINDOW_FAMILY"):
+        if globals()[name] != getattr(public_counts, name):
+            raise RuntimeError(f"API counting contract differs from the core: {name}")
+    for values in ((), ("window", "window", "window"),
+                   ("chair", "door", "curtain", "blinds", "opaque_window", "window")):
+        if (counted_object_count(values) != public_counts.counted_object_count(values)
+                or window_extra_count(values) != public_counts.window_extra_count(values)):
+            raise RuntimeError("API counting helpers differ from the core window-family contract")
 
 
 def sha256(path: Path) -> str:
@@ -76,6 +95,7 @@ def model_version(repository: Path) -> str:
 def record_model_provenance(repository: Path, output: Path) -> dict:
     """Checksum the source used directly by local runs and container builds."""
 
+    validate_count_contract()
     version = model_version(repository)
     provenance = {
         "schemaVersion": 2,
@@ -89,6 +109,7 @@ def record_model_provenance(repository: Path, output: Path) -> dict:
         ).stdout.strip() or "detached",
         "execution": "repository modules.prepare_data + repository modules.render",
         "extensionBoundary": "optional room fitting runs after model placement and window adjustment",
+        "objectCountPolicy": public_counts.OBJECT_COUNT_POLICY,
         "files": {},
     }
 
@@ -185,6 +206,7 @@ def validated_working_rows(
 
 
 def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
+    validate_count_contract()
     data_root = repository / "data"
     sizes = load_sizes(data_root / "object_sizes_manual.csv")
     asset_classes = load_exact_asset_classes(repository / "assets")
@@ -207,7 +229,7 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
         for preset, filename in PRESET_FILES.items()
     }
     random_counts = {
-        len(row)
+        counted_object_count(row)
         for row in catalog_rows["random"]
         if len(set(row)) == len(row)
     }
@@ -216,7 +238,7 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
     )
     if missing_random_counts:
         raise RuntimeError(
-            "random working-combination catalog has no duplicate-free canonical rows for object "
+            "random working-combination catalog has no duplicate-free canonical rows for non-window object "
             f"counts: {', '.join(map(str, missing_random_counts))}"
         )
 
@@ -228,6 +250,11 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
         """
         PRAGMA journal_mode=OFF;
         PRAGMA synchronous=OFF;
+        PRAGMA user_version=3;
+        CREATE TABLE runtime_metadata (
+          name TEXT PRIMARY KEY,
+          value_json TEXT NOT NULL
+        );
         CREATE TABLE objects (
           name TEXT PRIMARY KEY,
           display_name TEXT NOT NULL,
@@ -243,7 +270,10 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
         CREATE TABLE working_combinations (
           preset TEXT NOT NULL,
           row_index INTEGER NOT NULL,
-          object_count INTEGER NOT NULL,
+          object_count INTEGER NOT NULL CHECK (object_count BETWEEN 3 AND 8),
+          window_count INTEGER NOT NULL CHECK (window_count BETWEEN 0 AND 1),
+          total_object_count INTEGER NOT NULL
+            CHECK (total_object_count = object_count + window_count AND total_object_count <= 9),
           has_duplicates INTEGER NOT NULL CHECK (has_duplicates IN (0, 1)),
           objects_json TEXT NOT NULL,
           PRIMARY KEY (preset, row_index)
@@ -255,12 +285,21 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
         );
         CREATE INDEX working_capacity_index
           ON working_combinations(preset, object_count, has_duplicates);
+        CREATE INDEX working_total_count_index
+          ON working_combinations(total_object_count, preset, row_index);
         """
+    )
+    connection.execute(
+        "INSERT INTO runtime_metadata VALUES (?, ?)",
+        ("objectCountPolicy", json.dumps(public_counts.OBJECT_COUNT_POLICY, sort_keys=True, separators=(",", ":"))),
     )
     connection.executemany(
         "INSERT INTO objects VALUES (?, ?, ?, ?)",
         [
-            (name, name.replace("_", " ").title(), sizes[name], int(name not in ARCHITECTURE))
+            # Windows are valid explicit-list inputs even though they do not
+            # consume the quota for random/room-type count-driven requests.
+            (name, name.replace("_", " ").title(), sizes[name],
+             int(name not in ARCHITECTURE or name in WINDOW_FAMILY))
             for name in sorted(allowed)
         ],
     )
@@ -272,20 +311,32 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
     triplet_count = len(triplets)
 
     combination_count = 0
+    coverage = {}
     preset_members = {room: set() for room in ROOM_TYPES}
     for preset, rows in catalog_rows.items():
+        coverage[preset] = {
+            str(count): {str(windows): {"allowingDuplicates": 0, "withoutDuplicates": 0}
+                        for windows in range(MAX_WINDOW_EXTRA_COUNT + 1)}
+            for count in range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1)
+        }
         for row_index, values in enumerate(rows):
             has_duplicates = int(len(set(values)) != len(values))
+            counted = counted_object_count(values)
+            windows = window_extra_count(values)
             connection.execute(
-                "INSERT INTO working_combinations VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO working_combinations VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     preset,
                     row_index,
+                    counted,
+                    windows,
                     len(values),
                     has_duplicates,
                     json.dumps(values, separators=(",", ":")),
                 ),
             )
+            coverage[preset][str(counted)][str(windows)]["allowingDuplicates"] += 1
+            coverage[preset][str(counted)][str(windows)]["withoutDuplicates"] += int(not has_duplicates)
             combination_count += 1
             if preset in preset_members:
                 preset_members[preset].update(values)
@@ -299,6 +350,9 @@ def compile_api_index(repository: Path, output: Path) -> dict[str, int]:
     connection.execute("VACUUM")
     catalog_document = public_catalog_document(connection)
     (output / "catalog.json").write_text(json.dumps(catalog_document, indent=2) + "\n", encoding="utf-8")
+    (output / "working-combination-coverage.json").write_text(
+        json.dumps({"schemaVersion": 1, "objectCountPolicy": public_counts.OBJECT_COUNT_POLICY,
+                    "presets": coverage}, indent=2) + "\n", encoding="utf-8")
     connection.close()
     return {"objects": len(allowed), "triplets": triplet_count, "combinations": combination_count}
 
@@ -319,6 +373,9 @@ def build(repository: Path, output: Path) -> None:
         "modelVersion": model_version(repository),
         "modelProvenance": sha256(output / "model-provenance.json"),
         "apiIndex": sha256(output / "relations.sqlite3"),
+        "objectCountDefinition": public_counts.OBJECT_COUNT_DEFINITION,
+        "objectCountPolicy": public_counts.OBJECT_COUNT_POLICY,
+        "workingCombinationCoverage": sha256(output / "working-combination-coverage.json"),
         **counts,
         "assets": provenance["assetCount"],
     }

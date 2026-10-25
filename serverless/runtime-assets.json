@@ -1174,32 +1174,32 @@
     {
       "path": "data/working-combos-refined.csv",
       "sourceKey": "files/data/working-combos-refined.csv",
-      "bytes": 19727422,
-      "sha256": "6ed44c4418a4daaaf34c963837dc3187b5c450d4d24ba172f118e21e3a936b62"
+      "bytes": 27224844,
+      "sha256": "1c438d05e4447de508bed03959ff2c7458d17cdf21c0bc42fdb1f9167de1aff5"
     },
     {
       "path": "data/working-combos-bedroom.csv",
       "sourceKey": "files/data/working-combos-bedroom.csv",
-      "bytes": 3177328,
-      "sha256": "631c329ea7275083d25bba22b9fd135a1e0ff97b2739ad14f0527e43273c6f81"
+      "bytes": 5398635,
+      "sha256": "118a92b5df4fe095b15567a14c6def3bd4dfad3316b5f71145c7fee35c2e54d5"
     },
     {
       "path": "data/working-combos-livingroom.csv",
       "sourceKey": "files/data/working-combos-livingroom.csv",
-      "bytes": 10760881,
-      "sha256": "47dbae903530b397c5df712bd4e2912eed00991d0d2acfbc39f25edb40868ed4"
+      "bytes": 14467904,
+      "sha256": "34ec618c7870454f84ed1a18fe49f5a733c567602e7b89083393a3bb48481a42"
     },
     {
       "path": "data/working-combos-kitchen.csv",
       "sourceKey": "files/data/working-combos-kitchen.csv",
-      "bytes": 897725,
-      "sha256": "fe699c70e8de4078e55687f8a7cd57311d161a09c61e5ffaeb0d0b4e90f1a07a"
+      "bytes": 1134401,
+      "sha256": "3fb263448f7f2698b013b9590b6699ba0f03a0624dc4cda60c274139b42f568b"
     },
     {
       "path": "data/working-combos-bathroom.csv",
       "sourceKey": "files/data/working-combos-bathroom.csv",
-      "bytes": 804,
-      "sha256": "c23802e6d83ba2296e93fa7dafa9457235d534801c13c4f73e0db2e0e6f74f13"
+      "bytes": 838,
+      "sha256": "338ae28bb776cb40eb004e0e54c876357914a25a70f8a325107cd1f3e31984e5"
     }
   ]
 }

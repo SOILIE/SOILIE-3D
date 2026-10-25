@@ -159,8 +159,10 @@ the intrinsic matrix, depth units, extrinsics, and source references.
 **Outputs**
 
 `scripts/rebuild_working_combos.py` writes deterministic random and room-specific
-candidate catalogs with `obj0` through `obj7` columns, covering supported scene
-sizes from three through eight objects.
+candidate catalogs with `obj0` through `obj8` columns. Count-driven requests
+cover three through eight non-window object instances, plus zero or one optional
+selected window. Explicit object lists retain their exact contents, including
+window-only scenes; renderer-added companion windows are recorded separately.
 
 </details>
 

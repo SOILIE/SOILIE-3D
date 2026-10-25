@@ -77,9 +77,15 @@ def comparable_inventory(first, second):
 
 def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=False, numbered=False, clear_fronts=False):
     items = furniture(scene)
-    boxes = [(item,Box(item)) for item in items]
-    smallest_volume = min(box.volume for _, box in boxes)
-    label_counts = Counter(presentation_label(item['label']) for item in items)
+    # Explicit lists may intentionally contain only windows or other
+    # architecture. Retain those real objects in the illustration without
+    # changing what the benchmark counts as furniture. Ordinary furniture
+    # scenes keep their existing neutral views unchanged.
+    architecture_only = not items
+    illustrated_items = scene["objects"] if architecture_only else items
+    boxes = [(item,Box(item)) for item in illustrated_items]
+    smallest_volume = min((box.volume for _, box in boxes), default=None)
+    label_counts = Counter(presentation_label(item['label']) for item in illustrated_items)
     label_seen = Counter()
     labels = {}
     volume_labels = []
@@ -99,6 +105,10 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
     description = ("Plan, oblique, and three-dimensional bird’s-eye views of an indoor arrangement "
                    + ("with front-direction arrows" if show_fronts else "with labelled boxes")
                    + (" and relative bounding-box volumes" if show_volumes else ""))
+    if architecture_only:
+        description = ("Plan, oblique, and three-dimensional bird’s-eye views with 0 furniture objects; "
+                       + ("architectural object geometry is shown" if boxes else "only the room boundary is present"))
+    render_fronts = show_fronts and not architecture_only
     lines = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 1080" role="img" aria-label="{description}">',
              '<rect width="720" height="1080" fill="#f2f4f6"/>',
              '<defs><marker id="front-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#087f8c"/></marker></defs>',
@@ -129,7 +139,7 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
             return f'<polygon points="{coords}" fill="{fill}" fill-opacity="{opacity}" stroke="{stroke}" stroke-width="{width}"/>'
         # Reserve every arrow before placing any key. Screen-space lengths are
         # presentation aids, never changes to geometry or functional headings.
-        if clear_fronts and show_fronts:
+        if clear_fronts and render_fronts:
             from shapely.geometry import LineString, box as rectangle
             for item, bounds in boxes:
                 front = functional_front(scene, item)
@@ -178,6 +188,8 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
                 raise ValueError('Cannot place a number clear of all arrows')
             label_boxes.append((x - width / 2, y - height / 2, x + width / 2, y + height / 2))
             return x, y
+        if architecture_only:
+            title += ' — 0 furniture; ' + ('architecture shown' if boxes else 'room boundary only')
         lines.append(f'<text x="24" y="{origin_y}" class="title">{title}</text>')
         for region, exterior in zip(regions, room3):
             lines.append(polygon(exterior,"#ffffff",1,"#314d62",2.2))
@@ -210,7 +222,7 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
             center = box.points.mean(axis=0)
             if view == "plan":
                 center[2] = floor
-            front = functional_front(scene, item) if show_fronts else None
+            front = functional_front(scene, item) if render_fronts else None
             if front is not None and not clear_fronts:
                 front = np.asarray(front,dtype=float)
                 length = float(np.linalg.norm(front))
@@ -255,16 +267,20 @@ def diagram(scene, highlight_ids=frozenset(), show_fronts=True, show_volumes=Fal
     if numbered:
         if len(key_labels) > 9 or show_volumes:
             raise ValueError('Numbered panels use up to nine objects and separate numeric evidence')
-        lines.append('<text x="24" y="983" class="title">Object key (same numbers in every view)</text>')
+        key_title = 'Architectural object key' if architecture_only else 'Object key'
+        lines.append(f'<text x="24" y="983" class="title">{key_title} (same numbers in every view)</text>')
         for index, (key, label) in enumerate(key_labels):
             x, y = 24 + (index % 3) * 224, 1008 + (index // 3) * 24
             lines.append(f'<text data-key="{key}" x="{x}" y="{y}" style="font-size:14px">{key}. {escape(label)}</text>')
-    elif show_volumes:
-        lines.extend(['<text x="24" y="1004">Relative bounding-box volumes, normalized to this room’s smallest object:</text>',
+    elif show_volumes and boxes:
+        volume_title = 'Relative architectural bounding-box volumes' if architecture_only else 'Relative bounding-box volumes'
+        lines.extend([f'<text x="24" y="1004">{volume_title}, normalized to this room’s smallest object:</text>',
                   f'<text x="24" y="1022">{escape(" · ".join(volume_labels[:3]))}</text>',
                   f'<text x="24" y="1040">{escape(" · ".join(volume_labels[3:]))}</text>' if len(volume_labels) > 3 else '',
                   '<text x="24" y="1058">Values describe box volume, not shape or aspect ratio.</text>'])
-    if show_fronts:
+    elif show_volumes:
+        lines.append('<text x="24" y="1004">No object volumes: this scene contains only a room boundary.</text>')
+    if render_fronts:
         lines.append('<text x="24" y="1076">Cyan arrows mark functional fronts; unmarked objects have no asserted front.</text>')
     lines.append('</svg>')
     return "\n".join(lines)

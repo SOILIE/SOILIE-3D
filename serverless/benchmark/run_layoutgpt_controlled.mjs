@@ -14,9 +14,29 @@ export const RESERVATION_USD = 8192 * RATE.input + 1024 * RATE.output;
 export const EXTENSION_VARIANT = 'inventory-extension-7-8-gpt4-v1';
 const AUTHOR_COMMIT = 'fc31954962553e5b65bf267a904a6930d50b1f5e';
 const AUTHOR_PROMPT_SHA256 = '8aab0891a1cf60aab64b184f04170a42c7cee2832f299643ecb88a7c38048c24';
-const ARCHIVE_CONFIGURATION = { schemaVersion: 1, bucket: 'soilie3d-data',
-  publicPrefix: 'files/outputs/2026-10-23/layoutgpt/', privatePrefix: 'private/new-benchmark-20261023/layoutgpt/',
-  parserSha256: '5e8ea10b8d0980da40fe311434a9475f6f605e51b2d5c3cab6e8f87c0f9b5e56' };
+export const OBJECT_COUNT_DEFINITION = 'non-window-instances-v1';
+export function archiveConfiguration(archiveDate = '2026-10-25') {
+  if (typeof archiveDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(archiveDate) || archiveDate.startsWith('0000')) {
+    throw new Error('The public output date must be an ISO calendar date');
+  }
+  const parsed = new Date(`${archiveDate}T00:00:00.000Z`);
+  if (!Number.isFinite(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== archiveDate) {
+    throw new Error('The public output date must be an ISO calendar date');
+  }
+  return { schemaVersion: 1, bucket: 'soilie3d-data',
+    publicPrefix: `files/outputs/${archiveDate}/layoutgpt/`,
+    privatePrefix: `private/new-benchmark-${archiveDate.replaceAll('-', '')}/layoutgpt/`,
+    parserSha256: '5e8ea10b8d0980da40fe311434a9475f6f605e51b2d5c3cab6e8f87c0f9b5e56' };
+}
+export function planArchiveConfiguration(plan) {
+  const match = /^files\/outputs\/(\d{4}-\d{2}-\d{2})\/$/.exec(plan.publicOutputPrefix || '');
+  if (!match) throw new Error('The frozen plan needs an exact dated public output prefix');
+  const expected = archiveConfiguration(match[1]);
+  if (canonicalJson(plan.outputArchive) !== canonicalJson(expected)) {
+    throw new Error('The frozen bucket, public/private date, or parser contract differs');
+  }
+  return expected;
+}
 const charge = row => row.actualUsd ?? row.reservedUsd;
 export function accounted(ledger) {
   return Object.values(ledger.entries).reduce((sum, row) => sum + charge(row) +
@@ -49,10 +69,11 @@ const saveBytes = (path, body) => {
 };
 
 function claimExtensionAuthorization(folder, plan, planRaw) {
+  planArchiveConfiguration(plan);
   if (plan.perCell !== 30 || plan.budgetUsd !== 40 ||
+      plan.objectCountDefinition !== OBJECT_COUNT_DEFINITION ||
       plan.inventoryPolicy !== 'fresh-soilie-first-scheduled-local-v1' ||
-      plan.requests.some(row => row.task.inventoryOrigin !== 'fresh-soilie') ||
-      canonicalJson(plan.outputArchive) !== canonicalJson(ARCHIVE_CONFIGURATION)) {
+      plan.requests.some(row => row.task.inventoryOrigin !== 'fresh-soilie')) {
     throw new Error('This authorization is 120 fixed shared-inventory attempts under one US$40 ceiling');
   }
   const sourceRaw = readFileSync(join(folder, 'source-slots.json'));
@@ -60,11 +81,14 @@ function claimExtensionAuthorization(folder, plan, planRaw) {
   const slots = new Map(sources.tasks.map(row => [row.taskId, row]));
   if (!/^[a-f0-9]{64}$/.test(plan.sourceSlotsSha256 || '') || sha(sourceRaw) !== plan.sourceSlotsSha256 ||
       sources.policy !== plan.inventoryPolicy || sources.sourcePlatform !== 'local' ||
+      sources.objectCountDefinition !== OBJECT_COUNT_DEFINITION ||
       slots.size !== plan.requests.length || plan.requests.some(row =>
         slots.get(row.id)?.soilieSceneId !== row.task.soilieSceneId ||
         sources.soilieCampaignSha256 !== row.task.soilieCampaignSha256)) {
     throw new Error('Frozen quality-blind shared source slots changed');
   }
+  // This is the one historical US$40 authorization anchor, NOT an output-date
+  // namespace. Never create a new allowance merely by changing a folder date.
   const directory = resolve(import.meta.dirname, '../../.codex/benchmark/replacement-baselines-20261023/layoutgpt-authorization');
   mkdirSync(directory, { recursive: true });
   const path = join(directory, 'binding.json');
@@ -119,7 +143,9 @@ export function validatePlan(plan, limit) {
 }
 
 function validateExtension(plan) {
+  planArchiveConfiguration(plan);
   if (plan.schemaVersion !== 2 || plan.previousBatch ||
+      plan.objectCountDefinition !== OBJECT_COUNT_DEFINITION ||
       !/^[a-z][a-z0-9-]{2,39}$/.test(plan.campaignId || '') ||
       plan.sourceCommit !== AUTHOR_COMMIT || plan.authorPromptSha256 !== AUTHOR_PROMPT_SHA256 ||
       plan.expectedResponseModel !== 'gpt-4-0613' ||
@@ -129,7 +155,6 @@ function validateExtension(plan) {
       !Number.isFinite(plan.budgetUsd) || plan.budgetUsd <= 0 ||
       plan.requests.length !== plan.perCell * 4 ||
       plan.budgetUsd + 1e-9 < plan.requests.length * RESERVATION_USD ||
-      plan.publicOutputPrefix !== 'files/outputs/2026-10-23/' ||
       plan.promptProtocol !== 'authors-css-k8-bedroom-k4-living-room-inventory-v1') {
     throw new Error('Invalid seven/eight inventory extension protocol');
   }
@@ -140,9 +165,10 @@ function validateExtension(plan) {
     const request = row.request;
     const expectedId = `layoutgpt-${plan.campaignId}-${row.roomType}-${row.requestedObjects}-`;
     const native = row.nativeInventory;
+    const windowLabel = label => ['window', 'opaque_window'].includes(label.trim().toLowerCase().replace(/[-\s]+/g, '_'));
     const positiveInventory = value => value && !Array.isArray(value) && typeof value === 'object' &&
       Object.keys(value).length > 0 && Object.entries(value).every(([label, n]) =>
-        /^[a-z][a-z_ ]*$/.test(label) && Number.isInteger(n) && n > 0);
+        /^[a-z][a-z_ ]*$/.test(label) && !windowLabel(label) && Number.isInteger(n) && n > 0);
     const origin = task?.inventoryOrigin;
     const allowedTaskKeys = ['id', 'roomType', 'requestedObjects', 'seed', 'inventory', 'nativeInventory', 'inventoryOrigin',
       ...(origin === 'fresh-soilie' ? ['soilieSceneId', 'soilieSceneSha256', 'soilieCampaignSha256', 'sourceInventory', 'substitutions'] : [])];

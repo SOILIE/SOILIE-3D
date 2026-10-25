@@ -11,6 +11,7 @@ import argparse
 import ast
 from collections import Counter
 import copy
+from datetime import date
 import hashlib
 import json
 import math
@@ -19,6 +20,9 @@ import re
 from types import SimpleNamespace
 
 from serverless.cloud_benchmark.checkpoint import write_json
+from serverless.common.object_counts import (
+    OBJECT_COUNT_DEFINITION, OBJECT_COUNT_POLICY, WINDOW_FAMILY, validate_selection,
+)
 
 
 VARIANT = 'inventory-extension-7-8-gpt4-v1'
@@ -46,9 +50,11 @@ def digest(value):
 
 
 def freeze_design(output, campaign_id, per_cell, budget_usd, seed, retained_campaign_sha256,
-                  inventory_policy='explicit-model-native-or-fresh-soilie-v1'):
+                  inventory_policy='explicit-model-native-or-fresh-soilie-v1', archive_date='2026-10-25'):
     """Pin attempt counts before generation; no quality-based replenishment."""
     output = scratch_path(output)
+    if date.fromisoformat(archive_date).isoformat() != archive_date:
+        raise ValueError('The public output date must be an ISO date')
     if (not re.fullmatch(r'[a-z][a-z0-9-]{2,39}', campaign_id) or
             type(per_cell) is not int or not 1 <= per_cell <= 60 or
             type(seed) is not int or seed < 0 or seed + 4 * per_cell > 2**53 - 1 or
@@ -67,8 +73,9 @@ def freeze_design(output, campaign_id, per_cell, budget_usd, seed, retained_camp
               'perCell': per_cell, 'budgetUsd': budget_usd, 'selectionSeed': seed,
               'retainedCampaignSha256': retained_campaign_sha256,
               'qualitySelection': False, 'attemptPolicy': 'one-request-per-task; no ambiguous automatic retry',
-              'publicOutputPrefix': 'files/outputs/2026-10-23/',
+              'publicOutputPrefix': f'files/outputs/{archive_date}/',
               'inventoryPolicy': inventory_policy,
+              'objectCountDefinition': OBJECT_COUNT_DEFINITION,
               'targetReusePolicy': 'held-out dimensions may repeat across campaigns; unique within this extension',
               'seedMeaning': 'task identity and held-out dimension selection, not a provider RNG guarantee',
               'tasks': tasks}
@@ -85,6 +92,9 @@ def validate_tasks(design, tasks):
     """Require exact multiplicities and honest, inspectable source provenance."""
     from serverless.benchmark.review_annotations import presentation_label
 
+    if design.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION:
+        raise ValueError('Freeze a new LayoutGPT design for the non-window object-count protocol')
+
     if len(tasks) != len(design['tasks']) or len({row['id'] for row in tasks}) != len(tasks):
         raise ValueError('Every frozen task must be bound exactly once')
     expected = {row['id']: row for row in design['tasks']}
@@ -100,6 +110,8 @@ def validate_tasks(design, tasks):
                         type(count) is not int or count < 1 for label, count in inventory.items()) or
                     sum(inventory.values()) != slot['requestedObjects']):
                 raise ValueError('Task must contain exact positive instance multiplicities')
+            if any(re.sub(r'[-\s]+', '_', label.strip().lower()) in WINDOW_FAMILY for label in inventory):
+                raise ValueError('Window extras cannot consume the controlled LayoutGPT object quota')
         neutral = Counter()
         for label, count in task['nativeInventory'].items():
             neutral[presentation_label(label)] += count
@@ -151,9 +163,14 @@ def source_slots(design_path, campaign, output):
     design = json.loads(design_raw)
     if design.get('inventoryPolicy') != 'fresh-soilie-first-scheduled-local-v1':
         raise ValueError('Source scheduling requires the shared fresh-SOILIE policy')
+    if design.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION:
+        raise ValueError('Source scheduling requires a newly frozen non-window-count design')
     plan = load_plan(Path(campaign), verify_runtime=False)
     if plan['phase'] != 'authoritative' or plan['maxObjectCount'] != 8:
         raise ValueError('Bind only the new authoritative three-to-eight campaign')
+    if (plan['configuration'].get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
+            or plan['configuration'].get('objectCountPolicy') != OBJECT_COUNT_POLICY):
+        raise ValueError('Do not bind legacy total-count source rooms to the new non-window condition')
     rows = []
     for room, count in CELLS:
         scheduled = [row for row in plan['requests'] if row['platform'] == 'local'
@@ -165,6 +182,7 @@ def source_slots(design_path, campaign, output):
             rows.append({'taskId': task['id'], 'sourceRequestId': request['id'],
                          'sourceRequest': request['request'], 'soilieSceneId': 'soilie-' + request['id']})
     document = {'schemaVersion': 1, 'policy': design['inventoryPolicy'],
+                'objectCountDefinition': OBJECT_COUNT_DEFINITION,
                 'designSha256': hashlib.sha256(design_raw).hexdigest(),
                 'soilieCampaignSha256': plan['planSha256'], 'sourcePlatform': 'local',
                 'failurePolicy': 'Keep these source seeds; never skip failed or unsupported inventories',
@@ -270,10 +288,14 @@ def verify_source_artifacts(design_path, slots_path, tasks, tasks_sha, campaign)
                 or task['soilieSceneId'] != slot['soilieSceneId']):
             raise ValueError('Declared source scene SHA, campaign or selected request changed')
         selection = artifact['selection']
-        if (not isinstance(selection, list) or any(not isinstance(label, str) for label in selection)
-                or len(selection) != task['requestedObjects']):
+        counts = validate_selection(expected['request'], selection)
+        if counts['countedObjectCount'] != task['requestedObjects']:
             raise ValueError('Source primary selected instance count differs from the task')
-        inventory = dict(sorted(Counter(presentation_label(canonical_label(label)) for label in selection).items()))
+        counted_selection = [label for label in selection if label not in WINDOW_FAMILY]
+        # LayoutGPT controls the N non-window source instances. Keep selected
+        # window extras in this private binding and in final-geometry checks,
+        # rather than silently dropping them from the original source evidence.
+        inventory = dict(sorted(Counter(presentation_label(canonical_label(label)) for label in counted_selection).items()))
         if inventory != task['sourceInventory']:
             raise ValueError('Declared source inventory differs from the exact SOILIE selection bytes')
         # Reuse the human production helpers, including additive companion
@@ -295,6 +317,11 @@ def verify_source_artifacts(design_path, slots_path, tasks, tasks_sha, campaign)
         bindings.append({'taskId': task['id'], 'taskSha256': digest(task),
             'sourceRequestId': slot['sourceRequestId'], 'soilieSceneId': task['soilieSceneId'],
             'sourceArtifactSha256': attempt['sha256'], 'sourceSelectedCount': len(selection),
+            **counts, 'sourceSelectedObjects': selection,
+            'sourceWindowExtras': [label for label in selection if label in WINDOW_FAMILY],
+            'sourceFullInventory': dict(sorted(Counter(presentation_label(canonical_label(label)) for label in selection).items())),
+            'companionWindowCount': artifact['companionWindowCount'],
+            'renderedWindowCount': artifact['renderedWindowCount'],
             'sourceInventory': inventory,
             'normalizedFinalInventory': dict(sorted(Counter(presentation_label(row['label']) for row in objects).items())),
             'furnitureInventory': dict(sorted(Counter(presentation_label(row['label']) for row in furniture(final)).items())),
@@ -306,29 +333,56 @@ def verify_source_artifacts(design_path, slots_path, tasks, tasks_sha, campaign)
             'sourceProvenanceSha256': runtime['provenanceSha256'],
             'sourceLedgerSha256': hashlib.sha256(ledger_raw).hexdigest(),
             'taskManifestSha256': tasks_sha, 'sourceSlotsSha256': hashlib.sha256(Path(slots_path).read_bytes()).hexdigest(),
-            'countDefinition': 'Original requested selection counts seven/eight; additive companion windows are normalized final objects, not requested instances',
+            'countDefinition': OBJECT_COUNT_DEFINITION,
+            'objectCountPolicy': OBJECT_COUNT_POLICY,
             'tasks': bindings}
 
 
 def validate_source_binding_receipt(root, plan):
     """Check the exact prepared byte-bound receipt before paid dispatch."""
+    from serverless.benchmark.geometry import canonical_label
+    from serverless.benchmark.review_annotations import presentation_label
+
     raw = (Path(root) / 'source-binding.json').read_bytes()
     receipt = json.loads(raw)
+    slots_raw = (Path(root) / 'source-slots.json').read_bytes()
+    slots = json.loads(slots_raw)
     if (hashlib.sha256(raw).hexdigest() != plan.get('sourceBindingSha256')
             or receipt.get('schemaVersion') != 1 or receipt.get('policy') != plan['inventoryPolicy']
             or receipt.get('sourcePlatform') != 'local'
             or receipt.get('taskManifestSha256') != plan['taskManifestSha256']
             or receipt.get('sourceSlotsSha256') != plan['sourceSlotsSha256']
-            or len(receipt['tasks']) != len(plan['requests'])):
+            or hashlib.sha256(slots_raw).hexdigest() != plan['sourceSlotsSha256']
+            or receipt.get('countDefinition') != OBJECT_COUNT_DEFINITION
+            or receipt.get('objectCountPolicy') != OBJECT_COUNT_POLICY
+            or slots.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
+            or len(receipt['tasks']) != len(plan['requests'])
+            or len(slots['tasks']) != len(plan['requests'])):
         raise ValueError('Source artifact binding receipt changed')
-    for request, binding in zip(plan['requests'], receipt['tasks']):
+    for request, binding, slot in zip(plan['requests'], receipt['tasks'], slots['tasks']):
         task = request['task']
+        counts = validate_selection(slot['sourceRequest'], binding['sourceSelectedObjects'])
+        counted_selection = [label for label in binding['sourceSelectedObjects'] if label not in WINDOW_FAMILY]
+        inventory = dict(sorted(Counter(presentation_label(canonical_label(label)) for label in counted_selection).items()))
+        full_inventory = dict(sorted(Counter(presentation_label(canonical_label(label))
+                                             for label in binding['sourceSelectedObjects']).items()))
         if (binding['taskId'] != task['id'] or binding['taskSha256'] != digest(task)
+                or slot['taskId'] != task['id'] or binding['sourceRequestId'] != slot['sourceRequestId']
                 or binding['sourceArtifactSha256'] != task['soilieSceneSha256']
                 or binding['soilieSceneId'] != task['soilieSceneId']
                 or receipt['sourcePlanSha256'] != task['soilieCampaignSha256']
                 or binding['sourceInventory'] != task['sourceInventory']
-                or binding['sourceSelectedCount'] != task['requestedObjects']):
+                or inventory != binding['sourceInventory']
+                or full_inventory != binding['sourceFullInventory']
+                or binding['sourceWindowExtras'] != [label for label in binding['sourceSelectedObjects'] if label in WINDOW_FAMILY]
+                or any(type(binding.get(key)) is not type(value) or binding.get(key) != value
+                       for key, value in counts.items())
+                or counts['countedObjectCount'] != task['requestedObjects']
+                or binding['sourceSelectedCount'] != counts['selectedTotalCount']
+                or type(binding.get('companionWindowCount')) is not int
+                or binding['companionWindowCount'] < 0
+                or type(binding.get('renderedWindowCount')) is not int
+                or binding['renderedWindowCount'] != counts['selectedWindowCount'] + binding['companionWindowCount']):
             raise ValueError('Prepared task differs from its verified original source artifact')
     return receipt
 
@@ -420,7 +474,8 @@ def _prepare(design_path, tasks_path, source, output, source_slots_path=None, no
     if design.get('schema') != 'soilie.layoutgpt-inventory-extension/v1':
         raise ValueError('An immutable seven/eight extension design is required')
     freeze_design(design_path, design['campaignId'], design['perCell'], design['budgetUsd'],
-                  design['selectionSeed'], design['retainedCampaignSha256'], design['inventoryPolicy'])
+                  design['selectionSeed'], design['retainedCampaignSha256'], design['inventoryPolicy'],
+                  archive_date=design['publicOutputPrefix'].removeprefix('files/outputs/').removesuffix('/'))
     if task_document.get('designSha256') != hashlib.sha256(design_raw).hexdigest():
         raise ValueError('Bound inventories refer to a different frozen design')
     tasks = validate_tasks(design, task_document['tasks'])
@@ -465,14 +520,19 @@ def _prepare(design_path, tasks_path, source, output, source_slots_path=None, no
             'retainedCampaignSha256': design['retainedCampaignSha256'],
             'taskManifestSha256': hashlib.sha256(tasks_raw).hexdigest(), 'dataManifestSha256': manifests,
             'publicOutputPrefix': design['publicOutputPrefix'], 'requests': requests,
-            'outputArchive': configuration(), 'inventoryPolicy': design['inventoryPolicy'],
+            'outputArchive': configuration(archive_date=design['publicOutputPrefix'].removeprefix('files/outputs/').removesuffix('/')),
+            'inventoryPolicy': design['inventoryPolicy'],
+            'objectCountDefinition': OBJECT_COUNT_DEFINITION,
             'sourceSlotsSha256': source_slot_sha,
             'sourceBindingSha256': hashlib.sha256((canonical(source_binding) + '\n').encode()).hexdigest()
                                   if source_binding is not None else None,
             'runtimeSnapshot': snapshot, 'runtimeSnapshotSha256': digest(snapshot),
             'methods': ('New seven/eight-object inventory extension; original GPT-4, authors CSS prompt, '
                         'K=8 bedroom / K=4 living-room retrieval, training examples and held-out room dimensions. '
-                        'Only the original explicit inventory sentence is added. Equal fixed attempts per room/count; '
+                        'Only the original explicit inventory sentence is added. Controlled counts refer to '
+                        'non-window selected instances; SOILIE window extras and renderer companions remain '
+                        'in the source-artifact binding but do not consume the LayoutGPT inventory quota. '
+                        'Equal fixed attempts per room/count; '
                         'no quality-based replenishment. Model-native category mappings and inventory origins are '
                         'recorded per task; shared inventories use the first scheduled local source requests '
                         'with no failed/unsupported-seed substitution; native mappings remain disclosed. '
@@ -495,6 +555,7 @@ def main():
     design.add_argument('--budget-usd', type=float, required=True)
     design.add_argument('--seed', type=int, required=True)
     design.add_argument('--retained-campaign-sha256', required=True)
+    design.add_argument('--archive-date', default='2026-10-25')
     design.add_argument('--inventory-policy', default='explicit-model-native-or-fresh-soilie-v1',
                         choices=('explicit-model-native-or-fresh-soilie-v1', 'fresh-soilie-first-scheduled-local-v1'))
     preparation = commands.add_parser('prepare', help='Bind explicit inventories and hydrate authors metadata; no inference')
@@ -509,7 +570,7 @@ def main():
     args = parser.parse_args()
     if args.command == 'design':
         result = freeze_design(args.output, args.campaign_id, args.per_cell, args.budget_usd,
-                               args.seed, args.retained_campaign_sha256, args.inventory_policy)
+                               args.seed, args.retained_campaign_sha256, args.inventory_policy, args.archive_date)
         print(json.dumps({'frozenTasks': len(result['tasks']), 'budgetUsd': result['budgetUsd'],
                           'inferenceStarted': False}))
     elif args.command == 'source-slots':

@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
+from serverless.common.object_counts import validate_selection
+
 SCENE_SEED_STEP = 104_729
 ROOM_COMBINATION_FILES = {
     "bedroom": "working-combos-bedroom.csv",
@@ -68,7 +70,12 @@ def select_model_objects(runtime_root: Path, request: dict[str, Any], scene_inde
     """Map a public generation mode to the model's terminal selection path."""
 
     if request["mode"] == "objects":
-        return list(request["objects"])
+        objects = list(request["objects"])
+        try:
+            validate_selection(request, objects)
+        except ValueError as error:
+            raise ModelGenerationError("SOILIE-3D received an invalid explicit object inventory.") from error
+        return objects
 
     _prepare_data, working_combos, _png2gif = _load_original_modules(runtime_root)
     selection_seed = request["seed"]
@@ -96,12 +103,12 @@ def select_model_objects(runtime_root: Path, request: dict[str, Any], scene_inde
             raise ModelGenerationError(
                 f"SOILIE-3D could not select the exact requested object count: {error}"
             ) from error
-    if len(objects) != requested_count or any(
-        not isinstance(label, str) or not label for label in objects
-    ):
+    try:
+        validate_selection(request, objects)
+    except ValueError as error:
         raise ModelGenerationError(
-            "SOILIE-3D returned a selection that differs from the requested object count."
-        )
+            "SOILIE-3D returned an invalid complete inventory for the requested non-window count."
+        ) from error
     return objects
 
 

@@ -86,6 +86,15 @@ inventory does not relabel the frozen v1 three-to-six-object rooms or assert
 identical categories across models. Keep every failed or interrupted attempt;
 there is no retry-until-success replenishment.
 
+New plans default to `.codex/benchmark/replacement-baselines-20261025/infinigen`.
+Pass `--archive-date 2026-10-25` to `baseline_extension_run prepare` to freeze
+`files/outputs/2026-10-25/infinigen/` and its corresponding private namespace.
+Both destinations are derived from that one recorded date and remain part of
+the plan checksum. The earlier October 23 plan and receipts are not rewritten
+or treated as the new run; create a fresh plan with the same approved native
+seed/inventory condition. This storage amendment does not change the original
+Infinigen algorithm, native dependencies, or 120-attempt ceiling.
+
 The original Blender 3.6.0 / embedded Python 3.10 / Infinigen package bytes stay
 unchanged. Their legacy Pillow dependency remains
 [unpatched](https://github.com/python-pillow/Pillow/security/advisories/GHSA-8g5g-8vmr-9782); network and

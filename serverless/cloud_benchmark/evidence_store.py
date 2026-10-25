@@ -19,6 +19,9 @@ from serverless.benchmark.archive import merge_index, packed
 from serverless.benchmark.stream_archive import upload
 from serverless.benchmark.stimuli import diagram
 from serverless.cloud_benchmark.checkpoint import write_json
+from serverless.common.object_counts import (
+    OBJECT_COUNT_DEFINITION, OBJECT_COUNT_POLICY, validate_selection, window_extra_count,
+)
 
 
 BUCKET = 'soilie3d-data'
@@ -143,6 +146,9 @@ def _vector(value, count):
 
 def public_room(row, attempt, plan):
     """Use a positive field allowlist, rather than trying to redact raw logs."""
+    if (plan['configuration'].get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
+            or plan['configuration'].get('objectCountPolicy') != OBJECT_COUNT_POLICY):
+        raise ValueError('Do not republish a legacy cohort under the non-window count definition')
     stage = row['stages']['final']
     objects = []
     for item in stage['objects']:
@@ -176,9 +182,17 @@ def public_room(row, attempt, plan):
     if task['platform'] not in ('local', 'lambda') or attempt['request']['roomType'] not in ('bedroom', 'living_room'):
         raise ValueError('Unexpected public generation condition')
     selection = row['selection']
-    if not isinstance(selection, list) or len(selection) != attempt['request']['objectCount']:
-        raise ValueError('Unexpected selected instance inventory')
+    counts = validate_selection(attempt['request'], selection)
+    if any(type(row.get(key)) is not type(value) or row.get(key) != value for key, value in counts.items()):
+        raise ValueError('Published count metadata differs from the complete selected inventory')
     selection = [_identifier(label) for label in selection]
+    rendered_windows = window_extra_count(obj['label'].lower().split('.', 1)[0] for obj in objects)
+    companion_windows = rendered_windows - counts['selectedWindowCount']
+    if (companion_windows < 0 or type(row.get('companionWindowCount')) is not int
+            or type(row.get('renderedWindowCount')) is not int
+            or row.get('companionWindowCount') != companion_windows
+            or row.get('renderedWindowCount') != rendered_windows):
+        raise ValueError('Published selected/companion window counts differ from final geometry')
     started = datetime.fromisoformat(row['startedAt'].replace('Z', '+00:00'))
     if started.tzinfo is None:
         raise ValueError('Generation timestamp must include its original timezone')
@@ -191,7 +205,9 @@ def public_room(row, attempt, plan):
              'stage': 'final', 'room': room, 'objects': objects}
     public = {'schemaVersion': 1, 'status': 'comparisons-pending', 'scene': scene,
               'generation': {'platform': task['platform'], 'seed': attempt['request']['seed'],
-                             'requestedObjectCount': attempt['request']['objectCount'],
+                             **counts,
+                             'companionWindowCount': companion_windows,
+                             'renderedWindowCount': rendered_windows,
                              'selectedObjects': selection, 'startedAt': started.isoformat(),
                              'generationSeconds': _number(row['generationSeconds']),
                              'modelVersion': version, 'sourceCommit': commit,

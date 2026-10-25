@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from contextlib import redirect_stdout
+from datetime import date
 import gzip
 import hashlib
 from importlib import metadata
@@ -36,13 +37,13 @@ from serverless.benchmark.run_batch import run_lock
 from serverless.benchmark.stimuli import diagram
 from serverless.benchmark.stream_archive import upload, verify_remote
 from serverless.cloud_benchmark.checkpoint import write_json
+from serverless.common.object_counts import OBJECT_COUNT_DEFINITION
 
 ROOT = Path(__file__).resolve().parents[2]
 PARSER = ROOT / '.codex/layoutgpt-source/utils.py'
 PARSER_SHA256 = '5e8ea10b8d0980da40fe311434a9475f6f605e51b2d5c3cab6e8f87c0f9b5e56'
 BUCKET = 'soilie3d-data'
-PUBLIC_PREFIX = 'files/outputs/2026-10-23/layoutgpt/'
-PRIVATE_PREFIX = 'private/new-benchmark-20261023/layoutgpt/'
+DEFAULT_ARCHIVE_DATE = '2026-10-25'
 TERMINAL = {'complete', 'error', 'uncertain'}
 IMPLEMENTATION_FILES = (
     'serverless/benchmark/layoutgpt_inventory_extension.py',
@@ -60,15 +61,36 @@ IMPLEMENTATION_FILES = (
     'serverless/cloud_benchmark/checkpoint.py',
     'serverless/cloud_benchmark/authoritative.py',
     'serverless/cloud_benchmark/evidence_store.py',
+    'serverless/common/object_counts.py',
     '.codex/layoutgpt-source/run_layoutgpt_3d.py',
     '.codex/layoutgpt-source/utils.py',
 )
 DEPENDENCIES = ('numpy', 'scipy', 'shapely', 'Pillow', 'tiktoken', 'boto3', 'botocore')
 
 
-def configuration():
-    return {'schemaVersion': 1, 'bucket': BUCKET, 'publicPrefix': PUBLIC_PREFIX,
-            'privatePrefix': PRIVATE_PREFIX, 'parserSha256': PARSER_SHA256}
+def configuration(archive_date=DEFAULT_ARCHIVE_DATE):
+    """Derive only the dated namespace; bucket, privacy and parser stay fixed."""
+    if (not isinstance(archive_date, str)
+            or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', archive_date)
+            or date.fromisoformat(archive_date).isoformat() != archive_date):
+        raise ValueError('The public output date must be an ISO calendar date')
+    compact = archive_date.replace('-', '')
+    return {'schemaVersion': 1, 'bucket': BUCKET,
+            'publicPrefix': f'files/outputs/{archive_date}/layoutgpt/',
+            'privatePrefix': f'private/new-benchmark-{compact}/layoutgpt/',
+            'parserSha256': PARSER_SHA256}
+
+
+def plan_archive_configuration(plan):
+    """Reject arbitrary targets and mixed dates in a frozen extension plan."""
+    public = plan.get('publicOutputPrefix')
+    match = re.fullmatch(r'files/outputs/(\d{4}-\d{2}-\d{2})/', public) if isinstance(public, str) else None
+    if match is None:
+        raise ValueError('The frozen plan needs an exact dated public output prefix')
+    expected = configuration(match.group(1))
+    if canonical(plan.get('outputArchive')) != canonical(expected):
+        raise ValueError('The frozen bucket, public/private date, or parser contract differs')
+    return expected
 
 
 def sha(body):
@@ -93,6 +115,9 @@ def runtime_snapshot(node_path=None):
 
 def validate_runtime(root, node_path=None):
     plan = json.loads((scratch_path(root) / 'requests.json').read_bytes())
+    plan_archive_configuration(plan)
+    if plan.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION:
+        raise ValueError('Freeze a new LayoutGPT plan for the non-window count protocol')
     frozen = plan.get('runtimeSnapshot')
     if (not isinstance(frozen, dict) or plan.get('runtimeSnapshotSha256') != sha(canonical(frozen).encode())
             or runtime_snapshot(node_path or frozen['node']['executable']) != frozen):
@@ -112,8 +137,9 @@ def _inputs(root, task_id):
     root = scratch_path(root)
     plan_raw = (root / 'requests.json').read_bytes()
     plan = json.loads(plan_raw)
-    if plan.get('variant') != VARIANT or plan.get('outputArchive') != configuration():
+    if plan.get('variant') != VARIANT:
         raise ValueError('Only the frozen, storage-enabled inventory extension is accepted')
+    plan_archive_configuration(plan)
     ledger = json.loads((root / 'inference-ledger.json').read_bytes())
     if ledger['planSha256'] != sha(plan_raw) or ledger['budgetUsd'] != plan['budgetUsd']:
         raise ValueError('Inference plan or single spending ledger changed')
@@ -140,7 +166,8 @@ def _vector(value, width):
 
 def public_scene(raw, request, plan, response_sha):
     """Rebuild all public leaves; never copy arbitrary nested provenance."""
-    if (raw.get('model') != 'layoutgpt' or raw.get('roomType') != request['roomType']
+    if (plan.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
+            or raw.get('model') != 'layoutgpt' or raw.get('roomType') != request['roomType']
             or raw.get('units') != 'px' or request['roomType'] not in ('bedroom', 'living_room')
             or plan['sourceCommit'] != AUTHOR_COMMIT or not re.fullmatch('[a-f0-9]{64}', response_sha)):
         raise ValueError('Unexpected native layout identity')
@@ -160,6 +187,7 @@ def public_scene(raw, request, plan, response_sha):
              'provenance': {'commit': AUTHOR_COMMIT, 'inferenceRerun': True,
                             'responseSha256': response_sha, 'requestSha256': request['requestSha256'],
                             'model': 'gpt-4-0613', 'requestedObjects': request['requestedObjects'],
+                            'objectCountDefinition': OBJECT_COUNT_DEFINITION,
                             'benchmarkVariant': VARIANT}}
     if not re.fullmatch('[a-f0-9]{64}', request['requestSha256']):
         raise ValueError('Invalid request content hash')
@@ -255,6 +283,7 @@ def archive_attempt(root, task_id, *, client=None, profile='darkest', node_path=
     directory = root / 'archive' / task_id
     with run_lock(directory):
         root, plan_raw, plan, request, entry = _inputs(root, task_id)
+        archive_config = plan_archive_configuration(plan)
         validate_runtime(root, node_path)
         client = client or _client(profile)
         plan_sha, entry_sha = sha(plan_raw), sha(canonical(entry).encode())
@@ -263,7 +292,7 @@ def archive_attempt(root, task_id, *, client=None, profile='darkest', node_path=
         wire_path = root / 'wire-requests' / (task_id + '.json')
         if receipt_path.exists():
             receipt = json.loads(receipt_path.read_bytes())
-            expected_key = PRIVATE_PREFIX + plan_sha + '/' + task_id + '/' + receipt['privateArtifact']['sha256'] + '.tar.gz'
+            expected_key = archive_config['privatePrefix'] + plan_sha + '/' + task_id + '/' + receipt['privateArtifact']['sha256'] + '.tar.gz'
             if (receipt['planSha256'] != plan_sha or receipt['entrySha256'] != entry_sha
                     or receipt['privateArtifact']['key'] != expected_key):
                 raise ValueError('Recovery receipt differs from the immutable paid attempt')
@@ -289,7 +318,7 @@ def archive_attempt(root, task_id, *, client=None, profile='darkest', node_path=
         files['evidence-index.json'] = canonical(evidence).encode()
         private = _archive_bytes(files)
         private_sha = sha(private)
-        key = PRIVATE_PREFIX + plan_sha + '/' + task_id + '/' + private_sha + '.tar.gz'
+        key = archive_config['privatePrefix'] + plan_sha + '/' + task_id + '/' + private_sha + '.tar.gz'
         artifact = upload(client, BUCKET, key, private, 'application/gzip', private_sha, len(private),
                           cache_control='private,max-age=0,no-store')
         receipt = {'schemaVersion': 1, 'planSha256': plan_sha, 'entrySha256': entry_sha,
@@ -303,7 +332,7 @@ def archive_attempt(root, task_id, *, client=None, profile='darkest', node_path=
                                                    (diagram(scene).encode(), 'svg', 'image/svg+xml')):
                 checksum = sha(body)
                 receipt['publicArtifacts'].append(upload(client, BUCKET,
-                    PUBLIC_PREFIX + task_id + '/' + checksum[:24] + '.' + extension,
+                    archive_config['publicPrefix'] + task_id + '/' + checksum[:24] + '.' + extension,
                     body, content_type, checksum, len(body)))
             merge_index(client, BUCKET, [row['key'] for row in receipt['publicArtifacts']])
         # Durable exact-byte recovery comes before eviction, including failed
@@ -328,13 +357,14 @@ def _evict(receipt, response_path, wire_path):
 def load_response(root, task_id, *, client=None, profile='darkest'):
     """Read exact evicted provider bytes without restoring local scene files."""
     root, plan_raw, plan, request, entry = _inputs(root, task_id)
+    archive_config = plan_archive_configuration(plan)
     local = root / 'responses' / (task_id + '.json')
     if local.exists():
         raw = local.read_bytes()
     else:
         receipt = json.loads((root / 'archive' / task_id / 'remote.json').read_bytes())
         artifact = receipt['privateArtifact']
-        expected_key = PRIVATE_PREFIX + sha(plan_raw) + '/' + task_id + '/' + artifact['sha256'] + '.tar.gz'
+        expected_key = archive_config['privatePrefix'] + sha(plan_raw) + '/' + task_id + '/' + artifact['sha256'] + '.tar.gz'
         if (receipt['planSha256'] != sha(plan_raw) or receipt['entrySha256'] != sha(canonical(entry).encode())
                 or artifact['key'] != expected_key):
             raise ValueError('Private recovery receipt differs from the paid attempt')

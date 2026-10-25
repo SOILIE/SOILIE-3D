@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime, UTC
+from datetime import date, datetime, UTC
 import gzip
 import hashlib
 import json
@@ -28,11 +28,11 @@ from serverless.benchmark.run_batch import run_lock, write_json
 from serverless.benchmark.supervise import command as supervised
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRATCH = ROOT/'.codex/benchmark/replacement-baselines-20261023'
+SCRATCH = ROOT/'.codex/benchmark/replacement-baselines-20261025'
+SCRATCH_ROOTS = (ROOT/'.codex/benchmark/replacement-baselines-20261023', SCRATCH)
 DEFAULT_ROOT = SCRATCH/'infinigen'
 BUCKET = 'soilie3d-data'
-PUBLIC_PREFIX = 'files/outputs/2026-10-23/infinigen/'
-PRIVATE_PREFIX = 'private/new-benchmark-20261023/infinigen/'
+DEFAULT_ARCHIVE_DATE = '2026-10-25'
 CELLS = tuple((room, count) for room in ('bedroom', 'living_room') for count in (7, 8))
 # Ubuntu's pinned controller Python has two real stdlib file links outside its
 # stdlib directory. Permit only these exact targets, never a containing folder;
@@ -69,13 +69,37 @@ def digest(path):
 
 def owner(path):
     path = Path(path).resolve()
-    if not path.is_relative_to(SCRATCH.resolve()) or path == SCRATCH.resolve():
-        raise ValueError('Extension state must be a task-owned child of replacement-baselines-20261023')
+    if not any(path.is_relative_to(base.resolve()) and path != base.resolve() for base in SCRATCH_ROOTS):
+        raise ValueError('Extension state must be a task-owned child of an explicitly allowed baseline root')
     return path
 
 
+def archive_configuration(archive_date):
+    """Derive both namespaces from one frozen date; never move old evidence."""
+    if not isinstance(archive_date, str) or date.fromisoformat(archive_date).isoformat() != archive_date:
+        raise ValueError('The native output directory must use an ISO archive date')
+    return {'bucket': BUCKET, 'publicPrefix': f'files/outputs/{archive_date}/infinigen/',
+            'privatePrefix': 'private/new-benchmark-' + archive_date.replace('-', '') + '/infinigen/'}
+
+
+def plan_archive_date(plan):
+    match = re.fullmatch(r'files/outputs/(\d{4}-\d{2}-\d{2})/infinigen/', plan.get('publicPrefix', ''))
+    if not match:
+        raise ValueError('Unknown native public output namespace')
+    observed = match[1]
+    expected = archive_configuration(observed)
+    if (any(plan.get(key) != value for key, value in expected.items())
+            or ('archiveDate' in plan and plan['archiveDate'] != observed)):
+        raise ValueError('Native public/private destinations differ from the frozen archive date')
+    return observed
+
+
 def hashes():
-    return {name: digest(Path(__file__).with_name(name)) for name in IMPLEMENTATIONS}
+    result = {name: digest(Path(__file__).with_name(name)) for name in IMPLEMENTATIONS}
+    # run_batch's common counting dependency is imported even when only its
+    # checkpoint helpers are used. Bind those controller bytes as well.
+    result['../common/object_counts.py'] = digest(Path(__file__).parents[1]/'common/object_counts.py')
+    return result
 
 
 def byte_tree(path, *, include_bytecode=False, python_sources=None, native_prefix=None,
@@ -234,10 +258,13 @@ def load_plan(root, verify_code=False):
     if hashlib.sha256(encoded(body)).hexdigest() != plan.get('planSha256'):
         raise ValueError('Frozen extension plan changed')
     if (plan.get('schemaVersion') != 1 or plan.get('modelCommit') != COMMIT
-            or plan.get('inventoryVersion') != INVENTORY_VERSION
-            or plan.get('publicPrefix') != PUBLIC_PREFIX or plan.get('privatePrefix') != PRIVATE_PREFIX
-            or plan.get('bucket') != BUCKET):
+            or plan.get('inventoryVersion') != INVENTORY_VERSION):
         raise ValueError('Unknown extension contract or archive destination')
+    archive_date = plan_archive_date(plan)
+    if verify_code and plan.get('archiveDate') != archive_date:
+        raise ValueError('Freeze a new explicitly dated plan before native execution; historical plans remain unchanged')
+    if verify_code and plan.get('attemptsPerCell') != 30:
+        raise ValueError('This native extension is authorized for exactly 30 attempts per cell, 120 total')
     from serverless.benchmark.native_isolation import validate_configuration
     validate_configuration(plan.get('nativeIsolation'))
     if not plan['nativeIsolation']['bytecodeCache']:
@@ -262,8 +289,9 @@ def load_plan(root, verify_code=False):
 
 def prepare(args):
     root = owner(args.root)
-    if args.attempts_per_cell < 1 or args.seed_base < 1_000_000 or args.timeout < 1:
-        raise ValueError('Use positive attempt/timeout values and an explicit fresh seed base >= 1000000')
+    archive = archive_configuration(args.archive_date)
+    if args.attempts_per_cell != 30 or args.seed_base < 1_000_000 or args.timeout < 1:
+        raise ValueError('Use exactly 30 attempts per cell, a positive timeout, and a frozen seed base >= 1000000')
     if not re.fullmatch('[a-z0-9_-]+', args.campaign_id):
         raise ValueError('Unsafe campaign identifier')
     tasks = []
@@ -287,8 +315,8 @@ def prepare(args):
             'model': 'infinigen', 'modelCommit': COMMIT, 'inventoryVersion': INVENTORY_VERSION,
             'condition': 'model-native-count-conditioned', 'attemptsPerCell': args.attempts_per_cell,
             'seedBase': args.seed_base, 'tasks': tasks, 'timeoutSeconds': args.timeout,
-            'blenderThreads': args.blender_threads, 'bucket': BUCKET,
-            'publicPrefix': PUBLIC_PREFIX, 'privatePrefix': PRIVATE_PREFIX,
+            'blenderThreads': args.blender_threads, 'archiveDate': args.archive_date,
+            **archive,
             'environment': environment,
             'nativeIsolation': isolation,
             'runtimeFingerprint': runtime_fingerprint(environment, isolation),
@@ -606,7 +634,7 @@ def run_task(root, plan, task, client):
         state['privateArchivePrepared'] = prepared
         state['evidenceIndexSha256'] = prepared['evidenceIndexSha256']
         write_json(checkpoint, state)
-        key = PRIVATE_PREFIX+plan['planSha256'][:24]+'/'+task['id']+'/'+checksum+'.tar.gz'
+        key = plan['privatePrefix']+plan['planSha256'][:24]+'/'+task['id']+'/'+checksum+'.tar.gz'
         with archive.open('rb') as body:
             state['privateArchive'] = upload(client, BUCKET, key, body, 'application/gzip', checksum,
                                              archive.stat().st_size, cache_control='private,max-age=0,no-store')
@@ -636,7 +664,7 @@ def run_task(root, plan, task, client):
             'timingEligible': False}
         packet = {'schemaVersion': 1, 'status': 'comparisons-pending', 'condition': plan['condition'],
                   'scene': scene, 'generation': generation_record}
-        folder = PUBLIC_PREFIX+task['id']+'/'
+        folder = plan['publicPrefix']+task['id']+'/'
         payloads = [('geometry', encoded(packet), 'json', 'application/json'),
                     ('diagram', diagram(scene).encode(), 'svg', 'image/svg+xml')]
         for label, body, suffix, content_type in payloads:
@@ -661,7 +689,7 @@ def run_task(root, plan, task, client):
     write_json(checkpoint, state)
     body = encoded(dict(state, status=final_status))
     checksum = hashlib.sha256(body).hexdigest()
-    key = PRIVATE_PREFIX+plan['planSha256'][:24]+'/'+task['id']+'/'+checksum+'.receipt.json'
+    key = plan['privatePrefix']+plan['planSha256'][:24]+'/'+task['id']+'/'+checksum+'.receipt.json'
     state['privateReceipt'] = upload(client, BUCKET, key, body, 'application/json', checksum, len(body),
                                      cache_control='private,max-age=0,no-store')
     state['status'] = final_status
@@ -712,7 +740,9 @@ def main():
         setup.add_argument('--'+name, type=Path, required=True)
     setup.add_argument('--attempts-per-cell', type=int, required=True)
     setup.add_argument('--seed-base', type=int, required=True)
-    setup.add_argument('--campaign-id', default='infinigen-extension-20261023')
+    setup.add_argument('--campaign-id', default='infinigen-extension-20261025')
+    setup.add_argument('--archive-date', default=DEFAULT_ARCHIVE_DATE,
+                       help='Freeze one public/private output date; native algorithms and task seeds are unchanged')
     setup.add_argument('--timeout', type=int, default=3600)
     setup.add_argument('--blender-threads', type=int, choices=range(1, 9), default=1)
     setup.add_argument('--isolation-image', required=True,

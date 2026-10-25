@@ -51,6 +51,25 @@ if ($LASTEXITCODE) {
 Copy-Item -LiteralPath (Join-Path $repo 'modules'),(Join-Path $repo 'serverless') -Destination $context -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repo 'package.json') -Destination $context
 Copy-Item -LiteralPath (Join-Path $repo '.codex/runtime/model-provenance.json') -Destination (Join-Path $context 'provenance.json')
+# A digest-pinned base can retain immutable meshes/source observations while
+# the human-authored combination policy changes. Overlay only the five current
+# catalogs, never a broad data tree or unrelated local source staging.
+$catalogContext = Join-Path $context 'data'
+New-Item -ItemType Directory -Path $catalogContext | Out-Null
+$provenance = Get-Content -LiteralPath (Join-Path $context 'provenance.json') -Raw | ConvertFrom-Json
+foreach ($catalog in @('working-combos-refined.csv', 'working-combos-bedroom.csv', 'working-combos-livingroom.csv', 'working-combos-kitchen.csv', 'working-combos-bathroom.csv')) {
+    $relative = "data/$catalog"
+    $expected = $provenance.files.PSObject.Properties[$relative].Value
+    $source = Join-Path $repo $relative
+    if (-not $expected -or (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected.sha256) {
+        throw "Current catalog differs from compiled provenance: $relative"
+    }
+    Copy-Item -LiteralPath $source -Destination $catalogContext
+    $copied = Join-Path $catalogContext $catalog
+    if ((Get-FileHash -LiteralPath $copied -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected.sha256) {
+        throw "Build-context catalog copy differs: $relative"
+    }
+}
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Dockerfile') -Destination $context
 # A live Windows/WSL checkout can contain interpreter-specific bytecode. Build
 # from the verified source files, never stale local caches copied with folders.

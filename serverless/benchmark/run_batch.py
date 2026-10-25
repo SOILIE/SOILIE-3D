@@ -23,6 +23,11 @@ import time
 import zlib
 
 from serverless.benchmark.supervise import command as supervised
+from serverless.common.object_counts import (
+    EXPLICIT_COUNT_DEFINITION, MAX_OBJECT_COUNT, MIN_OBJECT_COUNT,
+    OBJECT_COUNT_DEFINITION, OBJECT_COUNT_POLICY, counted_object_count,
+    validate_selection, window_extra_count,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -161,11 +166,16 @@ def worker(args):
     request = json.loads((args.work/"request.json").read_text())
     started = time.perf_counter()
     objects = select_model_objects(args.runtime, request, 0)
-    requested_count = len(request['objects']) if request['mode'] == 'objects' else request['objectCount']
-    if len(objects) != requested_count or any(not isinstance(label, str) or not label for label in objects):
-        raise RuntimeError('The selected instance count differs from the frozen request')
+    counts = validate_selection(request, objects)
     write_json(args.work/"selection.json", {"objects": objects, "request": request})
     inputs, alignment_diagnostics = generate_model_inputs_with_diagnostics(args.runtime, objects, request["seed"])
+    # Companion windows are introduced by the authored core after selection.
+    # Keep them separate from selected extras and never use furniture filtering
+    # here: doors, coverings and other non-window objects still consume N.
+    input_windows = window_extra_count(name.split('.', 1)[0] for name in inputs)
+    companion_windows = input_windows - counts['selectedWindowCount']
+    if companion_windows < 0:
+        raise RuntimeError('Coordinate construction lost a selected window instance')
     write_json(args.work/"input.json", inputs)
     selection_seconds = time.perf_counter()-started
     for name in ("assets", "modules", "data", "suggested_setup.blend"):
@@ -187,10 +197,53 @@ def worker(args):
         raise RuntimeError("No final-placement capture; output is not successful")
     write_json(args.work/"worker.json", {
         "selectionSeconds": selection_seconds,
-        "requestedObjectCount": requested_count,
+        **counts,
         "selectedObjectCount": len(objects),
+        "companionWindowCount": companion_windows,
+        "renderedWindowCount": input_windows,
         "alignmentDiagnostics": alignment_diagnostics,
     })
+
+
+def count_configuration(requests=None, object_count=None):
+    """Describe request quotas, not selected totals or a historical default.
+
+    Explicit object lists have literal-length quotas and may have zero counted
+    non-window instances. Mixed plans therefore need per-definition count sets;
+    a single non-window label would misrepresent their explicit-list requests.
+    """
+    definitions = {}
+    counted = set()
+    if requests is None:
+        values = [object_count] if object_count is not None else list(range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1))
+        definitions[OBJECT_COUNT_DEFINITION] = set(values)
+        counted.update(values)
+    else:
+        if not requests:
+            raise ValueError('Count configuration requires a nonempty frozen request plan')
+        for request in requests:
+            if request['mode'] == 'objects':
+                definition = EXPLICIT_COUNT_DEFINITION
+                quota = len(request['objects'])
+                counted.add(counted_object_count(request['objects']))
+            else:
+                definition = OBJECT_COUNT_DEFINITION
+                quota = request['objectCount']
+                counted.add(quota)
+            definitions.setdefault(definition, set()).add(quota)
+    policies = {OBJECT_COUNT_DEFINITION: OBJECT_COUNT_POLICY,
+                EXPLICIT_COUNT_DEFINITION: OBJECT_COUNT_POLICY['explicitList']}
+    if len(definitions) == 1:
+        definition = next(iter(definitions))
+        policy = policies[definition]
+    else:
+        definition = 'per-request'
+        policy = {'definition': definition,
+                  'byDefinition': {key: policies[key] for key in sorted(definitions)}}
+    return {'objectCounts': sorted(set().union(*definitions.values())),
+            'objectCountDefinition': definition, 'objectCountPolicy': policy,
+            'objectCountsByDefinition': {key: sorted(values) for key, values in sorted(definitions.items())},
+            'countedObjectCounts': sorted(counted)}
 
 
 def batch(args):
@@ -201,7 +254,8 @@ def batch(args):
     plan = plan_document["requests"] if plan_document else None
     manifest = args.output/"run.json"
     config = {"schemaVersion": 1, "model": "soilie", "runtime": str(args.runtime), "seed": args.seed,
-              "roomType": args.room_type, "allowDuplicates": not args.no_duplicates, "objectCounts": [args.object_count] if args.object_count else [3,4,5,6],
+              "roomType": args.room_type, "allowDuplicates": not args.no_duplicates,
+              **count_configuration(plan, args.object_count),
               "timeoutSeconds": args.timeout, "targetCompletions": args.target, "blender": str(args.blender),
               "full": args.full, "support": args.support, "solidMeshOverlap": args.solid_mesh_overlap,
               "pythonVersion": platform.python_version(),
@@ -217,7 +271,8 @@ def batch(args):
         config.update(cohort=plan_document['cohort'],
                       requestPlanSha256=hashlib.sha256(args.request_plan.read_bytes()).hexdigest(),
                       plannedAttempts=len(plan), targetCompletions=len(plan),
-                      roomType=plan_document.get('roomType', 'mixed'), allowDuplicates='per-request')
+                      roomType=plan_document.get('roomType', 'mixed'), allowDuplicates='per-request',
+                      seed='per-request')
         if plan_document['cohort'] == 'paired_comparison':
             config['baseline'] = plan_document['baseline']
             config['baselineSceneIds'] = plan_document['baselineSceneIds']
@@ -237,7 +292,9 @@ def batch(args):
             # Only the exact interrupted attempt directory owned by this run.
             shutil.rmtree(work)
         work.mkdir()
-        request = dict(plan[index]) if plan else {"mode": "room_type", "roomType": args.room_type, "objectCount": args.object_count or 3+index%4,
+        default_counts = range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1)
+        request = dict(plan[index]) if plan else {"mode": "room_type", "roomType": args.room_type,
+                   "objectCount": args.object_count or default_counts[index % len(default_counts)],
                    "seed": args.seed+index*args.seed_step, "allowDuplicates": not args.no_duplicates,
                    "sameObjectsAcrossScenes": True}
         write_json(work/"request.json", request)
