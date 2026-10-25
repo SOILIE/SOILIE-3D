@@ -410,7 +410,14 @@ def make_materials_single_user(obj):
 def load_assets(inputs,params):
     rotations = load_rotations()
     valid_assets = [v2 for v1 in rotations.values() for v2 in v1.keys()]
-    obj_files = [f for f in os.listdir('assets') if os.path.splitext(f)[1].lower()=='.obj' and f in valid_assets]
+    # Filesystem enumeration order differs across platforms, so establish the
+    # candidate order before the seeded random choice below.
+    obj_files = sorted(
+        filename
+        for filename in os.listdir('assets')
+        if os.path.splitext(filename)[1].lower() == '.obj'
+        and filename in valid_assets
+    )
     # Load assets into blender
     for obj_name in inputs.keys():
         suffix = '.'+obj_name.split('.')[1] if '.' in obj_name else ''
