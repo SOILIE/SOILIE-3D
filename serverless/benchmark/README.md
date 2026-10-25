@@ -6,6 +6,35 @@ is staged, byte-checked, by the existing runtime compiler.
 
 ## Evidence boundaries
 
+### Local-only authoritative cohort
+
+`serverless.cloud_benchmark.authoritative prepare --platforms local` freezes a
+distinct 5,000-request cohort: 2,500 bedrooms and 2,500 living rooms. In each room
+type, requested non-window counts three through six receive 417 requests each;
+seven and eight receive 416 each. Optional selected windows and derived window
+companions remain in the complete scene inventory.
+
+This freeze requires the current source audit, geometry/animation fixtures and
+local execution qualification (`--local-qualification`), including ordinary
+renderer/observer parity, the actual production worker and deterministic asset
+ordering. Omit Lambda function/image, result bucket, rates and budget inputs.
+Cloud parity, timing and cost remain explicitly deferred. Status and export
+require all 5,000 local requests, without missing Lambda targets or substitute
+attempts.
+
+Freeze the full request schedule before generation. Use repeated
+`run --platform local --eligible-request REQUEST_ID` arguments to restrict the
+initial wave to the first scheduled request in each count/room stratum. After
+those 12 original cohort requests pass actual private/public readback and the
+remaining wave is approved, continue the original 4,988 pending requests.
+Eligibility preserves the frozen order and never replaces IDs or seeds.
+
+Public JSON/SVG geometry is stored under
+`files/outputs/<date>/soilie/<full-plan-sha256>/<scene-id>/`; exact worker evidence
+stays private and is evicted locally only after verified archival and a durable
+recovery sidecar. The new plan hash separates same-date runs. Historical plans
+without this namespace policy retain their original paths when read.
+
 ### Replacement seven/eight-object LayoutGPT extension
 
 The replacement extension is a new, fixed 120-attempt design: 30 requests per

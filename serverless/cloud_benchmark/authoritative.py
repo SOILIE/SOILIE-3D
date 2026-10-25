@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from datetime import UTC, datetime
 import hashlib
 from importlib import metadata
@@ -44,6 +45,25 @@ UNCERTAIN = {'dispatched', 'unknown'}
 SOURCE_CHECKS = {'coordinateFrames', 'cameraDepthPairing', 'angleSemantics', 'anchorRotation',
                  'workingCombinations', 'exactRequestedCounts', 'gifVisibility', 'observerParity'}
 FIXTURE_CHECKS = {'geometryFixtures', 'animationFixtures', 'observerParity'}
+LOCAL_EXECUTION_CHECKS = {'ordinaryObserverParity', 'productionWorkerParity', 'canonicalAssetOrder'}
+
+
+def selected_platforms(values):
+    """Only the ordered mixed condition or explicitly local-only scope exists."""
+    if not isinstance(values, (list, tuple)) or tuple(values) not in (('local',), PLATFORMS):
+        raise ValueError('Freeze either local-only or the ordered local/Lambda condition')
+    return tuple(values)
+
+
+def plan_platforms(plan):
+    # Existing frozen mixed plans remain readable; every new freeze declares
+    # its scope rather than silently changing a 10,000-room completion target.
+    return selected_platforms(plan.get('platforms', PLATFORMS))
+
+
+def require_platform(plan, platform_name):
+    if platform_name not in plan_platforms(plan):
+        raise ValueError('Platform is not part of this frozen campaign: ' + platform_name)
 
 
 def digest(document):
@@ -63,10 +83,11 @@ def read(path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def allocation(max_count=8, phase='authoritative'):
+def allocation(max_count=8, phase='authoritative', platforms=PLATFORMS):
     """Allocate before generation; all four cells have the same histogram."""
     if max_count not in (7, 8) or phase not in ('pilot', 'authoritative'):
         raise ValueError('Use a pilot/authoritative phase and maximum count seven or eight')
+    platforms = selected_platforms(platforms)
     counts = list(range(3, max_count + 1))
     histogram = ({count: 10 for count in counts} if phase == 'pilot' else
                  {count: 2500 // len(counts) + (index < 2500 % len(counts))
@@ -78,7 +99,7 @@ def allocation(max_count=8, phase='authoritative'):
     seed_base = 1_000_000_000 if phase == 'pilot' else 2_000_000_000
     result = []
     for index, count in enumerate(schedule):
-        for platform_name in PLATFORMS:
+        for platform_name in platforms:
             for room in ROOMS:
                 ordinal = len(result)
                 result.append({'id': f'{platform_name}-{room}-{index:04d}',
@@ -222,9 +243,17 @@ def load_plan(root, verify_runtime=True):
     if plan.get('schemaVersion') != 1 or plan.get('planSha256') != digest({
             key: value for key, value in plan.items() if key != 'planSha256'}):
         raise ValueError('Frozen plan checksum differs')
-    if plan['requests'] != allocation(plan['maxObjectCount'], plan['phase']):
+    platforms = plan_platforms(plan)
+    if plan['requests'] != allocation(plan['maxObjectCount'], plan['phase'], platforms):
         raise ValueError('Frozen requests differ from the fixed allocation')
     config = plan['configuration']
+    if platforms == ('local',):
+        if (plan.get('phase') != 'authoritative' or plan.get('maxObjectCount') != 8
+                or plan.get('cloudParity', {}).get('status') != 'deferred'
+                or config.get('publicRunNamespace') != 'plan-sha256-v1'
+                or any(key in config for key in ('function', 'image', 'bucket', 'budgetRoot', 'budgetUSD', 'rateCard',
+                                                'lambdaConcurrency', 'memoryMB', 'ephemeralMB'))):
+            raise ValueError('A local-only plan must defer cloud execution without stale cloud resource/cost pins')
     if verify_runtime and (config.get('objectCountDefinition') != OBJECT_COUNT_DEFINITION
                            or config.get('objectCountPolicy') != OBJECT_COUNT_POLICY):
         raise ValueError('Object-count semantics changed; qualify and freeze a new campaign')
@@ -235,25 +264,47 @@ def load_plan(root, verify_runtime=True):
 
 
 def prepare(args):
-    versioned_function(args.function)
+    platforms = selected_platforms(getattr(args, 'platforms', PLATFORMS))
+    local_only = platforms == ('local',)
+    if local_only:
+        if (args.phase != 'authoritative' or args.max_count != 8
+                or any(getattr(args, name, None) is not None for name in
+                       ('function', 'image', 'bucket', 'rates', 'budget_root', 'pilot', 'parity'))):
+            raise ValueError('Local-only authoritative 3-8 scope must omit cloud/pilot/parity inputs')
+        if not all(getattr(args, name, None) for name in ('fixtures', 'local_qualification', 'archive_date')):
+            raise ValueError('Local-only freeze requires current fixtures, local qualification and an output date')
+    else:
+        if not all(getattr(args, name, None) for name in ('function', 'image', 'bucket', 'rates', 'budget_root')):
+            raise ValueError('Mixed-platform freeze requires immutable cloud inputs and its cumulative budget')
+        if getattr(args, 'local_qualification', None):
+            raise ValueError('Local qualification cannot replace mixed-platform pilot/parity gates')
+        versioned_function(args.function)
     args.root.mkdir(parents=True, exist_ok=True)
-    rates = validate_rates(read(args.rates), args.region)
     snapshot = runtime_snapshot(args.runtime, args.provenance, args.blender)
     source_audit = passed_gate(args.source_audit, snapshot['provenanceSha256'], 'Source audit', SOURCE_CHECKS)
     configuration = {'runtime': str(args.runtime.resolve()), 'provenance': str(args.provenance.resolve()),
                      'blender': str(args.blender.resolve()), 'runtimeSnapshot': snapshot,
-                     'budgetRoot': str(args.budget_root.resolve()), 'rateCard': rates,
-                     'function': args.function, 'image': args.image, 'bucket': args.bucket,
                      'region': args.region, 'profile': args.profile,
-                     'localWorkers': 6, 'blenderThreads': 1, 'lambdaConcurrency': 16,
-                     'memoryMB': 4096, 'timeoutSeconds': 900, 'ephemeralMB': 1024,
-                     'budgetUSD': 25.0, 'sourceAuditSha256': source_audit,
+                     'localWorkers': 6, 'blenderThreads': 1, 'timeoutSeconds': 900,
+                     'sourceAuditSha256': source_audit,
                      'objectCountDefinition': OBJECT_COUNT_DEFINITION,
                      'objectCountPolicy': OBJECT_COUNT_POLICY}
+    if not local_only:
+        rates = validate_rates(read(args.rates), args.region)
+        configuration.update(budgetRoot=str(args.budget_root.resolve()), rateCard=rates,
+            function=args.function, image=args.image, bucket=args.bucket, lambdaConcurrency=16,
+            memoryMB=4096, ephemeralMB=1024, budgetUSD=25.0)
     if getattr(args, 'archive_date', None):
         configuration['outputArchive'] = archive_configuration(args.archive_date)
     gates = {}
-    if args.phase == 'authoritative':
+    if local_only:
+        configuration['publicRunNamespace'] = 'plan-sha256-v1'
+        gates = {'fixturesSha256': passed_gate(args.fixtures, snapshot['provenanceSha256'], 'Fixtures', FIXTURE_CHECKS),
+                 'localQualificationSha256': passed_gate(args.local_qualification, snapshot['provenanceSha256'],
+                     'Local execution qualification', LOCAL_EXECUTION_CHECKS)}
+        if read(args.local_qualification).get('sourceCommit') != snapshot['sourceCommit']:
+            raise ValueError('Local execution qualification belongs to another source commit')
+    elif args.phase == 'authoritative':
         if not all((args.pilot, args.parity, args.fixtures)):
             raise ValueError('Final freeze requires the completed pilot, parity and geometry/animation fixtures')
         pilot = load_plan(args.pilot)
@@ -264,7 +315,7 @@ def prepare(args):
         summary = campaign_status(args.pilot, pilot)
         if not summary['complete'] or summary['failedAttempts'] or summary['unknownAttempts']:
             raise ValueError('Repair and rerun the pilot before freezing the authoritative campaign')
-        for platform_name in PLATFORMS:
+        for platform_name in platforms:
             verify_completed(args.pilot, pilot, platform_name, attempt_rows(args.pilot, pilot, platform_name))
         parity = read(args.parity)
         expected = {(room, count) for room in ROOMS for count in range(3, args.max_count + 1)}
@@ -276,11 +327,18 @@ def prepare(args):
         gates = {'pilotPlanSha256': pilot['planSha256'], 'paritySha256': file_digest(args.parity),
                  'fixturesSha256': passed_gate(args.fixtures, snapshot['provenanceSha256'], 'Fixtures', FIXTURE_CHECKS)}
     body = {'schemaVersion': 1, 'phase': args.phase, 'maxObjectCount': args.max_count,
-            'configuration': configuration, 'gates': gates, 'requests': allocation(args.max_count, args.phase),
+            'platforms': list(platforms), 'configuration': configuration, 'gates': gates,
+            'requests': allocation(args.max_count, args.phase, platforms),
             'timingPolicy': 'Per-scene generation through support settlement; observation and archival excluded. '
                             'Controller session/calendar times include dispatch and archival. '
                             'Retain billed invocation, active parallel session and calendar times separately.',
             'reviewPolicy': 'No previous AI judgments. Approve and freeze the evaluation protocol before collection.'}
+    if local_only:
+        body['cloudParity'] = {'status': 'deferred',
+            'reason': 'Lambda execution and hardware comparison deferred by user; no cloud parity established.'}
+        body['timingPolicy'] = ('Per-scene generation through support settlement; observation and archival excluded. '
+            'Controller session/calendar times include dispatch and archival. Retain local per-scene, active parallel '
+            'session and calendar times separately; Lambda timing, cost and parity remain deferred.')
     body['planSha256'] = digest(body)
     path = args.root / 'plan.json'
     if path.exists():
@@ -293,6 +351,7 @@ def prepare(args):
 
 
 def budget_document(plan):
+    require_platform(plan, 'lambda')
     config = plan['configuration']
     path = Path(config['budgetRoot']) / 'budget.json'
     if path.exists():
@@ -306,6 +365,7 @@ def budget_document(plan):
 
 
 def attempt_rows(root, plan, platform_name):
+    require_platform(plan, platform_name)
     if platform_name == 'lambda':
         return [row for row in budget_document(plan)['attempts']
                 if row['planSha256'] == plan['planSha256'] and row.get('role') != 'parity']
@@ -375,6 +435,7 @@ def verify_attempt_evidence(root, row, plan=None):
 
 
 def verify_completed(root, plan, platform_name, rows):
+    require_platform(plan, platform_name)
     tasks = {task['id']: task for task in plan['requests'] if task['platform'] == platform_name}
     complete = set()
     for row in rows:
@@ -391,6 +452,9 @@ def verify_completed(root, plan, platform_name, rows):
 
 
 def pending_tasks(plan, platform_name, rows, retry_ids=()):
+    require_platform(plan, platform_name)
+    if plan_platforms(plan) == ('local',) and retry_ids:
+        raise ValueError('The local-only authoritative cohort never retries or replaces an original attempt')
     if any(row['status'] in UNCERTAIN for row in rows):
         raise ValueError('Reconcile every uncertain invocation before dispatching another request')
     latest = {row['requestId']: row for row in rows}
@@ -408,9 +472,10 @@ def spent(budget):
 
 def campaign_status(root, plan=None):
     plan = plan or load_plan(root, verify_runtime=False)
+    platforms = plan_platforms(plan)
     counts = Counter()
     failures = unknown = attempts = 0
-    for platform_name in PLATFORMS:
+    for platform_name in platforms:
         rows = attempt_rows(root, plan, platform_name)
         latest = {row['requestId']: row for row in rows}
         failures += sum(row['status'] == 'failed' for row in rows)
@@ -422,12 +487,27 @@ def campaign_status(root, plan=None):
     cells = [{'platform': platform_name, 'roomType': room,
               'complete': counts[(platform_name, room)],
               'target': sum(task['platform'] == platform_name and task['request']['roomType'] == room
-                            for task in plan['requests'])} for platform_name in PLATFORMS for room in ROOMS]
-    budget = budget_document(plan)
+                            for task in plan['requests'])} for platform_name in platforms for room in ROOMS]
+    budget = budget_document(plan) if 'lambda' in platforms else None
     return {'phase': plan['phase'], 'planSha256': plan['planSha256'], 'cells': cells,
             'complete': all(cell['complete'] == cell['target'] for cell in cells) and not unknown,
             'attempts': attempts, 'failedAttempts': failures, 'unknownAttempts': unknown,
-            'costPlusReservedUSD': spent(budget), 'budgetUSD': budget['budgetUSD']}
+            'platforms': list(platforms), 'cloudParity': plan.get('cloudParity'),
+            'costPlusReservedUSD': spent(budget) if budget is not None else None,
+            'budgetUSD': budget['budgetUSD'] if budget is not None else None}
+
+
+def eligible_pending_tasks(plan, platform_name, rows, eligible_ids=(), retry_ids=()):
+    """Limit dispatch to exact frozen IDs without altering the scientific plan."""
+    tasks = pending_tasks(plan, platform_name, rows, retry_ids)
+    if not eligible_ids:
+        return tasks
+    ids = list(eligible_ids)
+    scheduled = [task['id'] for task in plan['requests'] if task['platform'] == platform_name]
+    if (any(not isinstance(value, str) for value in ids) or len(set(ids)) != len(ids)
+            or [value for value in scheduled if value in set(ids)] != ids):
+        raise ValueError('Eligible request IDs must be unique allocated IDs in their original frozen order')
+    return [task for task in tasks if task['id'] in set(ids)]
 
 
 def next_attempt(root, plan, task, rows):
@@ -462,10 +542,11 @@ def finish_local(root, plan, attempt, returncode):
 
 
 def local_run(args, plan):
+    require_platform(plan, 'local')
     config = plan['configuration']
     rows = attempt_rows(args.root, plan, 'local')
     verify_completed(args.root, plan, 'local', rows)
-    tasks = pending_tasks(plan, 'local', rows, args.retry_request)
+    tasks = eligible_pending_tasks(plan, 'local', rows, getattr(args, 'eligible_request', ()), args.retry_request)
     ledger = {'schemaVersion': 1, 'planSha256': plan['planSha256'], 'attempts': rows, 'sessions': []}
     path = args.root / 'local-ledger.json'
     if path.exists():
@@ -597,6 +678,7 @@ def finish_cloud(root, plan, attempt):
 
 
 def cloud_run(args, plan):
+    require_platform(plan, 'lambda')
     import boto3
     from botocore.config import Config
     from serverless.cloud_benchmark.pilot import invoke_and_download
@@ -674,6 +756,7 @@ def cloud_run(args, plan):
 def reconcile(args, plan):
     """Read retained evidence only; missing cloud evidence requires recovery first."""
     platform_name = args.platform
+    require_platform(plan, platform_name)
     rows = (attempt_rows(args.root, plan, platform_name) if platform_name == 'local' else
             [row for row in budget_document(plan)['attempts'] if row['planSha256'] == plan['planSha256']])
     for attempt in rows:
@@ -705,6 +788,7 @@ def reconcile(args, plan):
 
 def parity_run(args, plan):
     """Paid parity probes use the same cumulative reservation boundary."""
+    require_platform(plan, 'lambda')
     import boto3
     from botocore.config import Config
     from serverless.cloud_benchmark.pilot import compare_placements, invoke_and_download
@@ -889,6 +973,7 @@ def recovered_evidence(plan, attempt, request_id, storage, logs, service_failure
 
 def recover(args, plan):
     """Recover a particular paid attempt into its existing directory and ledger."""
+    require_platform(plan, 'lambda')
     import boto3
     budget = budget_document(plan)
     matches = [row for row in budget['attempts'] if row['planSha256'] == plan['planSha256']
@@ -941,7 +1026,8 @@ def export_evidence(root, plan, output):
         raise ValueError('Every frozen request must have a completed artifact before export')
     records = []
     accounting = []
-    for platform_name in PLATFORMS:
+    platforms = plan_platforms(plan)
+    for platform_name in platforms:
         rows = attempt_rows(root, plan, platform_name)
         completed = verify_completed(root, plan, platform_name, rows)
         latest = {row['requestId']: row for row in rows if row['status'] == 'complete'}
@@ -956,11 +1042,13 @@ def export_evidence(root, plan, output):
                             'request': task['request'], 'sha256': attempt['sha256'],
                             'artifact': attempt['artifact'], 'scene': row})
         accounting.extend(rows)
-    budget = budget_document(plan)
-    sessions = {'local': read(root / 'local-ledger.json').get('sessions', []),
-                'lambda': [row for row in budget.get('sessions', []) if row['planSha256'] == plan['planSha256']]}
+    budget = budget_document(plan) if 'lambda' in platforms else None
+    sessions = {'local': read(root / 'local-ledger.json').get('sessions', [])}
+    if budget is not None:
+        sessions['lambda'] = [row for row in budget.get('sessions', []) if row['planSha256'] == plan['planSha256']]
     document = {'schemaVersion': 1, 'complete': True, 'planSha256': plan['planSha256'],
-                'configuration': plan['configuration'], 'gates': plan['gates'],
+                'configuration': plan['configuration'], 'gates': plan['gates'], 'platforms': list(platforms),
+                'cloudParity': plan.get('cloudParity'),
                 'coverage': status, 'scenes': records, 'attempts': accounting,
                 'executionSessions': sessions, 'lambdaBudgetAccounting': budget,
                 'authoritativeGenerationDate': generation_date(accounting, sessions),
@@ -982,14 +1070,16 @@ def main():
     freeze_parser.add_argument('--root', type=Path, required=True)
     freeze_parser.add_argument('--phase', choices=['pilot', 'authoritative'], required=True)
     freeze_parser.add_argument('--max-count', type=int, choices=[7, 8], default=8)
+    freeze_parser.add_argument('--platforms', nargs='+', choices=PLATFORMS, default=list(PLATFORMS),
+                               help='Freeze local-only or the ordered local lambda condition')
     freeze_parser.add_argument('--archive-date',
                                help='Frozen public S3 output date; pilots and exact logs stay private')
-    for name in ('runtime', 'provenance', 'blender', 'rates', 'source-audit', 'budget-root'):
+    for name in ('runtime', 'provenance', 'blender', 'source-audit'):
         freeze_parser.add_argument('--' + name, type=Path, required=True)
-    for name in ('pilot', 'parity', 'fixtures'):
+    for name in ('rates', 'budget-root', 'pilot', 'parity', 'fixtures', 'local-qualification'):
         freeze_parser.add_argument('--' + name, type=Path)
     for name in ('function', 'image', 'bucket'):
-        freeze_parser.add_argument('--' + name, required=True)
+        freeze_parser.add_argument('--' + name)
     freeze_parser.add_argument('--region', default='ca-central-1')
     freeze_parser.add_argument('--profile', default='darkest')
     for command_name in ('run', 'reconcile', 'status', 'export', 'parity', 'recover'):
@@ -1003,6 +1093,8 @@ def main():
             sub.add_argument('--retry-request', action='append', default=[])
         if command_name == 'run':
             sub.add_argument('--max-new-calls', type=int, default=0)
+            sub.add_argument('--eligible-request', action='append', default=[],
+                             help='Dispatch only these original local request IDs, in frozen schedule order')
         if command_name == 'recover':
             sub.add_argument('--request', required=True, help='Frozen request ID, including parity- when applicable')
             sub.add_argument('--attempt', type=int, required=True)
@@ -1010,6 +1102,8 @@ def main():
             sub.add_argument('--service-failure', action='store_true',
                              help='Require a terminal error/timeout REPORT when no scene was persisted')
     args = parser.parse_args()
+    if args.command == 'run' and (args.max_new_calls < 0 or (args.eligible_request and args.platform != 'local')):
+        parser.error('Use nonnegative max-new-calls and restrict eligible-request to local dispatch')
     args.root = args.root.resolve()
     if args.command == 'prepare':
         with run_lock(args.root / 'prepare-controller'):
@@ -1020,17 +1114,23 @@ def main():
         print(json.dumps(campaign_status(args.root, plan), indent=2))
         return
     if args.command == 'export':
-        with run_lock(args.root / 'local-controller'), run_lock(Path(plan['configuration']['budgetRoot'])):
+        with ExitStack() as locks:
+            locks.enter_context(run_lock(args.root / 'local-controller'))
+            if 'lambda' in plan_platforms(plan):
+                locks.enter_context(run_lock(Path(plan['configuration']['budgetRoot'])))
             print(json.dumps(export_evidence(args.root, plan, args.output)), flush=True)
         return
     if args.command == 'parity':
+        require_platform(plan, 'lambda')
         with run_lock(Path(plan['configuration']['budgetRoot'])):
             parity_run(args, plan)
         return
     if args.command == 'recover':
+        require_platform(plan, 'lambda')
         with run_lock(Path(plan['configuration']['budgetRoot'])):
             recover(args, plan)
         return
+    require_platform(plan, args.platform)
     lock = (Path(plan['configuration']['budgetRoot']) if args.platform == 'lambda'
             else args.root / 'local-controller')
     with run_lock(lock):

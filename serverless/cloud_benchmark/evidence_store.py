@@ -45,6 +45,21 @@ def _configuration(plan):
     return config
 
 
+def public_prefix(plan, scene_id):
+    """Keep distinct same-date authoritative plans in distinct public paths."""
+    config = _configuration(plan)
+    if config is None:
+        raise ValueError('No frozen public output destination')
+    _identifier(scene_id)
+    prefix = config['publicPrefix'] + 'soilie/'
+    policy = plan['configuration'].get('publicRunNamespace')
+    if policy is not None:
+        if policy != 'plan-sha256-v1' or not re.fullmatch(r'[a-f0-9]{64}', plan['planSha256']):
+            raise ValueError('Unexpected public run namespace policy or plan identity')
+        prefix += plan['planSha256'] + '/'
+    return prefix + scene_id + '/'
+
+
 def _client(plan):
     import boto3
     config = plan['configuration']
@@ -248,7 +263,7 @@ def archive_attempt(root, attempt, plan, *, client=None):
     if plan['phase'] == 'authoritative' and row['status'] == 'complete':
         public = public_room(row, attempt, plan)
         scene = public['scene']
-        prefix = config['publicPrefix'] + 'soilie/' + scene['id'] + '/'
+        prefix = public_prefix(plan, scene['id'])
         for data, suffix, content_type in ((packed(public), 'json', 'application/json'),
                                            (diagram(scene).encode(), 'svg', 'image/svg+xml')):
             checksum = hashlib.sha256(data).hexdigest()
