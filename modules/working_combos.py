@@ -15,9 +15,12 @@ from pathlib import Path
 from modules.triplet_schema import validate_triplet_columns
 from modules.working_combo_schema import (
     MAX_OBJECT_COUNT,
+    MAX_TOTAL_OBJECT_COUNT,
     MIN_OBJECT_COUNT,
     WorkingCombinationError,
+    counted_object_count,
     iter_working_combinations,
+    window_extra_count,
 )
 
 
@@ -50,9 +53,9 @@ def _read_catalog(filepath: str | Path) -> tuple[tuple[str, ...], ...]:
 
 
 def available_counts(filepath: str | Path) -> tuple[int, ...]:
-    """Return the exact object counts represented by validated rows."""
+    """Return the requested non-window counts represented by validated rows."""
 
-    return tuple(sorted({len(row) for row in _read_catalog(filepath)}))
+    return tuple(sorted({counted_object_count(row) for row in _read_catalog(filepath)}))
 
 
 def _validate_requested_count(n: int) -> None:
@@ -126,7 +129,7 @@ def supports_coordinate_construction(
 ) -> bool:
     """Return whether all requested instances share a complete ordered A/B basis."""
 
-    if not MIN_OBJECT_COUNT <= len(objects) <= MAX_OBJECT_COUNT:
+    if not MIN_OBJECT_COUNT <= len(objects) <= MAX_TOTAL_OBJECT_COUNT:
         return False
     triplets = _coordinate_triplets(filepath)
     return bool(ordered_anchor_witnesses(objects, triplets))
@@ -139,14 +142,16 @@ def select_exact(
     triplet_filepath: str | Path = "./data/triplets.csv",
     allow_duplicates: bool,
 ) -> list[str]:
-    """Select exactly ``n`` model-supported instances from a finite row set."""
+    """Select ``n`` non-window instances plus at most one optional window."""
 
     _validate_requested_count(n)
     if not isinstance(allow_duplicates, bool):
         raise WorkingCombinationError("allow_duplicates must be true or false")
-    candidates = tuple(row for row in _read_catalog(filepath) if len(row) == n)
+    candidates = tuple(
+        row for row in _read_catalog(filepath) if counted_object_count(row) == n
+    )
     if not allow_duplicates:
-        candidates = tuple(row for row in candidates if len(set(row)) == n)
+        candidates = tuple(row for row in candidates if len(set(row)) == len(row))
     triplets = _coordinate_triplets(triplet_filepath)
     eligible = tuple(
         row
@@ -154,11 +159,24 @@ def select_exact(
         if ordered_anchor_witnesses(row, triplets)
     )
     if eligible:
-        # The legacy "weighted" calculation cancelled to a uniform row draw.
-        # Both public option names therefore intentionally retain uniformity.
-        return list(random.choice(eligible))
+        # Choose window presence independently of catalog group size, then draw
+        # uniformly from the scientifically supported rows in that group. This
+        # makes the optional extra a seeded policy rather than an accidental
+        # consequence of how many rows each group happens to contain.
+        by_window_count = {
+            count: tuple(row for row in eligible if window_extra_count(row) == count)
+            for count in sorted({window_extra_count(row) for row in eligible})
+        }
+        window_counts = tuple(by_window_count)
+        selected_window_count = (
+            window_counts[0]
+            if len(window_counts) == 1
+            else random.choice(window_counts)
+        )
+        return list(random.choice(by_window_count[selected_window_count]))
 
     duplicate_policy = "allowing" if allow_duplicates else "disallowing"
     raise WorkingCombinationError(
-        f"catalog contains no supported {n}-object rows while {duplicate_policy} duplicates"
+        f"catalog contains no supported rows with {n} counted non-window instances "
+        f"while {duplicate_policy} duplicates"
     )

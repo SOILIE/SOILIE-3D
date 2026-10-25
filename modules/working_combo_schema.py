@@ -10,10 +10,14 @@ from pathlib import Path
 
 MIN_OBJECT_COUNT = 3
 MAX_OBJECT_COUNT = 8
+WINDOW_FAMILY = frozenset({"window", "opaque_window"})
+MAX_WINDOW_EXTRA_COUNT = 1
+MAX_TOTAL_OBJECT_COUNT = MAX_OBJECT_COUNT + MAX_WINDOW_EXTRA_COUNT
 WORKING_COMBINATION_FIELDS = tuple(
-    f"obj{index}" for index in range(MAX_OBJECT_COUNT)
+    f"obj{index}" for index in range(MAX_TOTAL_OBJECT_COUNT)
 )
 LEGACY_SIX_COLUMN_FIELDS = tuple(f"obj{index}" for index in range(6))
+LEGACY_TOTAL_COUNT_FIELDS = tuple(f"obj{index}" for index in range(MAX_OBJECT_COUNT))
 
 CATALOG_FILENAMES = {
     "random": "working-combos-refined.csv",
@@ -36,18 +40,31 @@ def normalize_object_label(value: object) -> str:
     return "_".join(str(value).strip().lower().replace("-", " ").split())
 
 
+def window_extra_count(objects: Iterable[str]) -> int:
+    """Return the number of selected instances in the canonical window family."""
+
+    return sum(label in WINDOW_FAMILY for label in objects)
+
+
+def counted_object_count(objects: Iterable[str]) -> int:
+    """Return the requested-count contribution of a complete inventory."""
+
+    return sum(label not in WINDOW_FAMILY for label in objects)
+
+
 def validate_working_combination_header(
     fields: Iterable[str], *, source: str = "working-combination catalog"
 ) -> None:
-    """Require the exact eight-column header; never guess at legacy data."""
+    """Require the counted-object-plus-window header; never guess at legacy data."""
 
     observed = tuple(fields)
     if observed == WORKING_COMBINATION_FIELDS:
         return
-    if observed == LEGACY_SIX_COLUMN_FIELDS:
+    if observed in {LEGACY_SIX_COLUMN_FIELDS, LEGACY_TOTAL_COUNT_FIELDS}:
         raise WorkingCombinationError(
-            f"{source} uses the legacy six-column header; rebuild it with "
-            "scripts/rebuild_working_combos.py before requesting 3-8 objects"
+            f"{source} uses a legacy total-count header; rebuild it with "
+            "scripts/rebuild_working_combos.py so 3-8 counts non-window "
+            "instances and an optional window can be represented"
         )
     raise WorkingCombinationError(
         f"{source} has an unknown header: {','.join(observed)}; expected "
@@ -61,7 +78,8 @@ def _parse_row(
     extras = row.get(None)
     if extras:
         raise WorkingCombinationError(
-            f"{source} row {line_number} has more than {MAX_OBJECT_COUNT} fields"
+            f"{source} row {line_number} has more than "
+            f"{MAX_TOTAL_OBJECT_COUNT} fields"
         )
 
     raw_values: list[str] = []
@@ -84,16 +102,24 @@ def _parse_row(
         )
 
     objects = tuple(raw_values[:first_blank])
-    if not MIN_OBJECT_COUNT <= len(objects) <= MAX_OBJECT_COUNT:
-        raise WorkingCombinationError(
-            f"{source} row {line_number} contains {len(objects)} objects; expected "
-            f"{MIN_OBJECT_COUNT}-{MAX_OBJECT_COUNT}"
-        )
     for label in objects:
         if label != normalize_object_label(label) or not _CANONICAL_LABEL.fullmatch(label):
             raise WorkingCombinationError(
                 f"{source} row {line_number} contains noncanonical label {label!r}"
             )
+
+    counted = counted_object_count(objects)
+    windows = window_extra_count(objects)
+    if not MIN_OBJECT_COUNT <= counted <= MAX_OBJECT_COUNT:
+        raise WorkingCombinationError(
+            f"{source} row {line_number} contains {counted} counted non-window "
+            f"instances; expected {MIN_OBJECT_COUNT}-{MAX_OBJECT_COUNT}"
+        )
+    if windows > MAX_WINDOW_EXTRA_COUNT:
+        raise WorkingCombinationError(
+            f"{source} row {line_number} contains {windows} window-family extras; "
+            f"expected at most {MAX_WINDOW_EXTRA_COUNT}"
+        )
     return objects
 
 
@@ -114,14 +140,22 @@ def padded_catalog_row(objects: Iterable[str]) -> tuple[str, ...]:
     """Return one canonical fixed-width CSV row."""
 
     values = tuple(objects)
-    if not MIN_OBJECT_COUNT <= len(values) <= MAX_OBJECT_COUNT:
-        raise WorkingCombinationError(
-            f"working combination contains {len(values)} objects; expected "
-            f"{MIN_OBJECT_COUNT}-{MAX_OBJECT_COUNT}"
-        )
     for label in values:
         if label != normalize_object_label(label) or not _CANONICAL_LABEL.fullmatch(label):
             raise WorkingCombinationError(
                 f"working combination contains noncanonical label {label!r}"
             )
-    return values + ("",) * (MAX_OBJECT_COUNT - len(values))
+
+    counted = counted_object_count(values)
+    windows = window_extra_count(values)
+    if not MIN_OBJECT_COUNT <= counted <= MAX_OBJECT_COUNT:
+        raise WorkingCombinationError(
+            f"working combination contains {counted} counted non-window instances; "
+            f"expected {MIN_OBJECT_COUNT}-{MAX_OBJECT_COUNT}"
+        )
+    if windows > MAX_WINDOW_EXTRA_COUNT:
+        raise WorkingCombinationError(
+            f"working combination contains {windows} window-family extras; "
+            f"expected at most {MAX_WINDOW_EXTRA_COUNT}"
+        )
+    return values + ("",) * (MAX_TOTAL_OBJECT_COUNT - len(values))

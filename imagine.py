@@ -72,7 +72,7 @@ def menuLoop():
                     not numObjects.isdigit()
                     or not MIN_OBJECT_COUNT <= int(numObjects) <= MAX_OBJECT_COUNT
                 ):
-                    numObjects = input("How many objects? ")
+                    numObjects = input("How many non-window objects? ")
                     if numObjects=='exit' or numObjects=='quit':
                         sys.exit(0)
                     if numObjects=='menu' or numObjects=='back':
@@ -83,7 +83,7 @@ def menuLoop():
                     ):
                         print (
                             f"Invalid input: Choose {MIN_OBJECT_COUNT} to "
-                            f"{MAX_OBJECT_COUNT} objects."
+                            f"{MAX_OBJECT_COUNT} non-window objects."
                         )
                 objects = working_combos.select_exact(
                     int(numObjects), allow_duplicates=allow_multiples

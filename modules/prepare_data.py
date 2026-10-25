@@ -46,7 +46,7 @@ from modules.relation_manifest import (
     sha256_file,
 )
 from modules.working_combos import ordered_anchor_witnesses
-from modules.working_combo_schema import MAX_OBJECT_COUNT, MIN_OBJECT_COUNT
+from modules.working_combo_schema import MAX_TOTAL_OBJECT_COUNT, MIN_OBJECT_COUNT
 from modules.triplet_schema import (
     TRIPLET_COLUMNS,
     validate_triplet_columns as _validate_triplet_columns,
@@ -1103,10 +1103,10 @@ def calculateCoords(
     output: a dictionary of final object locations'''
 
     object_count = len(objects)
-    if not MIN_OBJECT_COUNT <= object_count <= MAX_OBJECT_COUNT:
+    if not MIN_OBJECT_COUNT <= object_count <= MAX_TOTAL_OBJECT_COUNT:
         raise TripletCoverageError(
             f'Coordinate construction requires {MIN_OBJECT_COUNT} to '
-            f'{MAX_OBJECT_COUNT} object instances; received {object_count}'
+            f'{MAX_TOTAL_OBJECT_COUNT} total object instances; received {object_count}'
         )
 
     instance_names = suffix_duplicates(objects)

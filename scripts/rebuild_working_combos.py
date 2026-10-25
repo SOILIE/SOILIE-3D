@@ -23,10 +23,15 @@ from modules.triplet_schema import validate_triplet_csv_header  # noqa: E402
 from modules.working_combo_schema import (  # noqa: E402
     CATALOG_FILENAMES,
     MAX_OBJECT_COUNT,
+    MAX_TOTAL_OBJECT_COUNT,
+    MAX_WINDOW_EXTRA_COUNT,
     MIN_OBJECT_COUNT,
+    WINDOW_FAMILY,
     WORKING_COMBINATION_FIELDS,
+    counted_object_count,
     normalize_object_label,
     padded_catalog_row,
+    window_extra_count,
 )
 
 
@@ -48,27 +53,28 @@ PRESET_ALLOWLISTS = {
         "bathtub bed bin blinds book bookcase boots bowl cabinet cap cereal_box "
         "chair clock closet coffee_machine coffee_mug coffee_table computer_bag "
         "cupboard curtain desk dining_table fridge helmet lamp laptop microwave_oven "
-        "night_stand office_chair pillow plant printer projector sink soda_can sofa "
-        "sofa_chair speaker stand suitcase table telephone toilet towel trash_can "
-        "trash_bin tv tv_stand window".split()
+        "night_stand office_chair opaque_window pillow plant printer projector sink "
+        "soda_can sofa sofa_chair speaker stand suitcase table telephone toilet towel "
+        "trash_can trash_bin tv tv_stand window".split()
     ),
     "bedroom": frozenset(
         "bed bin blinds book bookcase boots bowl cabinet cap chair clock closet "
         "coffee_mug computer_bag cupboard curtain desk helmet lamp laptop night_stand "
-        "office_chair pillow plant printer projector soda_can sofa_chair speaker stand "
-        "suitcase table telephone trash_bin tv tv_stand window".split()
+        "office_chair opaque_window pillow plant printer projector soda_can sofa_chair "
+        "speaker stand suitcase table telephone trash_bin tv tv_stand window".split()
     ),
     "living_room": frozenset(
         "bin blinds book bookcase boots bowl cabinet cap cereal_box chair clock "
         "coffee_mug coffee_table computer_bag cupboard curtain desk dining_table "
-        "helmet lamp laptop office_chair plant printer projector soda_can sofa "
+        "helmet lamp laptop office_chair opaque_window plant printer projector soda_can sofa "
         "sofa_chair speaker stand suitcase table telephone trash_bin tv tv_stand "
         "window".split()
     ),
     "kitchen": frozenset(
         "bin blinds cabinet cap cereal_box chair clock coffee_machine coffee_mug "
-        "coffee_table cupboard curtain dining_table fridge lamp microwave_oven plant "
-        "sink soda_can table telephone towel trash_can trash_bin window".split()
+        "coffee_table cupboard curtain dining_table fridge lamp microwave_oven "
+        "opaque_window plant sink soda_can table telephone towel trash_can trash_bin "
+        "window".split()
     ),
     "bathroom": frozenset(
         "bathtub bin cabinet lamp sink toilet towel trash_bin".split()
@@ -175,10 +181,29 @@ def _preset_rows(
             by_anchor[(object_a, object_b)].add(object_c)
 
     for object_count in range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1):
-        tail_count = object_count - 2
         for (object_a, object_b), candidates in sorted(by_anchor.items()):
-            for tail in combinations(sorted(candidates), tail_count):
-                yield (object_a, object_b, *tail)
+            anchors = (object_a, object_b)
+            anchor_counted = counted_object_count(anchors)
+            anchor_windows = window_extra_count(anchors)
+            if anchor_windows > MAX_WINDOW_EXTRA_COUNT:
+                continue
+
+            non_window_needed = object_count - anchor_counted
+            non_window_candidates = sorted(candidates - WINDOW_FAMILY)
+            window_candidates = sorted(candidates & WINDOW_FAMILY)
+            if not 0 <= non_window_needed <= len(non_window_candidates):
+                continue
+
+            for non_window_tail in combinations(
+                non_window_candidates, non_window_needed
+            ):
+                remaining_window_capacity = MAX_WINDOW_EXTRA_COUNT - anchor_windows
+                for window_count in range(remaining_window_capacity + 1):
+                    for window_tail in combinations(window_candidates, window_count):
+                        # Tail order is canonical even though the two pools are
+                        # enumerated independently to express the count policy.
+                        tail = tuple(sorted((*non_window_tail, *window_tail)))
+                        yield (*anchors, *tail)
 
 
 def _write_catalog(
@@ -190,20 +215,47 @@ def _write_catalog(
         str(count): 0 for count in range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1)
     }
     duplicate_free_rows_by_count = dict.fromkeys(rows_by_count, 0)
+    rows_by_window_count = {
+        str(count): 0 for count in range(MAX_WINDOW_EXTRA_COUNT + 1)
+    }
+    rows_by_count_and_window_count = {
+        str(count): dict.fromkeys(rows_by_window_count, 0)
+        for count in range(MIN_OBJECT_COUNT, MAX_OBJECT_COUNT + 1)
+    }
+    duplicate_free_rows_by_count_and_window_count = {
+        count: dict.fromkeys(window_counts, 0)
+        for count, window_counts in rows_by_count_and_window_count.items()
+    }
     row_count = 0
     with path.open("x", newline="", encoding="utf-8") as destination:
         writer = csv.writer(destination, lineterminator="\n")
         writer.writerow(WORKING_COMBINATION_FIELDS)
         for objects in _preset_rows(triplets, allowed):
             writer.writerow(padded_catalog_row(objects))
-            rows_by_count[str(len(objects))] += 1
+            requested_count = counted_object_count(objects)
+            selected_window_count = window_extra_count(objects)
+            rows_by_count[str(requested_count)] += 1
+            rows_by_window_count[str(selected_window_count)] += 1
+            rows_by_count_and_window_count[str(requested_count)][
+                str(selected_window_count)
+            ] += 1
             if len(set(objects)) == len(objects):
-                duplicate_free_rows_by_count[str(len(objects))] += 1
+                duplicate_free_rows_by_count[str(requested_count)] += 1
+                duplicate_free_rows_by_count_and_window_count[str(requested_count)][
+                    str(selected_window_count)
+                ] += 1
             row_count += 1
     return {
         "rows": row_count,
-        "rowsByObjectCount": rows_by_count,
-        "duplicateFreeRowsByObjectCount": duplicate_free_rows_by_count,
+        "rowsByRequestedNonWindowCount": rows_by_count,
+        "duplicateFreeRowsByRequestedNonWindowCount": duplicate_free_rows_by_count,
+        "rowsBySelectedWindowCount": rows_by_window_count,
+        "rowsByRequestedNonWindowAndSelectedWindowCount": (
+            rows_by_count_and_window_count
+        ),
+        "duplicateFreeRowsByRequestedNonWindowAndSelectedWindowCount": (
+            duplicate_free_rows_by_count_and_window_count
+        ),
         "bytes": path.stat().st_size,
         "sha256": sha256(path),
     }
@@ -273,7 +325,7 @@ def build_working_combo_catalogs(
                 **_write_catalog(output_dir / filename, triplets, allowed),
             }
         random_counts = catalogs[CATALOG_FILENAMES["random"]][
-            "duplicateFreeRowsByObjectCount"
+            "duplicateFreeRowsByRequestedNonWindowCount"
         ]
         missing_random_counts = [
             count for count, rows in random_counts.items() if rows == 0
@@ -285,10 +337,21 @@ def build_working_combo_catalogs(
             )
 
         receipt = {
-            "schemaVersion": 1,
-            "generation": "working-combination-catalogs-3-to-8",
+            "schemaVersion": 2,
+            "generation": "working-combination-catalogs-counted-plus-window-extra",
             "header": list(WORKING_COMBINATION_FIELDS),
-            "objectCount": {"minimum": MIN_OBJECT_COUNT, "maximum": MAX_OBJECT_COUNT},
+            "requestedNonWindowCount": {
+                "minimum": MIN_OBJECT_COUNT,
+                "maximum": MAX_OBJECT_COUNT,
+            },
+            "selectedWindowExtras": {
+                "labels": sorted(WINDOW_FAMILY),
+                "maximum": MAX_WINDOW_EXTRA_COUNT,
+                "selection": (
+                    "uniform available extra count, then uniform eligible catalog row"
+                ),
+            },
+            "maximumCoordinateInputs": MAX_TOTAL_OBJECT_COUNT,
             "inputs": {
                 "triplets": {
                     "file": triplets_path.name,
@@ -310,7 +373,8 @@ def build_working_combo_catalogs(
             "catalogs": catalogs,
             "transformation": (
                 "filter canonical renderable labels per preset, group by ordered A/B, "
-                "enumerate deterministic exact-size C combinations"
+                "enumerate deterministic exact non-window counts with zero or one "
+                "supported window-family extra"
             ),
         }
         receipt_path.parent.mkdir(parents=True, exist_ok=True)
