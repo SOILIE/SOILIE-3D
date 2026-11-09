@@ -20,27 +20,27 @@ from modules.recency import (
 
 
 class RecencyScheduleTests(unittest.TestCase):
-    def test_focal_states_keep_only_current_and_five_predecessors(self) -> None:
+    def test_focal_states_keep_only_current_and_four_predecessors(self) -> None:
         self.assertEqual(
-            (1.0, 0.0, 0.0, 0.05, 0.10, 0.20, 0.35, 0.50),
+            (1.0, 0.0, 0.0, 0.0, 0.10, 0.20, 0.35, 0.50),
             stable_visibility(8, 0),
         )
         self.assertEqual(
-            (0.05, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0, 0.0),
+            (0.0, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0, 0.0),
             stable_visibility(8, 5),
         )
         self.assertEqual(
-            (0.0, 0.05, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0),
+            (0.0, 0.0, 0.10, 0.20, 0.35, 0.50, 1.0, 0.0),
             stable_visibility(8, 6),
         )
         self.assertEqual(
-            (0.0, 0.0, 0.05, 0.10, 0.20, 0.35, 0.50, 1.0),
+            (0.0, 0.0, 0.0, 0.10, 0.20, 0.35, 0.50, 1.0),
             stable_visibility(8, 7),
         )
 
         for focus_index in range(8):
             state = stable_visibility(8, focus_index)
-            self.assertEqual(6, sum(alpha > 0 for alpha in state))
+            self.assertEqual(5, sum(alpha > 0 for alpha in state))
             self.assertEqual(1.0, state[focus_index])
 
         # Small scenes contain the current object and every distinct predecessor
@@ -58,13 +58,13 @@ class RecencyScheduleTests(unittest.TestCase):
                 transition_visibility(8, focus_index, 1.0),
             )
 
-        expected = (0.50, 0.0, 0.0, 0.0625, 0.125, 0.2375, 0.3875, 0.625)
+        expected = (0.50, 0.0, 0.0, 0.0, 0.125, 0.2375, 0.3875, 0.625)
         for expected_alpha, observed_alpha in zip(expected, transition_visibility(8, 7, 0.75)):
             self.assertAlmostEqual(expected_alpha, observed_alpha)
 
-    def test_transition_never_exposes_a_seventh_object(self) -> None:
+    def test_transition_never_exposes_a_sixth_object(self) -> None:
         for object_count in range(1, 13):
-            expected_maximum = min(object_count, 6)
+            expected_maximum = min(object_count, 5)
             for focus_index in range(object_count):
                 for step in range(101):
                     progress = step / 100
@@ -77,11 +77,11 @@ class RecencyScheduleTests(unittest.TestCase):
 
     def test_opacities_and_detail_levels_are_bounded_and_deterministic(self) -> None:
         self.assertEqual(
-            (None, None, 3, 4, 5, 6, 7, None),
+            (None, None, None, 4, 5, 6, 7, None),
             stable_remesh_depths(8, 7),
         )
         self.assertEqual(
-            (None, None, None, 3, 4, 5, 6, 7),
+            (None, None, None, None, 4, 5, 6, 7),
             stable_remesh_depths(8, 0),
         )
         for focus_index in range(8):
@@ -90,7 +90,7 @@ class RecencyScheduleTests(unittest.TestCase):
                 self.assertTrue(all(math.isfinite(alpha) and 0.0 <= alpha <= 1.0 for alpha in state))
                 depths = transition_remesh_depths(8, focus_index, progress)
                 self.assertTrue(all(
-                    depth is None or 3 <= depth <= 7
+                    depth is None or 4 <= depth <= 7
                     for depth in depths
                 ))
                 self.assertTrue(all(

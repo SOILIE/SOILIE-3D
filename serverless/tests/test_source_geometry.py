@@ -23,6 +23,7 @@ except ModuleNotFoundError:
     sys.modules['plyfile'] = plyfile_stub
 
 from modules import import_tools as imp
+from modules.object_identity import encode_collector_object_label
 from modules.collect_data import (
     Frame,
     calculateCentroidsForScene,
@@ -37,6 +38,7 @@ from modules.source_geometry import (
     SUN3D_CIRCULAR_UINT16_MM,
     SUN3D_NEAREST_TIMESTAMP,
     WASHINGTON_RGBD_PROFILE,
+    WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM,
     WORLD_POINT_CLOUD_SCHEMA_VERSION,
     FramePair,
     SourceGeometryError,
@@ -62,7 +64,7 @@ class SourceProfileTests(unittest.TestCase):
         self.assertEqual(ONE_BASED_IMAGE_FRAME, PRINCETON_SUN3D_PROFILE.pose_index_strategy)
         self.assertEqual(1, PRINCETON_SUN3D_PROFILE.pixel_origin)
 
-        self.assertEqual(PLAIN_UINT16_MM, WASHINGTON_RGBD_PROFILE.depth_encoding)
+        self.assertEqual(WASHINGTON_RGBD_SCENES_V2_NATIVE_UINT16_TENTH_MM, WASHINGTON_RGBD_PROFILE.depth_encoding)
         self.assertEqual(EXACT_FRAME_ID, WASHINGTON_RGBD_PROFILE.pairing_strategy)
         self.assertEqual(JSON_POSITION, WASHINGTON_RGBD_PROFILE.pose_index_strategy)
         self.assertEqual(0, WASHINGTON_RGBD_PROFILE.pixel_origin)
@@ -82,10 +84,15 @@ class SourceProfileTests(unittest.TestCase):
 
     def test_checked_in_source_json_matches_profile_and_pins_extrinsics(self):
         for dataset_name in ('princeton', 'washington'):
-            profile = resolve_source_profile(dataset_name)
             for path in sorted((ROOT / 'json' / dataset_name).glob('*.json')):
                 with self.subTest(path=path):
                     payload = json.loads(path.read_text(encoding='utf-8'))
+                    if dataset_name == 'washington' and 'sourceGeometry' not in payload:
+                        with self.assertRaisesRegex(SourceGeometryError, 'explicitly declare'):
+                            resolve_source_profile(dataset_name, payload.get('sourceGeometry'))
+                        profile = WASHINGTON_RGBD_PROFILE
+                    else:
+                        profile = resolve_source_profile(dataset_name, payload.get('sourceGeometry'))
                     self.assertEqual(len(payload['frames']), len(payload['fileList']))
                     pinned_extrinsics_filename(payload.get('extrinsics'))
                     if dataset_name == 'princeton':
@@ -338,9 +345,9 @@ class WorldCoordinateCollectionTests(unittest.TestCase):
 
         row = next(
             item for item in frame.combos
-            if item['objectA'] == 'a_1'
-            and item['objectB'] == 'b_1'
-            and item['objectC'] == 'c_1'
+            if item['objectA'] == encode_collector_object_label('a', '1')
+            and item['objectB'] == encode_collector_object_label('b', '1')
+            and item['objectC'] == encode_collector_object_label('c', '1')
         )
         self.assertEqual(1.0, float(row['distanceAO']))
         self.assertEqual(90.0, float(row['angleBAC']))
@@ -379,9 +386,9 @@ class WorldCoordinateCollectionTests(unittest.TestCase):
                 frame.getAngleDistCombos(centroid_file)
                 rows.append(next(
                     item for item in frame.combos
-                    if item['objectA'] == 'a_1'
-                    and item['objectB'] == 'b_1'
-                    and item['objectC'] == 'c_1'
+                    if item['objectA'] == encode_collector_object_label('a', '1')
+                    and item['objectB'] == encode_collector_object_label('b', '1')
+                    and item['objectC'] == encode_collector_object_label('c', '1')
                 ))
 
         for field, expected in (

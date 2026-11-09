@@ -29,7 +29,7 @@ def _has_current_runtime_schema(path: Path) -> bool:
 
 @unittest.skipUnless(
     _has_current_runtime_schema(RUNTIME),
-    "Compile the canonical eight-column runtime database before integration tests.",
+    "Compile the non-window-count runtime database before integration tests.",
 )
 class EngineBoundaryTests(unittest.TestCase):
     @classmethod
@@ -64,8 +64,14 @@ class EngineBoundaryTests(unittest.TestCase):
             document["model"],
         )
         self.assertTrue(document["objects"])
-        self.assertNotIn("window", {item["name"] for item in document["objects"]})
-        self.assertEqual({"minimum": 3, "maximum": 8}, document["limits"]["objectCount"])
+        # Exact lists can request windows; count-driven quotas exclude them.
+        self.assertIn("window", {item["name"] for item in document["objects"]})
+        self.assertEqual(
+            {"minimum": 3, "maximum": 8, "definition": "non-window-instances-v1"},
+            document["limits"]["objectCount"],
+        )
+        self.assertEqual(["opaque_window", "window"],
+                         document["objectCountPolicy"]["windowFamily"])
         for preset, capacities in document["presetObjectCounts"].items():
             allowing = [
                 row[0]

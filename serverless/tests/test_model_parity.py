@@ -12,25 +12,26 @@ BASELINE = {
     "modules/timer.py": "eae6e389f0859d25a33cd8d04429bcde6310003f9e2a7c4b1d160c2cf3c46f9d",
     "suggested_setup.blend": "46285b7334eb11cbeaae213a7ae37bca890cfd79a23cd5825125051efcc7df0b",
     "assets/asset_rotations.csv": "c83fd551111f853c02a022d5469434d2f2cc0615661f41fa78d3a21538169842",
-    "requirements.txt": "c14202519e1dbbae9b6e44863d16f69b6f6e827b55c16da3cddc6d03955a16aa",
 }
 
-# These files intentionally differ from publication-2025. Pinning their patched
-# bytes keeps the reviewed maintenance surface explicit instead of weakening the
-# original-file parity check whenever a regression repair touches model code.
+# Identity pins for the generation core at authored commit 91bf332 and the local
+# cohort at 2f2db1c, plus b109f59's human-authored terminal input fixes. The menu
+# is not part of benchmark execution. These checks detect source drift; the
+# behavioral tests establish correctness separately.
 REVIEWED_MAINTENANCE = {
-    "imagine.py": "1907be65a8883276004eb7b776015eee431771b20a0d0cc6dd8cabc536aa6ba9",
-    "modules/collect_data.py": "4718becd9331bb29f58e5db887e492c8d37de15c0c58603cd6fb601ada0f6f85",
-    "modules/import_tools.py": "ee6379943d29d16f144902c13364e460b96021b8f5b72a87802080750c123d17",
+    "requirements.txt": "ee98c11e16e13a7e5672b53c48772c49d94d8bfb6cf8d98a382c3c25c3418dd2",
+    "imagine.py": "87ecad6fdfc78630d0c486b5f7c60b250d3ef6fdf27f57011b6e97204ef453bf",
+    "modules/collect_data.py": "0c2034f6ce9dc4e736c341d51a4bf63517f19bfa018aa0ee87075960e1eda40a",
+    "modules/import_tools.py": "bdd3d41461b1a24bb1502d94c137e3446f5276483a83d30bf38bf46d92ec8185",
     "modules/png2gif.py": "ec1ff753dbe970f303f7c8c5668cd7d9715773b54cc73613a01f17ffdf2ccc32",
-    "modules/prepare_data.py": "d7d24ec2f5b16b9536fea264c9a2bc5c5ec7e24086b5c79943008590804fb0be",
-    "modules/recency.py": "6f82ff6c76c87f88197b5a460284669982466a505970fda5f97ee2d83d82a60a",
-    "modules/render.py": "07fbb228ffed339085a73534c54a384d3a2d1ccfb94568cd27d38dbf2adf1040",
-    "modules/source_geometry.py": "a8915def7ba82ecd72992db43c1f73752c844a45ee556e3d5821aba219cdbbb6",
+    "modules/prepare_data.py": "88ba4660ee6374adc61c243cbfb89667b8441947051d6be0bfedb40e82919eab",
+    "modules/recency.py": "93aa5e7fa3149edd3bb2fd06fec1e9a801f45e61cdaff9dad5bb9540f40c75d9",
+    "modules/render.py": "361430a0520182981f3bdcd29e815710188444cde7ca6221336e2bc51cfca929",
+    "modules/source_geometry.py": "f3e95aae25e83574a8a5c565d98c551a3eba3fbffc6a23f27893f61cb403aba8",
     # Mounted window assemblies remain fixed, but cannot support furniture.
     "modules/support_settlement.py": "cd14f0573c0dd41592757c8375b16cb21b4e7c074b9e4cfd8d3d22160ad5e65b",
-    "modules/working_combo_schema.py": "7af878e0f023c930010d11fa48a441d7e70e8d610a5896f5056682cb837d626b",
-    "modules/working_combos.py": "e37fc3aa97ba39c57bdbb743db056bed899dfa0019b4c824da9eb03ead5a49a3",
+    "modules/working_combo_schema.py": "d8e36880d317a0c0589f6700e1a5f8a7212c1bdb676b4170cbf222a11ad9cdb5",
+    "modules/working_combos.py": "1b6598cd7efa2d59651b4a5e5e1c3acd92f0ef0ee63f2d09c1e4d8933b4a1510",
 }
 
 

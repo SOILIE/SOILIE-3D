@@ -25,7 +25,7 @@ from scripts.rebuild_working_combos import (
     KNOWN_INVALID_TRIPLET_SHA256S,
     build_working_combo_catalogs,
 )
-from serverless.common.engine import RequestError, validate_request
+from serverless.common.engine import RequestError, validate_request, OBJECT_COUNT_POLICY, RUNTIME_INDEX_VERSION
 from serverless.compiler.build_runtime import compile_api_index, validated_working_rows
 
 
@@ -60,7 +60,7 @@ class WorkingComboFixture(unittest.TestCase):
 
     def write_catalog(self, name: str, rows, header=WORKING_COMBINATION_FIELDS) -> Path:
         path = self.root / name
-        _write_csv(path, header, rows)
+        _write_csv(path, header, [tuple(row) + ("",) * (len(header) - len(row)) for row in rows] if header == WORKING_COMBINATION_FIELDS else rows)
         return path
 
     def write_triplets(self, rows) -> Path:
@@ -113,7 +113,7 @@ class WorkingComboSchemaTests(WorkingComboFixture):
             [("chair", "table", "bed", "", "", "")],
             tuple(f"obj{index}" for index in range(6)),
         )
-        with self.assertRaisesRegex(WorkingCombinationError, "legacy six-column"):
+        with self.assertRaisesRegex(WorkingCombinationError, "legacy total-count"):
             list(iter_working_combinations(legacy))
 
         hole = self.write_catalog(
@@ -171,7 +171,7 @@ class WorkingComboSchemaTests(WorkingComboFixture):
             [("chair", "table", "bed", "bed", "", "", "", "")],
         )
         triplets = self.write_triplets([_triplet_row("chair", "table", "bed")])
-        with self.assertRaisesRegex(WorkingCombinationError, "no supported 4-object"):
+        with self.assertRaisesRegex(WorkingCombinationError, "no supported rows with 4 counted non-window instances"):
             working_combos.select_exact(
                 4,
                 filepath=catalog,
@@ -229,12 +229,12 @@ class WorkingComboGeneratorTests(WorkingComboFixture):
         self.assertEqual(2, counts["rejectedRows"])
         self.assertEqual(
             {str(count): value for count, value in zip(range(3, 9), (6, 15, 20, 15, 6, 1))},
-            receipts[0]["catalogs"]["working-combos-refined.csv"]["rowsByObjectCount"],
+            receipts[0]["catalogs"]["working-combos-refined.csv"]["rowsByRequestedNonWindowCount"],
         )
         self.assertEqual(
-            receipts[0]["catalogs"]["working-combos-refined.csv"]["rowsByObjectCount"],
+            receipts[0]["catalogs"]["working-combos-refined.csv"]["rowsByRequestedNonWindowCount"],
             receipts[0]["catalogs"]["working-combos-refined.csv"][
-                "duplicateFreeRowsByObjectCount"
+                "duplicateFreeRowsByRequestedNonWindowCount"
             ],
         )
 
@@ -342,7 +342,7 @@ class CompilerCatalogValidationTests(WorkingComboFixture):
             [("chair", "table", "bed", "", "", "")],
             tuple(f"obj{index}" for index in range(6)),
         )
-        with self.assertRaisesRegex(RuntimeError, "legacy six-column"):
+        with self.assertRaisesRegex(RuntimeError, "legacy total-count"):
             validated_working_rows(
                 legacy,
                 allowed={"chair", "table", "bed"},
@@ -375,7 +375,7 @@ class CompilerCatalogValidationTests(WorkingComboFixture):
             "missing-basis.csv",
             [("chair", "table", "bed", "lamp", "", "", "", "")],
         )
-        with self.assertRaisesRegex(RuntimeError, "lacks its ordered A/B triplet basis"):
+        with self.assertRaisesRegex(RuntimeError, "lacks a complete ordered instance A/B triplet basis"):
             validated_working_rows(missing_basis, allowed=allowed, triplets=triplets)
 
         duplicate = self.write_catalog(
@@ -453,14 +453,18 @@ class CompilerCatalogValidationTests(WorkingComboFixture):
 class EngineCapacityTests(unittest.TestCase):
     def setUp(self):
         self.connection = sqlite3.connect(":memory:")
+        self.connection.execute(f"PRAGMA user_version = {RUNTIME_INDEX_VERSION}")
         self.connection.executescript(
             """
+            CREATE TABLE runtime_metadata (name TEXT, value_json TEXT);
             CREATE TABLE objects (name TEXT, selectable INTEGER);
             CREATE TABLE working_combinations (
               preset TEXT, object_count INTEGER, has_duplicates INTEGER
             );
             """
         )
+
+        self.connection.execute("INSERT INTO runtime_metadata VALUES (?, ?)", ("objectCountPolicy", json.dumps(OBJECT_COUNT_POLICY)))
 
     def tearDown(self):
         self.connection.close()

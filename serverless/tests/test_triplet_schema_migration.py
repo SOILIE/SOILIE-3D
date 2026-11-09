@@ -9,6 +9,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -23,6 +24,7 @@ except ModuleNotFoundError:
     sys.modules["plyfile"] = plyfile_stub
 
 from modules.collect_data import Frame, _angle_degrees
+from modules.object_identity import encode_collector_object_label
 from modules.prepare_data import reconstruct_triplet_coordinates
 from modules.triplet_schema import (
     LEGACY_TRIPLET_COLUMNS,
@@ -123,9 +125,9 @@ class TripletSchemaTests(unittest.TestCase):
                 row = next(
                     candidate
                     for candidate in reader
-                    if candidate["objectA"] == "anchor_a_1"
-                    and candidate["objectB"] == "anchor_b_1"
-                    and candidate["objectC"] == "object_c_1"
+                    if candidate["objectA"] == encode_collector_object_label("anchor a", "1")
+                    and candidate["objectB"] == encode_collector_object_label("anchor b", "1")
+                    and candidate["objectC"] == encode_collector_object_label("object c", "1")
                 )
 
             self.assertNotEqual(row["angleBAC"], row["angleOAB"])
@@ -366,21 +368,30 @@ class TripletMigrationTests(unittest.TestCase):
         self.assertFalse(destination.exists())
         self.assertFalse(receipt.exists())
 
-    def test_reviewed_real_table_produces_exact_target_when_available(self):
-        source = ROOT / "data" / "triplets.csv"
-        if not source.exists():
-            self.skipTest("ignored runtime triplet table is not hydrated")
-        self.assertEqual(REAL_FILE_BYTES, source.stat().st_size)
-        self.assertEqual(REAL_SOURCE_SHA256, hashlib.sha256(source.read_bytes()).hexdigest())
+    def test_public_migration_preserves_independently_known_angle_columns(self):
+        # A=(0,0,0), B=(1,0,0), C=(0,1,0), O=(1,1,0).
+        # BAC=90 and both angles to O are 45 degrees; the legacy header
+        # misnames these values but migration must never reorder them.
+        source, destination, receipt, _, expected, expectations = self._fixture([
+            "a,b,c,1,1,1.4142135623730951,90,45,45"
+        ])
+        with patch("scripts.migrate_triplet_angles.REAL_EXPECTATIONS", expectations):
+            result = migrate_triplet_angles(source, destination, receipt_path=receipt)
+        self.assertEqual(expected, destination.read_bytes())
+        self.assertEqual(1, result["dataRows"])
+        with destination.open(newline="", encoding="utf-8") as stream:
+            row = next(csv.DictReader(stream))
+        self.assertEqual(("90", "45", "45"),
+                         (row["angleBAC"], row["angleOAB"], row["angleOAC"]))
 
-        destination = self.folder / "triplets.csv"
-        receipt_path = self.folder / "triplets.csv.migration.json"
-        receipt = migrate_triplet_angles(source, destination, receipt_path=receipt_path)
-        self.assertEqual(REAL_FILE_BYTES, destination.stat().st_size)
-        self.assertEqual(REAL_ROW_COUNT, receipt["dataRows"])
-        self.assertEqual(REAL_TARGET_SHA256, hashlib.sha256(destination.read_bytes()).hexdigest())
-        self.assertTrue(receipt_path.is_file())
-
+        # The public entry point refuses data that does not match its pin.
+        destination.unlink()
+        receipt.unlink()
+        source.write_bytes(source.read_bytes().replace(b"a,b,c", b"x,b,c"))
+        with patch("scripts.migrate_triplet_angles.REAL_EXPECTATIONS", expectations):
+            with self.assertRaisesRegex(ValueError, "source SHA-256"):
+                migrate_triplet_angles(source, destination, receipt_path=receipt)
+        self.assertFalse(destination.exists())
 
 if __name__ == "__main__":
     unittest.main()

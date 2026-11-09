@@ -10,7 +10,7 @@ from modules.working_combos import supports_coordinate_construction
 
 
 class DiversityTests(unittest.TestCase):
-    def test_duplicate_removal_requires_a_shared_ordered_triplet_basis(self):
+    def test_duplicate_instances_require_a_shared_ordered_triplet_basis(self):
         base = Path(__file__).parents[2]/'.codex/tests'
         base.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=base) as folder:
@@ -21,11 +21,17 @@ class DiversityTests(unittest.TestCase):
                 'chair,table,plant,1,2,3,10,20,30\n',
                 encoding='utf-8',
             )
-            self.assertTrue(supports_coordinate_construction(
+            self.assertFalse(supports_coordinate_construction(
                 ['chair','chair','table','lamp','plant'], triplets,
             ))
             self.assertFalse(supports_coordinate_construction(
                 ['chair','lamp','plant'], triplets,
+            ))
+            complete = Path(folder) / 'complete.csv'
+            complete.write_text(triplets.read_text(encoding='utf-8') +
+                                'chair,table,chair,1,2,3,10,20,30\n', encoding='utf-8')
+            self.assertTrue(supports_coordinate_construction(
+                ['chair','chair','table','lamp','plant'], complete,
             ))
 
     def test_sampling_covers_rare_labels_without_seeing_quality(self):

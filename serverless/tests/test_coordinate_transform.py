@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import unittest
 from unittest.mock import patch
 
@@ -250,16 +251,22 @@ class CoordinateTransformTests(unittest.TestCase):
                 "modules.prepare_data.retrieve_realistic_object_color",
                 return_value=(1, 2, 3),
             ),
-            # Keep the first requested pair as A/B so this fixture deterministically
-            # exercises one base triplet plus one appended triplet.
-            patch("modules.prepare_data.random.shuffle"),
         )
-        with patches[0], patches[1], patches[2], patches[3]:
-            legacy = calculateCoords(["chair", "table", "bed", "lamp"])
-            detailed = calculateCoords(
-                ["chair", "table", "bed", "lamp"],
-                return_alignment_diagnostics=True,
-            )
+        python_state, numpy_state = random.getstate(), np.random.get_state()
+        try:
+            with patches[0], patches[1], patches[2]:
+                random.seed(1)
+                np.random.seed(1)
+                legacy = calculateCoords(["chair", "table", "bed", "lamp"])
+                random.seed(1)
+                np.random.seed(1)
+                detailed = calculateCoords(
+                    ["chair", "table", "bed", "lamp"],
+                    return_alignment_diagnostics=True,
+                )
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
 
         self.assertEqual(2, len(legacy))
         self.assertEqual(3, len(detailed))

@@ -31,7 +31,7 @@ class AuthoritativeWorkerTests(unittest.TestCase):
         with patch('serverless.common.model_runtime.select_model_objects',
                    return_value=['chair'] * 6), patch(
                    'serverless.common.model_runtime.generate_model_inputs_with_diagnostics') as generate:
-            with self.assertRaisesRegex(RuntimeError, 'instance count differs'):
+            with self.assertRaisesRegex(ValueError, 'requested non-window count'):
                 worker(SimpleNamespace(work=work, runtime=work))
         generate.assert_not_called()
 

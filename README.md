@@ -200,3 +200,10 @@ window-only scenes; renderer-added companion windows are recorded separately.
 ### Serverless Research Tooling
 
 The `serverless/` directory contains the reproducible runtime, deployment packaging, benchmarks, comparison studies, and publication-evidence tooling. Start with the [serverless overview](serverless/README.md), then use the [room-generation comparison guide](serverless/benchmark/README.md) and [controlled platform benchmark guide](serverless/cloud_benchmark/README.md) for the corresponding research workflows and evidence boundaries.
+
+### Tests
+
+Run `python -m tests` for the core and serverless regression suites. Before a
+generation campaign, use `python -m tests --all --blender /path/to/blender`
+with the compiled runtime and assets available. The [test guide](tests/README.md)
+describes the geometry, rendering, counting, reproducibility, and storage checks.

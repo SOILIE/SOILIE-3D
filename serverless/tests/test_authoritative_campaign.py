@@ -14,7 +14,7 @@ from serverless.cloud_benchmark.authoritative import (
     allocation, budget_document, campaign_status, digest, export_evidence, file_digest,
     finish_cloud, invocation_cost, load_plan, next_attempt, pending_tasks, runtime_snapshot,
     generation_date, passed_gate, recovered_evidence, SOURCE_CHECKS, spent, validate_artifact, validate_rates,
-    verify_completed, verify_lambda, versioned_function,
+    verify_completed, verify_lambda, versioned_function, OBJECT_COUNT_DEFINITION, OBJECT_COUNT_POLICY,
 )
 from serverless.cloud_benchmark.progress import render
 from serverless.cloud_benchmark.pilot import invoke_and_download
@@ -36,7 +36,9 @@ class AuthoritativeCampaignTests(unittest.TestCase):
 
     def plan(self, phase='pilot'):
         return {'phase': phase, 'planSha256': 'frozen', 'maxObjectCount': 8,
-                'configuration': {'budgetRoot': str(self.root / 'shared-budget'),
+                'configuration': {'objectCountDefinition': OBJECT_COUNT_DEFINITION,
+                                  'objectCountPolicy': deepcopy(OBJECT_COUNT_POLICY),
+                                  'budgetRoot': str(self.root / 'shared-budget'),
                                   'rateCard': deepcopy(RATES), 'region': 'ca-central-1',
                                   'runtimeSnapshot': {'version': '4.0.4', 'sourceCommit': 'source',
                                                       'files': {'modules/render.py': 'render'}}},
@@ -48,11 +50,17 @@ class AuthoritativeCampaignTests(unittest.TestCase):
         return {'request': task['request'], 'status': 'complete',
                 'implementation': {'modelVersion': '4.0.4', 'sourceCommit': 'source', 'renderSha256': 'render'},
                 'selection': ['chair'] * task['request']['objectCount'],
+                'objectCountDefinition': OBJECT_COUNT_DEFINITION,
+                'requestedObjectCount': task['request']['objectCount'],
+                'countedObjectCount': task['request']['objectCount'],
+                'selectedWindowCount': 0, 'selectedTotalCount': task['request']['objectCount'],
+                'selectedObjectCount': task['request']['objectCount'],
+                'companionWindowCount': 0, 'renderedWindowCount': 0,
                 'wallSeconds': 11, 'observationSeconds': 1, 'generationSeconds': 10,
                 'executionLog': {'encoding': 'gzip+base64', 'bytes': len(log),
                                  'sha256': hashlib.sha256(log).hexdigest(),
                                  'data': base64.b64encode(gzip.compress(log, mtime=0)).decode()},
-                'stages': {'final': {'objects': [{'kind': 'furniture'}] * 12}}}
+                'stages': {'final': {'objects': [{'kind': 'furniture', 'label': 'chair'}] * 12}}}
 
     def test_fresh_four_cells_have_exact_histogram_and_all_seeds_are_disjoint(self):
         final = allocation()
@@ -151,7 +159,7 @@ class AuthoritativeCampaignTests(unittest.TestCase):
         # A window assembly may produce more meshes than requested instances.
         self.assertEqual(row, validate_artifact(row, task, plan))
         row['selection'].append('chair')
-        with self.assertRaisesRegex(ValueError, 'exact requested'):
+        with self.assertRaisesRegex(ValueError, 'requested non-window count'):
             validate_artifact(row, task, plan)
         row = self.artifact(task)
         row['generationSeconds'] = 11
