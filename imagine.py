@@ -45,7 +45,7 @@ def menuLoop():
                "# 4. Back to menu             #\n" + \
                "#=============================#\n")
         generation_type = ''
-        while not generation_type.isdigit():
+        while generation_type not in ('1', '2', '3'):
             generation_type = input('>>> ')
             if generation_type=='4' or generation_type=='back' or generation_type=='menu':
                 return menuLoop()
@@ -53,14 +53,14 @@ def menuLoop():
         if generation_type=='1': # generate random collection of objects
             same_objs = ''
             while not same_objs.lower() in ['y','yes','n','no']:
-                same_objs = input("Use the same objects for every scene? ")
+                same_objs = input("Use the same objects for every scene? ").strip().lower()
                 if same_objs=='exit' or same_objs=='quit':
                     sys.exit(0)
                 if same_objs=='menu' or same_objs=='back' or same_objs=='4':
                     return menuLoop()
             allow_multiples = ''
             while not allow_multiples.lower() in ['y','yes','n','no']:
-                allow_multiples = input("Allow multiples of the same object? ")
+                allow_multiples = input("Allow multiples of the same object? ").strip().lower()
                 if allow_multiples=='exit' or allow_multiples=='quit':
                     sys.exit(0)
                 if allow_multiples=='menu' or allow_multiples=='back' or allow_multiples=='4':
