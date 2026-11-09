@@ -36,7 +36,7 @@ def mainMenu():
 
 def princetonLoop():
     print('\n| Princeton Dataset Options |')
-    options = ['/'.join(dirname(abspath(__file__)).split('/')[:-1]),True,0,None]
+    options = [dirname(dirname(abspath(__file__))),True,0,None]
     print('Is the database on the (w)eb or (l)ocal drive?: ')
     while 1:
         response = input('>>> ')
@@ -71,7 +71,7 @@ def princetonLoop():
 
 def washingtonLoop():
     print('\n| Washington Dataset Options |')
-    options = ['/'.join(dirname(abspath(__file__)).split('/')[:-1]),True,0,None]
+    options = [dirname(dirname(abspath(__file__))),True,0,None]
 
     scenes = sorted([f for f in os.listdir('./data/washington') if f!='pc' and '.' not in f])
     all_json_files = [f for f in listdir('./json/washington') if f.endswith('.json')]
