@@ -828,3 +828,13 @@ For a deliberately incomplete preview, omit `--reviews` and use
 The website must not fetch or display AI results when the preview gate is closed.
 
 </details>
+
+### Linked Lambda continuation
+
+Use `python -m serverless.cloud_benchmark.continuation` with the completed local campaign as `--parent`, the preserved original provenance as `--parent-provenance`, and separate `--root` directories for parity and the final continuation. All modes require the current `--runtime`, `--provenance`, `--blender`, reviewed `--bridge`, raw `--unit`, `--blender-gate`, and `--source` receipts, original `--budget-anchor`, `--budget-root`, `--rates`, and the immutable numeric `--function`, resolved `--image`, and `--bucket`. Run `--help` for all options.
+
+`--run-parity` invokes 12 Lambda scenes using original local requests and spends from the existing $25 budget. An uncertain invocation blocks further calls: use `--reconcile-parity` for retained evidence, or `--recover-parity --request ID --aws-request-id ID` to recover the original service result. Neither path reinvokes the request. A recovered attempt without a durable invocation identity remains ineligible for parity qualification.
+
+After parity completes, use `--qualify --parity <parity-root>/parity-results.json --qualification-dir <separate-dir> --archive-date YYYY-MM-DD` with the same configuration. The command verifies the paired artifacts and derives four receipts bound to the post-parity budget and runtime. Pass those receipts as `--unit`, `--blender-gate`, `--source`, and `--parity` when freezing the final plan with a new `--root` and the same archive date. Raw unit, Blender, and source receipts must be created from verified evidence and contain `passed`, `runtimeProvenanceSha256`, `runtimeSnapshotSha256`, `sourceCommit`, and `checks`; the required check keys are `unitTests`, `blenderTests`, and `sourceAuditBridge` respectively. The source receipt also includes `parentSourceAuditSha256`.
+
+Final dispatch uses `python -m serverless.cloud_benchmark.authoritative run --root <continuation-root> --platform lambda`. It retains the original budget and refuses retries or seed replacement. The linked export keeps the local and Lambda plans and provenance distinct.

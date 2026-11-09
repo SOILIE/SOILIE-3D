@@ -58,6 +58,8 @@ def selected_platforms(values):
 def plan_platforms(plan):
     # Existing frozen mixed plans remain readable; every new freeze declares
     # its scope rather than silently changing a 10,000-room completion target.
+    if plan.get('kind') == 'lambda-continuation-v1' and plan.get('platforms') == ['lambda']:
+        return ('lambda',)
     return selected_platforms(plan.get('platforms', PLATFORMS))
 
 
@@ -243,6 +245,9 @@ def load_plan(root, verify_runtime=True):
     if plan.get('schemaVersion') != 1 or plan.get('planSha256') != digest({
             key: value for key, value in plan.items() if key != 'planSha256'}):
         raise ValueError('Frozen plan checksum differs')
+    if plan.get('kind') == 'lambda-continuation-v1':
+        from serverless.cloud_benchmark.continuation import validate
+        return validate(plan, root, verify_runtime=verify_runtime)
     platforms = plan_platforms(plan)
     if plan['requests'] != allocation(plan['maxObjectCount'], plan['phase'], platforms):
         raise ValueError('Frozen requests differ from the fixed allocation')
@@ -453,8 +458,8 @@ def verify_completed(root, plan, platform_name, rows):
 
 def pending_tasks(plan, platform_name, rows, retry_ids=()):
     require_platform(plan, platform_name)
-    if plan_platforms(plan) == ('local',) and retry_ids:
-        raise ValueError('The local-only authoritative cohort never retries or replaces an original attempt')
+    if (plan_platforms(plan) == ('local',) or plan.get('kind') == 'lambda-continuation-v1') and retry_ids:
+        raise ValueError('The local-only or continuation cohort never retries or replaces an original attempt')
     if any(row['status'] in UNCERTAIN for row in rows):
         raise ValueError('Reconcile every uncertain invocation before dispatching another request')
     latest = {row['requestId']: row for row in rows}
@@ -1019,6 +1024,9 @@ def generation_date(attempts, sessions):
 
 def export_evidence(root, plan, output):
     """Freeze complete coverage with attempt accounting; never rank/filter scenes."""
+    if plan.get('kind') == 'lambda-continuation-v1':
+        from serverless.cloud_benchmark.continuation import export_evidence as export_continuation
+        return export_continuation(root, plan, output)
     if plan['phase'] != 'authoritative':
         raise ValueError('Development pilot evidence cannot be released as the authoritative cohort')
     status = campaign_status(root, plan)
@@ -1142,6 +1150,8 @@ def main():
             with run_lock(ROOT / '.codex/benchmark/local-timing-scheduler'):
                 local_run(args, plan)
         else:
+            if plan.get('kind') == 'lambda-continuation-v1':
+                plan = load_plan(args.root)
             cloud_run(args, plan)
 
 
