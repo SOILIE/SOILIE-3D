@@ -31,7 +31,12 @@ def render(status, width=32, *, color=False):
                  f"unreconciled {status['unknownAttempts']}")
     lines.append(f"Lambda all pilots + campaign: ${status['costPlusReservedUSD']:.4f} / "
                  f"${status['budgetUSD']:.2f} (includes in-flight reservations)")
-    lines.append('Complete' if status['complete'] else 'Ctrl+C closes this monitor; workers continue.')
+    if status['complete'] and status.get('parentEvidenceReadback'):
+        lines.append('Generation complete; evidence verification reported separately.')
+    else:
+        lines.append('Complete' if status['complete'] else 'Ctrl+C closes this monitor; workers continue.')
+        if status.get('parentEvidenceReadback'):
+            lines.append('Status uses ledger metadata; parent evidence readback was not performed.')
     return '\n'.join(lines)
 
 

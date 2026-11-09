@@ -247,7 +247,7 @@ def load_plan(root, verify_runtime=True):
         raise ValueError('Frozen plan checksum differs')
     if plan.get('kind') == 'lambda-continuation-v1':
         from serverless.cloud_benchmark.continuation import validate
-        return validate(plan, root, verify_runtime=verify_runtime)
+        return validate(plan, root, verify_runtime=verify_runtime, metadata_only=not verify_runtime)
     platforms = plan_platforms(plan)
     if plan['requests'] != allocation(plan['maxObjectCount'], plan['phase'], platforms):
         raise ValueError('Frozen requests differ from the fixed allocation')
@@ -425,7 +425,7 @@ def validate_artifact(row, task, plan):
     return row
 
 
-def verify_attempt_evidence(root, row, plan=None):
+def verify_attempt_evidence(root, row, plan=None, *, client=None):
     artifact = None
     for name, sha_name in (('artifact', 'sha256'), ('receipt', 'receiptSha256'), ('log', 'logSha256'),
                           ('invocationIdentity', 'invocationIdentitySha256')):
@@ -433,7 +433,8 @@ def verify_attempt_evidence(root, row, plan=None):
             if not row.get(sha_name):
                 raise ValueError('Retained attempt evidence changed: ' + row['requestId'])
             if name == 'artifact' and plan is not None:
-                artifact = load_artifact(root, row, plan)
+                artifact = (load_artifact(root, row, plan) if client is None
+                            else load_artifact(root, row, plan, client=client))
             elif file_digest(root / row[name]) != row[sha_name]:
                 raise ValueError('Retained attempt evidence changed: ' + row['requestId'])
     return artifact
@@ -494,12 +495,15 @@ def campaign_status(root, plan=None):
               'target': sum(task['platform'] == platform_name and task['request']['roomType'] == room
                             for task in plan['requests'])} for platform_name in platforms for room in ROOMS]
     budget = budget_document(plan) if 'lambda' in platforms else None
-    return {'phase': plan['phase'], 'planSha256': plan['planSha256'], 'cells': cells,
+    status = {'phase': plan['phase'], 'planSha256': plan['planSha256'], 'cells': cells,
             'complete': all(cell['complete'] == cell['target'] for cell in cells) and not unknown,
             'attempts': attempts, 'failedAttempts': failures, 'unknownAttempts': unknown,
             'platforms': list(platforms), 'cloudParity': plan.get('cloudParity'),
             'costPlusReservedUSD': spent(budget) if budget is not None else None,
             'budgetUSD': budget['budgetUSD'] if budget is not None else None}
+    if plan.get('kind') == 'lambda-continuation-v1':
+        status['parentEvidenceReadback'] = 'not performed; status uses frozen ledger metadata'
+    return status
 
 
 def eligible_pending_tasks(plan, platform_name, rows, eligible_ids=(), retry_ids=()):
@@ -684,6 +688,9 @@ def finish_cloud(root, plan, attempt):
 
 def cloud_run(args, plan):
     require_platform(plan, 'lambda')
+    if plan.get('kind') == 'lambda-continuation-v1':
+        if load_plan(args.root) != plan:
+            raise ValueError('Continuation plan differs from its fully verified frozen plan')
     import boto3
     from botocore.config import Config
     from serverless.cloud_benchmark.pilot import invoke_and_download
@@ -1117,9 +1124,15 @@ def main():
         with run_lock(args.root / 'prepare-controller'):
             prepare(args)
         return
-    plan = load_plan(args.root, verify_runtime=args.command != 'status')
+    # A linked continuation is revalidated under the shared budget lock before
+    # dispatch. The initial read only selects that lock; avoid downloading the
+    # entire parent cohort twice for one command.
+    continuation_dispatch = (args.command == 'run' and args.platform == 'lambda'
+                             and read(args.root / 'plan.json').get('kind') == 'lambda-continuation-v1')
+    plan = load_plan(args.root, verify_runtime=args.command != 'status' and not continuation_dispatch)
     if args.command == 'status':
-        print(json.dumps(campaign_status(args.root, plan), indent=2))
+        status = campaign_status(args.root, plan)
+        print(json.dumps(status, indent=2))
         return
     if args.command == 'export':
         with ExitStack() as locks:
@@ -1150,8 +1163,6 @@ def main():
             with run_lock(ROOT / '.codex/benchmark/local-timing-scheduler'):
                 local_run(args, plan)
         else:
-            if plan.get('kind') == 'lambda-continuation-v1':
-                plan = load_plan(args.root)
             cloud_run(args, plan)
 
 

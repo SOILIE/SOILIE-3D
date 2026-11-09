@@ -10,6 +10,7 @@ from serverless.cloud_benchmark import authoritative as a, continuation as c
 
 VERIFY_PARITY = c.verify_parity
 VERIFY_GIT_BRIDGE = c.validate_git_bridge
+VERIFY_PARENT_ARTIFACTS = c.verify_parent_artifacts
 
 class LambdaContinuationTests(unittest.TestCase):
     def setUp(self):
@@ -24,17 +25,20 @@ class LambdaContinuationTests(unittest.TestCase):
         self.new_prov.write_text(json.dumps({'files': {'model': {'sha256': 'model-sha'}}, 'baselineCommit': 'new'}))
         self.old = {'provenanceSha256': a.file_digest(self.old_prov), 'sourceCommit': 'old',
                     'files': {'model': 'model-sha'}, 'version': '4', 'blenderSha256': 'blender',
-                    'dependencies': {'numpy':'1'}, 'executionFiles': {'serverless/cloud_benchmark/authoritative.py':'old-controller', 'serverless/common/engine.py':'same'}}
+                    'dependencies': {'numpy':'1'}, 'executionFiles': {'serverless/cloud_benchmark/authoritative.py':'old-controller',
+                    'serverless/cloud_benchmark/progress.py':'old-progress', 'serverless/common/engine.py':'same'}}
         self.current = {**self.old, 'provenanceSha256': a.file_digest(self.new_prov), 'sourceCommit':'new',
                         'executionFiles': {'serverless/cloud_benchmark/authoritative.py':'new-controller',
-                                           'serverless/cloud_benchmark/continuation.py':'new-module', 'serverless/common/engine.py':'same'}}
+                                           'serverless/cloud_benchmark/continuation.py':'new-module',
+                                           'serverless/cloud_benchmark/progress.py':'new-progress', 'serverless/common/engine.py':'same'}}
         self.parent = {'schemaVersion':1, 'platforms':['local'], 'phase':'authoritative', 'maxObjectCount':8,
                        'requests':a.allocation(platforms=('local',)), 'cloudParity':{'status':'deferred'},
                        'configuration':{'publicRunNamespace':'plan-sha256-v1', 'provenance':str(self.old_prov), 'runtimeSnapshot':self.old, 'sourceAuditSha256':'source-audit'},
                        'timingPolicy':'original timing', 'reviewPolicy':'original review'}
         self.parent['planSha256'] = a.digest(self.parent)
         (self.parent_root / 'plan.json').write_text(json.dumps(self.parent))
-        self.rows = [{'requestId': t['id'], 'status':'complete', 'request': t['request']} for t in self.parent['requests']]
+        self.rows = [{'requestId': t['id'], 'status':'complete', 'request': t['request'],
+                      'artifact':'fixture.json', 'sha256':'fixture-sha'} for t in self.parent['requests']]
         self.completed = {t['id'] for t in self.parent['requests']}
         (self.parent_root / 'local-ledger.json').write_text(json.dumps({'planSha256':self.parent['planSha256'], 'attempts':self.rows}))
         self.bridge = self.root / 'bridge.json'
@@ -42,6 +46,7 @@ class LambdaContinuationTests(unittest.TestCase):
             'parentProvenanceSha256':self.old['provenanceSha256'], 'runtimeProvenanceSha256':self.current['provenanceSha256'],
             'parentSourceCommit':'old', 'sourceCommit':'new', 'executionChanges':{
               'serverless/cloud_benchmark/authoritative.py':{'from':'old-controller','to':'new-controller'},
+              'serverless/cloud_benchmark/progress.py':{'from':'old-progress','to':'new-progress'},
               'serverless/cloud_benchmark/continuation.py':{'from':None,'to':'new-module'}}}))
         self.gates = {}
         for name, checks in c.GATES.items():
@@ -89,7 +94,7 @@ class LambdaContinuationTests(unittest.TestCase):
         git_bridge = patch.object(c, 'validate_git_bridge'); git_bridge.start(); self.addCleanup(git_bridge.stop)
         parity_check = patch.object(c, 'verify_parity'); parity_check.start(); self.addCleanup(parity_check.stop)
         self.rows_patch = patch.object(a, 'attempt_rows', return_value=self.rows); self.rows_patch.start(); self.addCleanup(self.rows_patch.stop)
-        self.verifier = patch.object(a, 'verify_completed', return_value=self.completed); self.verified = self.verifier.start(); self.addCleanup(self.verifier.stop)
+        self.verifier = patch.object(c, 'verify_parent_artifacts', return_value=self.completed); self.verified = self.verifier.start(); self.addCleanup(self.verifier.stop)
         self.snapshot = patch.object(a, 'runtime_snapshot', return_value=self.current); self.snapshot.start(); self.addCleanup(self.snapshot.stop)
 
     def test_schedule_preserves_parent_and_uses_new_ordinals(self):
@@ -180,6 +185,80 @@ class LambdaContinuationTests(unittest.TestCase):
         (self.parent_root / 'local-ledger.json').write_text('{}')
         with self.assertRaisesRegex(ValueError, 'parent or continuation allocation'):
             a.load_plan(self.args.root)
+
+    def test_read_only_load_checks_ledger_without_remote_evidence(self):
+        plan = c.freeze(self.args)
+        with patch.object(c, '_client') as client, \
+             patch.object(c, 'verify_parent_artifacts') as artifacts, \
+             patch.object(c, 'verify_parity') as parity, \
+             patch.object(a, 'runtime_snapshot') as runtime:
+            self.assertEqual(plan, a.load_plan(self.args.root, verify_runtime=False))
+            client.assert_not_called()
+            artifacts.assert_not_called()
+            parity.assert_not_called()
+            runtime.assert_not_called()
+            (self.parent_root/'local-ledger.json').write_text('{}')
+            with self.assertRaises(ValueError):
+                a.load_plan(self.args.root, verify_runtime=False)
+
+    def test_direct_cloud_run_requires_full_validation_before_client(self):
+        plan = {'kind':c.KIND, 'platforms':['lambda']}
+        with patch.object(a, 'load_plan', side_effect=ValueError('bad parent evidence')) as load, \
+             patch('boto3.Session') as session:
+            with self.assertRaisesRegex(ValueError, 'bad parent evidence'):
+                a.cloud_run(SimpleNamespace(root=self.root), plan)
+        load.assert_called_once_with(self.root)
+        session.assert_not_called()
+
+    def test_progress_identifies_metadata_only_completion(self):
+        from serverless.cloud_benchmark.progress import render
+        status = {'phase':'authoritative', 'planSha256':'a'*64, 'cells':[],
+                  'attempts':0, 'failedAttempts':0, 'unknownAttempts':0,
+                  'costPlusReservedUSD':0, 'budgetUSD':25, 'complete':True,
+                  'parentEvidenceReadback':'not performed'}
+        self.assertIn('Generation complete; evidence verification reported separately.', render(status))
+
+    def test_full_parent_verification_uses_one_client_and_bounded_workers(self):
+        import threading
+        import time
+        rows = self.rows[:32]
+        parent = {**self.parent, 'requests':self.parent['requests'][:32]}
+        lock = threading.Lock()
+        state = {'active':0, 'maximum':0, 'seen':[]}
+        shared_client = object()
+        def evidence(_root, row, _plan, *, client):
+            self.assertIs(shared_client, client)
+            with lock:
+                state['active'] += 1
+                state['maximum'] = max(state['maximum'], state['active'])
+                state['seen'].append(row['requestId'])
+            time.sleep(.005)
+            with lock:
+                state['active'] -= 1
+            return {'id':row['requestId']}
+        with patch.object(c, '_client', return_value=shared_client) as client, \
+             patch.object(a, 'verify_attempt_evidence', side_effect=evidence), \
+             patch.object(a, 'validate_artifact'):
+            self.assertEqual({row['requestId'] for row in rows}, VERIFY_PARENT_ARTIFACTS(self.root, parent, rows))
+            client.assert_called_once_with(parent)
+            self.assertEqual(32, len(state['seen']))
+            self.assertGreater(state['maximum'], 1)
+            self.assertLessEqual(state['maximum'], c.PARENT_VERIFY_WORKERS)
+        def fail_one(_root, row, _plan, *, client):
+            if row['requestId'] == rows[11]['requestId']:
+                raise ValueError('tampered artifact')
+            return {}
+        with patch.object(c, '_client', return_value=shared_client), \
+             patch.object(a, 'verify_attempt_evidence', side_effect=fail_one), \
+             patch.object(a, 'validate_artifact'):
+            with self.assertRaisesRegex(ValueError, 'tampered artifact'):
+                VERIFY_PARENT_ARTIFACTS(self.root, parent, rows)
+        (self.root/'fixture.json').write_text('{}')
+        with patch.object(c, '_client') as client, \
+             patch.object(a, 'verify_attempt_evidence', return_value={}), \
+             patch.object(a, 'validate_artifact'):
+            self.assertEqual(32, len(VERIFY_PARENT_ARTIFACTS(self.root, parent, rows)))
+            client.assert_not_called()
 
     def test_parity_verifies_each_original_and_retained_remote_artifact(self):
         chosen = {}

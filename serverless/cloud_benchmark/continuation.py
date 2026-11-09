@@ -6,18 +6,20 @@ Final continuation dispatch remains in authoritative.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import subprocess
 from pathlib import Path
 
 from serverless.cloud_benchmark import authoritative as a
-from serverless.cloud_benchmark.evidence_store import archive_configuration
+from serverless.cloud_benchmark.evidence_store import archive_configuration, _client
 
 KIND = 'lambda-continuation-v1'
 ORIGINAL_IMAGINE_BLOB = '9d73b379d0083ea9f84ee4f46f44ff4a01d7ca9b'
 MENU_FIX_IMAGINE_BLOB = '7b76f4048f7c893104083e2c8ff42269b27010dd'
 EXECUTION_CHANGES = {'serverless/cloud_benchmark/authoritative.py',
-                     'serverless/cloud_benchmark/continuation.py'}
+                     'serverless/cloud_benchmark/continuation.py',
+                     'serverless/cloud_benchmark/progress.py'}
 HISTORICAL_ATTEMPT_COUNT = 422
 HISTORICAL_ATTEMPTS_SHA256 = '7633180a0af48d46781c64921904f9c827b3daafc64b058667ffaaf01e41e48a'
 BUDGET_ANCHOR_SHA256 = '9a758fb12fd363d70972d00e82110e2709847b3adb18f362034a22940b4ad166'
@@ -43,13 +45,40 @@ def allocation(parent):
     return tasks
 
 
-def verified_parent(root):
+PARENT_VERIFY_WORKERS = 8
+
+
+def verify_parent_artifacts(root, parent, rows):
+    """Verify each artifact with bounded concurrency and one shared S3 client."""
+    tasks = {task['id']: task for task in parent['requests']}
+    needs_remote = any(not (Path(root) / row['artifact']).is_file() for row in rows)
+    # Create the client before starting workers; boto3 clients support shared
+    # concurrent requests, while sessions and resources should not be shared.
+    client = _client(parent) if needs_remote else None
+
+    def verify(row):
+        artifact = a.verify_attempt_evidence(root, row, parent, client=client)
+        a.validate_artifact(artifact, tasks[row['requestId']], parent)
+        return row['requestId']
+
+    with ThreadPoolExecutor(max_workers=PARENT_VERIFY_WORKERS) as pool:
+        return set(pool.map(verify, rows))
+
+
+def verified_parent(root, *, verify_artifacts=True):
     parent = a.load_plan(root, verify_runtime=False)
     allocation(parent)
     rows = a.attempt_rows(root, parent, 'local')
     if any(row['status'] != 'complete' for row in rows):
         raise ValueError('Original local ledger must contain only completed attempts')
-    if a.verify_completed(root, parent, 'local', rows) != {t['id'] for t in parent['requests']}:
+    tasks = {task['id']: task for task in parent['requests']}
+    identities = [row.get('requestId') for row in rows]
+    if (len(rows) != len(tasks) or len(set(identities)) != len(tasks)
+            or set(identities) != set(tasks)
+            or any(row.get('request') != tasks[row['requestId']]['request']
+                   or not row.get('artifact') or not row.get('sha256') for row in rows)):
+        raise ValueError('Original local ledger must retain each allocated request and artifact exactly once')
+    if verify_artifacts and verify_parent_artifacts(root, parent, rows) != set(tasks):
         raise ValueError('All 5000 original requests must have verified completed evidence')
     return parent
 
@@ -369,9 +398,10 @@ def verify_parity(document, parent, plan, budget):
         if type(scene.get('maxGeometryErrorM')) not in (int, float) or scene['maxGeometryErrorM'] != error:
             raise ValueError('Parity geometry error does not match retained evidence')
 
-def validate(plan, root, verify_runtime=True, *, verified_parent_plan=None):
+def validate(plan, root, verify_runtime=True, *, verified_parent_plan=None, metadata_only=False):
     parent_root = Path(plan['parent']['root'])
-    parent = verified_parent_plan if verified_parent_plan is not None else verified_parent(parent_root)
+    parent = (verified_parent_plan if verified_parent_plan is not None
+              else verified_parent(parent_root, verify_artifacts=not metadata_only))
     if (parent['planSha256'] != plan['parent']['planSha256']
             or a.digest(parent['requests']) != plan['parent']['requestsSha256']
             or a.file_digest(parent_root / 'local-ledger.json') != plan['parent']['ledgerSha256']
@@ -433,7 +463,8 @@ def validate(plan, root, verify_runtime=True, *, verified_parent_plan=None):
             if (document.get('function') != config['function'] or document.get('image') != config['image']
                     or coverage != expected):
                 raise ValueError('Parity qualification must bind the Lambda version and cover all room/count cells')
-            verify_parity(document, parent, plan, budget)
+            if not metadata_only:
+                verify_parity(document, parent, plan, budget)
     expected_gates = {'sourceAuditSha256': parent['configuration']['sourceAuditSha256'],
                       **{name + 'Sha256': plan['qualification'][name]['sha256'] for name in GATES}}
     if plan.get('gates') != expected_gates:
