@@ -17,6 +17,11 @@ from serverless.cloud_benchmark.evidence_store import archive_configuration, _cl
 KIND = 'lambda-continuation-v1'
 ORIGINAL_IMAGINE_BLOB = '9d73b379d0083ea9f84ee4f46f44ff4a01d7ca9b'
 MENU_FIX_IMAGINE_BLOB = '7b76f4048f7c893104083e2c8ff42269b27010dd'
+HELPER_CHANGES = {
+    'modules/menu.py': {'from': {'bytes': 5229, 'sha256': 'fc736acaf9617f38b66e5aefec1c128f7bc6b60411f4280f89022ec95a8921f3'},
+                        'to': {'bytes': 5056, 'sha256': '3cd768041ccf19bac837e31f318baaf9816fdb7786e8e95b0b26285f314c3e9c'}},
+    'modules/diagnostics.py': {'from': {'bytes': 6713, 'sha256': '9a9bd1bde2c16edb807f79ec94f13025a623ff581da6a10cf599efb9559bad6a'}, 'to': None},
+}
 EXECUTION_CHANGES = {'serverless/cloud_benchmark/authoritative.py',
                      'serverless/cloud_benchmark/continuation.py',
                      'serverless/cloud_benchmark/progress.py'}
@@ -94,7 +99,7 @@ def validate_git_bridge(runtime, old_commit, new_commit):
                             check=True, capture_output=True).stdout.decode('utf-8')
     paths = {path for path in output.split('\0') if path}
     permitted = {'imagine.py', 'README.md', 'serverless/cloud_benchmark/README.md',
-                 'serverless/renderer/asset_smoke.py', *EXECUTION_CHANGES}
+                 'serverless/renderer/asset_smoke.py', 'serverless/cloud_benchmark/Dockerfile', *HELPER_CHANGES, *EXECUTION_CHANGES}
     if 'imagine.py' not in paths or any(path not in permitted and not path.startswith(('tests/', 'serverless/tests/')) for path in paths):
         raise ValueError('Git bridge contains changes outside the reviewed menu, tests and controllers')
     old_blob = subprocess.run(['git', '-C', str(runtime), 'rev-parse', old_commit + ':imagine.py'],
@@ -114,6 +119,40 @@ def validate_git_bridge(runtime, old_commit, new_commit):
                 or git_blob_sha(Path(runtime)/helper) != new_helper):
             raise ValueError('Test helper is not the exact reviewed change')
 
+
+    if paths & (set(HELPER_CHANGES) | {'serverless/cloud_benchmark/Dockerfile'}):
+        dockerfile = 'serverless/cloud_benchmark/Dockerfile'
+        if not (set(HELPER_CHANGES) | {dockerfile}) <= paths:
+            raise ValueError('Both reviewed helper changes and Docker cleanup must be present')
+        old_docker = subprocess.run(['git', '-C', str(runtime), 'rev-parse', old_commit + ':' + dockerfile],
+                                    check=True, capture_output=True, text=True).stdout.strip()
+        new_docker = subprocess.run(['git', '-C', str(runtime), 'rev-parse', new_commit + ':' + dockerfile],
+                                    check=True, capture_output=True, text=True).stdout.strip()
+        if (old_docker != 'c7d2a835a1ca67ca6ec9b5cf7991d8ba181c0ca4'
+                or new_docker != '80730a34f015a5a39fd316252df54738e3cd3393'
+                or git_blob_sha(Path(runtime) / dockerfile) != new_docker):
+            raise ValueError('Docker cleanup is not the exact reviewed change')
+        for path, old_pin, new_pin in (
+            ('modules/menu.py', '6de9ec1233e0789482c8ecf37d2325d347bb9c03', 'a4eb329bcfd2eeb8bea928b62c9f64b9a5502e0c'),
+            ('modules/diagnostics.py', 'ff5de8ce83c12862774edb900e7c3898164660ba', None),
+        ):
+            old_sha = subprocess.run(['git', '-C', str(runtime), 'rev-parse', old_commit + ':' + path],
+                                     check=True, capture_output=True, text=True).stdout.strip()
+            if old_sha != old_pin:
+                raise ValueError('Original helper Git blob differs from the reviewed source')
+            source = Path(runtime) / path
+            if new_pin is None:
+                # Check the tree as well as the working directory: an untracked resurrection is not allowed.
+                found = subprocess.run(['git', '-C', str(runtime), 'cat-file', '-e', new_commit + ':' + path],
+                                       capture_output=True).returncode == 0
+                if found or source.exists():
+                    raise ValueError('Deleted diagnostics helper was reintroduced')
+            else:
+                new_sha = subprocess.run(['git', '-C', str(runtime), 'rev-parse', new_commit + ':' + path],
+                                         check=True, capture_output=True, text=True).stdout.strip()
+                if new_sha != new_pin or not source.is_file() or git_blob_sha(source) != new_pin:
+                    raise ValueError('Menu helper is not the exact reviewed patch')
+
 def validate_bridge(parent, current, parent_provenance, current_provenance, receipt, runtime):
     old = parent['configuration']['runtimeSnapshot']
     old_path = Path(parent_provenance)
@@ -122,9 +161,28 @@ def validate_bridge(parent, current, parent_provenance, current_provenance, rece
     if a.file_digest(Path(current_provenance)) != current['provenanceSha256']:
         raise ValueError('Current provenance bytes differ from the frozen continuation')
     old_doc, new_doc = a.read(old_path), a.read(current_provenance)
-    if old_doc.get('files') != new_doc.get('files') or old.get('files') != current.get('files'):
-        raise ValueError('Model source, assets or data differ from the original provenance')
-    ignored = {'sourceCommit', 'provenanceSha256', 'executionFiles', 'localHardware'}
+    old_files, new_files = old_doc.get('files', {}), new_doc.get('files', {})
+    helper_changes = {key: {'from': old_files.get(key), 'to': new_files.get(key)}
+                      for key in set(old_files) | set(new_files) if old_files.get(key) != new_files.get(key)}
+    if helper_changes and helper_changes != HELPER_CHANGES:
+        raise ValueError('Model source, assets or data differ beyond the reviewed helpers')
+    if (old.get('files') != {key: entry['sha256'] for key, entry in old_files.items()}
+            or current.get('files') != {key: entry['sha256'] for key, entry in new_files.items()}):
+        raise ValueError('Model source snapshot differs from provenance')
+    # Compilation can change the checkout channel and total byte count, but no other metadata.
+    ignored_metadata = {'files', 'baselineCommit', 'channel', 'totalBytes'}
+    if ({k:v for k,v in old_doc.items() if k not in ignored_metadata}
+            != {k:v for k,v in new_doc.items() if k not in ignored_metadata}
+            or old_doc.get('baselineCommit') != old['sourceCommit']
+            or new_doc.get('baselineCommit') != current['sourceCommit']
+            or (old_doc.get('channel') != new_doc.get('channel')
+                and (old_doc.get('channel'), new_doc.get('channel')) != ('main', 'detached'))
+            or (('totalBytes' in old_doc or 'totalBytes' in new_doc)
+                and new_doc.get('totalBytes') != old_doc.get('totalBytes', 0)
+                    + sum((v['to'] or {}).get('bytes', 0) - (v['from'] or {}).get('bytes', 0)
+                          for v in helper_changes.values()))):
+        raise ValueError('Model provenance metadata differs beyond the reviewed helpers')
+    ignored = {'sourceCommit', 'provenanceSha256', 'executionFiles', 'localHardware', 'files'}
     if {k:v for k,v in old.items() if k not in ignored} != {k:v for k,v in current.items() if k not in ignored}:
         raise ValueError('Frozen runtime, version, dependencies or hardware differ')
     old_hardware, new_hardware = old.get('localHardware'), current.get('localHardware')
@@ -147,7 +205,7 @@ def validate_bridge(parent, current, parent_provenance, current_provenance, rece
                 'parentProvenanceSha256': old['provenanceSha256'],
                 'runtimeProvenanceSha256': current['provenanceSha256'],
                 'parentSourceCommit': old['sourceCommit'], 'sourceCommit': current['sourceCommit'],
-                'executionChanges': changed}
+                'executionChanges': changed, 'helperChanges': helper_changes}
     if receipt != expected:
         raise ValueError('Reviewed execution bridge does not match both exact snapshots')
 

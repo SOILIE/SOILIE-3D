@@ -47,7 +47,7 @@ class LambdaContinuationTests(unittest.TestCase):
             'parentSourceCommit':'old', 'sourceCommit':'new', 'executionChanges':{
               'serverless/cloud_benchmark/authoritative.py':{'from':'old-controller','to':'new-controller'},
               'serverless/cloud_benchmark/progress.py':{'from':'old-progress','to':'new-progress'},
-              'serverless/cloud_benchmark/continuation.py':{'from':None,'to':'new-module'}}}))
+              'serverless/cloud_benchmark/continuation.py':{'from':None,'to':'new-module'}}, 'helperChanges':{}}))
         self.gates = {}
         for name, checks in c.GATES.items():
             path = self.root / (name + '.json'); path.write_text(json.dumps({'passed':True,
@@ -152,6 +152,34 @@ class LambdaContinuationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Model source'):
             c.validate_bridge(self.parent, bad, self.old_prov, self.new_prov, bridge, self.root)
 
+    def test_reviewed_helper_provenance_and_receipt_are_exact(self):
+        old_files = {'model': {'sha256': 'model-sha'}, **{k:v['from'] for k,v in c.HELPER_CHANGES.items()}}
+        new_files = {'model': {'sha256': 'model-sha'}, 'modules/menu.py': c.HELPER_CHANGES['modules/menu.py']['to']}
+        old_doc = {'files':old_files, 'baselineCommit':'old', 'channel':'main', 'totalBytes':12000, 'model':'same'}
+        new_doc = {'files':new_files, 'baselineCommit':'new', 'channel':'detached',
+                   'totalBytes':12000 - 5229 + 5056 - 6713, 'model':'same'}
+        def check(old_data, new_data, receipt_changes, should_pass=False):
+            self.old_prov.write_text(json.dumps(old_data)); self.new_prov.write_text(json.dumps(new_data))
+            old = {**self.old, 'provenanceSha256':a.file_digest(self.old_prov),
+                   'files':{k:v['sha256'] for k,v in old_data['files'].items()}}
+            new = {**self.current, 'provenanceSha256':a.file_digest(self.new_prov),
+                   'files':{k:v['sha256'] for k,v in new_data['files'].items()}}
+            parent = {**self.parent, 'configuration':{**self.parent['configuration'], 'runtimeSnapshot':old}}
+            receipt = {**a.read(self.bridge), 'parentProvenanceSha256':old['provenanceSha256'],
+                       'runtimeProvenanceSha256':new['provenanceSha256'], 'helperChanges':receipt_changes}
+            if should_pass:
+                c.validate_bridge(parent, new, self.old_prov, self.new_prov, receipt, self.root)
+            else:
+                with self.assertRaises(ValueError):
+                    c.validate_bridge(parent, new, self.old_prov, self.new_prov, receipt, self.root)
+        check(old_doc, new_doc, c.HELPER_CHANGES, True)
+        check(old_doc, {**new_doc, 'files':{**new_files, 'modules/menu.py':{'bytes':5056, 'sha256':'wrong'}}}, c.HELPER_CHANGES)
+        check(old_doc, {**new_doc, 'files':{'modules/menu.py':new_files['modules/menu.py']}}, c.HELPER_CHANGES)
+        check(old_doc, {**new_doc, 'files':{**new_files, 'modules/diagnostics.py':old_files['modules/diagnostics.py']}}, c.HELPER_CHANGES)
+        check(old_doc, {**new_doc, 'model':'changed'}, c.HELPER_CHANGES)
+        check(old_doc, {**new_doc, 'totalBytes':0}, c.HELPER_CHANGES)
+        check(old_doc, new_doc, {})
+
     def test_only_the_observed_hardware_memory_change_is_allowed(self):
         parent = dict(self.parent)
         parent['configuration'] = dict(self.parent['configuration'])
@@ -179,6 +207,29 @@ class LambdaContinuationTests(unittest.TestCase):
         with patch.object(c.subprocess, 'run', return_value=SimpleNamespace(stdout=b'imagine.py\0modules/render.py\0')):
             with self.assertRaisesRegex(ValueError, 'outside the reviewed'):
                 VERIFY_GIT_BRIDGE(self.root, 'old', 'new')
+
+    def test_git_helper_and_docker_pins_reject_tampering_and_resurrection(self):
+        paths = b'imagine.py\0modules/menu.py\0modules/diagnostics.py\0serverless/cloud_benchmark/Dockerfile\0'
+        def outputs(docker='80730a34f015a5a39fd316252df54738e3cd3393', exists=False):
+            return [SimpleNamespace(stdout=paths), SimpleNamespace(stdout=c.ORIGINAL_IMAGINE_BLOB),
+                    SimpleNamespace(stdout=c.MENU_FIX_IMAGINE_BLOB),
+                    SimpleNamespace(stdout='c7d2a835a1ca67ca6ec9b5cf7991d8ba181c0ca4'), SimpleNamespace(stdout=docker),
+                    SimpleNamespace(stdout='6de9ec1233e0789482c8ecf37d2325d347bb9c03'),
+                    SimpleNamespace(stdout='a4eb329bcfd2eeb8bea928b62c9f64b9a5502e0c'),
+                    SimpleNamespace(stdout='ff5de8ce83c12862774edb900e7c3898164660ba'),
+                    SimpleNamespace(returncode=0 if exists else 1)]
+        (self.root/'modules').mkdir()
+        (self.root/'modules/menu.py').write_text('fixture')
+        def verify(docker='80730a34f015a5a39fd316252df54738e3cd3393', exists=False):
+            with patch.object(c.subprocess, 'run', side_effect=outputs(docker, exists)), \
+                 patch.object(c, 'git_blob_sha', side_effect=[c.MENU_FIX_IMAGINE_BLOB,
+                    '80730a34f015a5a39fd316252df54738e3cd3393', 'a4eb329bcfd2eeb8bea928b62c9f64b9a5502e0c']):
+                VERIFY_GIT_BRIDGE(self.root, 'old', 'new')
+        verify()
+        with self.assertRaisesRegex(ValueError, 'Docker cleanup'): verify(docker='wrong')
+        with self.assertRaisesRegex(ValueError, 'reintroduced'): verify(exists=True)
+        (self.root/'modules/diagnostics.py').write_text('untracked')
+        with self.assertRaisesRegex(ValueError, 'reintroduced'): verify()
 
     def test_budget_history_and_parent_ledger_tampering_block_load(self):
         c.freeze(self.args)

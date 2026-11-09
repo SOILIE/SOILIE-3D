@@ -4,6 +4,9 @@
 # byte-for-byte, even when a human-authored selection policy changes catalogs.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
+# COPY merges directories, so remove inherited modules before installing the
+# current source set. Deleted helpers must not survive in the derived image.
+RUN rm -rf /var/task/soilie-runtime/modules
 COPY modules /var/task/soilie-runtime/modules
 COPY data /var/task/soilie-runtime/data
 COPY serverless /var/task/serverless
